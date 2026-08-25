@@ -353,7 +353,7 @@ Tool引数(会話でのユーザー指示) > 環境変数 > 設定ファイル >
 
 ### 10.1 配布
 
-- GitHubリポジトリからの `uvx` 起動を標準とする(PyPI公開は当面しない):
+- GitHubリポジトリからの `uvx` 起動を標準とする:
 
 ```bash
 uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.0 rigol-oscilloscope-mcp
