@@ -35,6 +35,8 @@ EXPECTED = {
     "get_decode_result": "READ_ONLY",
     "configure_afg": "SAFE_WRITE",
     "get_afg_state": "READ_ONLY",
+    "enable_afg": "DANGEROUS_WRITE",
+    "disable_afg": "SAFE_WRITE",
     "raw_scpi": "DANGEROUS_WRITE",
 }
 
@@ -92,4 +94,4 @@ def test_dangerous_and_restricted_sets() -> None:
         for tool, cls in TOOL_CLASSES.items()
         if cls in (OperationClass.RESTRICTED_WRITE, OperationClass.DANGEROUS_WRITE)
     }
-    assert needs_confirm == {"autoset", "raw_scpi"}
+    assert needs_confirm == {"autoset", "enable_afg", "raw_scpi"}

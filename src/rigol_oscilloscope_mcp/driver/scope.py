@@ -93,7 +93,8 @@ _AFG_ITEMS: tuple[tuple[str, str], ...] = (
     ("symmetry_percent", ":FUNCtion:RAMP:SYMMetry"),
 )
 
-#: 出力状態。本層は**読むだけ**で書き込まない(出力のON/OFFは別Toolの責務)
+#: 出力状態。読み書きの入口は `get_afg_config` / `set_afg_output` に限る
+#: (`configure_afg` は設定項目のみを扱い、ここには触れない)
 _AFG_OUTPUT_PATH = ":OUTPut:STATe"
 
 #: 数値項目の値域 (下限, 上限, 下限を除外するか)。上限 None はモデルオプション・
@@ -1022,6 +1023,20 @@ class ScopeDriver:
             _, from_scpi = self._afg_item(key)
             config[key] = from_scpi(query(f"{prefix}{path}?"))
         return config
+
+    def set_afg_output(self, channel: int, enabled: bool) -> bool:
+        """信号発生の出力をON/OFFし、read-backした状態を返す。
+
+        **この1コマンドで実際に信号が外へ出る。** 承認(confirmトークン)と監査は
+        上位(service/control.py)の責務で、本層は設定項目に一切触れない。
+        """
+        _, prefix = self._afg_prefix(channel)
+        return parse_bool(
+            self.session.set_and_verify(
+                f"{prefix}{_AFG_OUTPUT_PATH} {'ON' if enabled else 'OFF'}",
+                f"{prefix}{_AFG_OUTPUT_PATH}?",
+            )
+        )
 
     # -- Acquisition ------------------------------------------------------
 

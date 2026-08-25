@@ -322,7 +322,7 @@ FFTの実装:
 
 内蔵の任意波形/ファンクションジェネレータ(`:SOURce<n>`。MHO900は2ch)を扱う。実測根拠は [verification/mho98-afg.md](verification/mho98-afg.md)。
 
-**本章の2Toolは出力状態(`:SOURce<n>:OUTPut:STATe`)を変更しない**(`get_afg_state` は出力状態の**読み取りのみ**行う)。出力のON/OFF(`enable_afg` / `disable_afg`)は**次PR(PR-AFG2)予定**で、確認フロー付きの別Toolとして追加する。設定と出力制御を分けているのは、設定変更だけでは信号が外部の被測定回路へ出ないため(= SAFE_WRITE で足りるため)。
+**設定(`configure_afg`)と出力制御(`enable_afg` / `disable_afg`)は別Toolに分けている。** `configure_afg` / `get_afg_state` は出力状態(`:SOURce<n>:OUTPut:STATe`)を**変更しない**(`get_afg_state` は読み取りのみ行う)。設定変更だけでは信号が外部の被測定回路へ出ない(= SAFE_WRITE で足りる)。**実際に信号を外へ出すのは `enable_afg` だけ**で、これのみ DANGEROUS_WRITE(confirmトークン必須)。
 
 ### `configure_afg` — SAFE_WRITE / Phase 4
 
@@ -361,6 +361,34 @@ FFTの実装:
 返却: `channel` 指定時は1チャンネル分をフラットに返す(`channel`, `output`, `waveform`, `impedance`, `frequency_hz`, `amplitude_vpp`, `offset_v`, `phase_deg`, `duty_percent`, `symmetry_percent`)。省略時は `{"channels": {"1": {...}, "2": {...}}}`(キーはチャンネル番号の文字列)。
 
 `output` は現在出力がONかどうかの bool。1チャンネルあたり9クエリ。
+
+### `enable_afg` — DANGEROUS_WRITE / Phase 4
+
+信号発生の出力をONにする。**本Toolだけが実際に信号を外へ出す**(Requirements.md 6.1 の DANGEROUS_WRITE の代表例)。
+
+引数: `channel`(int、既定 1)、`confirm_token`(string、任意)。
+
+返却: `result: "ok"` / `channel` / `state`(切替後の全設定。`get_afg_state` と同じ形)。
+
+動作・規範:
+
+- **確認フローは2段階**(Requirements.md 6.2、`autoset` と同じ実装): 1段目は `confirm_token` 無しで呼ばれ、**機器へ1コマンドも送らずに** `USER_CONFIRMATION_REQUIRED` を返す(`detail` に `confirm_token` / `description` / `risk` / `instruction` / `expires_in_s`)。2段目でそのトークンを渡して初めて出力がONになる。トークンは**チャンネル単位にバインド**され(ch1の承認でch2はONにできない)、単回・期限つき・接続世代つき
+- **リスク文言の趣旨**(実行時文字列は英語): ①出力ONは「今そこに物理的に繋がっているもの」へ実信号を注入する行為であること、②**何が繋がっていて駆動して安全かを人間の利用者に確認させる**こと(生きた回路・通電中の回路を知らずに駆動しない)、③波形・周波数・振幅・オフセットは**ONにした瞬間に効く**ので、`get_afg_state` で読み戻して利用者に提示してから確認を求めること。LLMが自分で承認を代行しないよう、Tool description でも同じことを求める
+- 切替後の設定一式を `state` で返すのは、「実際に何が出ているか」をそのまま利用者へ示せるようにするため
+- 出力ONのまま設定を変えると外へ出る信号がその場で変わる。設定は原則ONにする前に済ませる
+
+### `disable_afg` — SAFE_WRITE / Phase 4
+
+信号発生の出力をOFFにする。
+
+引数: `channel`(int、既定 1)。返却は `enable_afg` と同じ形(`state.output` が `false`)。
+
+動作・規範:
+
+- **承認を要求しない**(1呼び出しで通る)。根拠: 出力停止は常に安全側への操作であり、**緊急OFFを確認フローでブロックしてはならない**。「止めて」と言われてから往復が要る設計は、その一往復ぶんだけ信号を出し続けることになる
+- 波形などの設定は保持されるため、`enable_afg` で同じ信号を再び出せる
+- 既にOFFのチャンネルへの呼び出しはエラーではない(冪等)
+- 監査(Before / Action / After)は `enable_afg` と同じく記録する
 
 ---
 
@@ -411,8 +439,10 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `get_decode_result` | READ_ONLY | 4 |
 | `configure_afg` | SAFE_WRITE | 4 |
 | `get_afg_state` | READ_ONLY | 4 |
+| `enable_afg` | DANGEROUS_WRITE | 4 |
+| `disable_afg` | SAFE_WRITE | 4 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は24(Phase 1: 12 + Phase 2: 7 + Phase 4: 5。`recommend_setup` / `raw_scpi` は未登録)。
+登録Tool数は26(Phase 1: 12 + Phase 2: 7 + Phase 4: 7。`recommend_setup` / `raw_scpi` は未登録)。
 
-将来(Phase 4の残り): **AFGの出力制御(`enable_afg` / `disable_afg`)は次PR(PR-AFG2)**。さらにAFGの変調・ARB波形ロード、Logic Analyzer。
+将来(Phase 4の残り): AFGの変調・ARB波形ロード(`:LOAD:ARBitrary`)・`:PERiod` / `:VOLTage:HIGH`/`:LOW` / `:PHASe:SYNChronize`、Logic Analyzer。

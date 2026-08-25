@@ -710,14 +710,16 @@ def test_afg_round_trip(scope: FakeScope) -> None:
     assert scope.handle(":SOURce2:FUNCtion?") == b"SIN"
 
 
-def test_afg_output_state_is_modeled_but_untouched_by_the_driver(
-    scope: FakeScope,
-) -> None:
-    """出力状態は存在する(本PRのドライバは読むだけで書かない)。"""
+def test_afg_output_state_round_trip(scope: FakeScope) -> None:
+    """出力状態はチャンネルごとに読み書きできる(ON/OFF どちらのトークンも)。"""
     scope.handle(":SOURce2:OUTPut:STATe ON")
 
     assert scope.handle(":SOURce2:OUTPut:STATe?") == b"1"
     assert scope.handle(":SOURce1:OUTPut:STATe?") == b"0"
+
+    scope.handle(":SOURce2:OUTPut:STATe OFF")
+
+    assert scope.handle(":SOURce2:OUTPut:STATe?") == b"0"
 
 
 def test_afg_unknown_waveform_is_rejected(scope: FakeScope) -> None:

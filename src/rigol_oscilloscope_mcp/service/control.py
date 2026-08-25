@@ -46,6 +46,21 @@ _AUTOSET_RISK = (
     "settings are lost."
 )
 
+_AFG_OUTPUT_DESCRIPTION = (
+    "Turn on AFG channel {n} output (inject a real signal into whatever is "
+    "connected)"
+)
+_AFG_OUTPUT_RISK = (
+    "Turning the generator output on drives a real signal into whatever is "
+    "physically connected to the AFG output right now. Ask the human user to "
+    "confirm the physical setup first: what is connected to the generator "
+    "output, and is it safe to drive? Do not enable the output into a live or "
+    "powered circuit unless the user has explicitly confirmed it is safe. The "
+    "configured waveform, frequency, amplitude and offset are applied the "
+    "moment the output turns on — read them back with get_afg_state and show "
+    "them to the user before asking for confirmation."
+)
+
 
 def _invalid(message: str, detail: dict) -> ScopeError:
     return ScopeError(ErrorCode.INVALID_PARAMETER, message, detail)
@@ -324,6 +339,53 @@ class ControlService:
             "applied": applied,
             "changed": before != after,
         }
+
+    def enable_afg(
+        self,
+        driver: ScopeDriver,
+        generation: int,
+        channel: int = 1,
+        confirm_token: str | None = None,
+    ) -> dict:
+        """信号発生の出力をONにする(DANGEROUS_WRITE)。
+
+        **本Toolだけが実際に信号を外へ出す。** 接続先の被測定回路に何が繋がって
+        いるかはサーバー側からは分からないため、承認は必須(トークンはチャンネル
+        単位・単回・接続世代つき)。トークン無しでは機器へ1コマンドも送らない。
+        """
+        self._require_confirmation(
+            "enable_afg",
+            {"channel": channel},
+            generation,
+            confirm_token,
+            description=_AFG_OUTPUT_DESCRIPTION.format(n=channel),
+            risk=_AFG_OUTPUT_RISK,
+        )
+        return self._set_afg_output(driver, "enable_afg", channel, True)
+
+    def disable_afg(self, driver: ScopeDriver, channel: int = 1) -> dict:
+        """信号発生の出力をOFFにする(SAFE_WRITE)。
+
+        **承認は要求しない。** 出力停止は常に安全側への操作であり、緊急停止を
+        確認フローでブロックしてはならない(tools.md 7章)。
+        """
+        return self._set_afg_output(driver, "disable_afg", channel, False)
+
+    def _set_afg_output(
+        self, driver: ScopeDriver, tool: str, channel: int, enabled: bool
+    ) -> dict:
+        """出力の切り替えを監査つきで実行し、切替後の全設定を返す。
+
+        返却に設定一式を添えるのは、出力ONで実際に何が出ているか(波形・周波数・
+        振幅・オフセット)を呼び出し側がそのまま利用者へ示せるようにするため。
+        """
+        with self._audited(tool, {"channel": channel}) as record:
+            record.before(driver.get_afg_config(channel))
+            driver.set_afg_output(channel, enabled)
+            after = driver.get_afg_config(channel)
+            record.after(after)
+
+        return {"result": "ok", "channel": after["channel"], "state": after}
 
     # -- Acquisition ------------------------------------------------------
 

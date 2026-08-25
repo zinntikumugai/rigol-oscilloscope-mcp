@@ -63,10 +63,14 @@ TOOL_CLASSES: dict[str, OperationClass] = {
     "configure_decode": OperationClass.SAFE_WRITE,
     "get_decode_result": OperationClass.READ_ONLY,
     # 7. 信号発生(tools.md、Phase 4)
-    # 設定のみで**出力状態には触れない**(信号は外へ出ない)ため SAFE_WRITE。
-    # 出力のON/OFF(enable_afg / disable_afg)は別Tool・別クラスで追加する。
+    # configure_afg は設定のみで**出力状態には触れない**(信号は外へ出ない)ため
+    # SAFE_WRITE。実際に信号を外へ出すのは enable_afg だけで、被測定回路への注入に
+    # なるため DANGEROUS_WRITE(confirmトークン必須)。出力OFF(disable_afg)は
+    # 常に安全側への操作で、緊急停止を承認でブロックしないため SAFE_WRITE。
     "configure_afg": OperationClass.SAFE_WRITE,
     "get_afg_state": OperationClass.READ_ONLY,
+    "enable_afg": OperationClass.DANGEROUS_WRITE,
+    "disable_afg": OperationClass.SAFE_WRITE,
     # 9. Raw SCPI(開発用・デフォルト無効)
     "raw_scpi": OperationClass.DANGEROUS_WRITE,
 }

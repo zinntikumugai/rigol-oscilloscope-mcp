@@ -1597,3 +1597,58 @@ def test_get_afg_config_unsupported_profile_sends_nothing(
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert scope.command_log == []
+
+
+def test_set_afg_output_on_sets_and_reads_back(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """出力ON: set → エラーキュー確認 → read-back の1往復のみ。"""
+    assert driver.set_afg_output(1, True) is True
+
+    assert afg_writes(scope) == [":SOURce1:OUTPut:STATe ON"]
+    assert ":SOURce1:OUTPut:STATe?" in scope.command_log
+    assert scope.afg[1]["output"] is True
+
+
+def test_set_afg_output_off_uses_the_off_token(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.afg[2]["output"] = True
+
+    assert driver.set_afg_output(2, False) is False
+
+    assert afg_writes(scope) == [":SOURce2:OUTPut:STATe OFF"]
+    assert scope.afg[2]["output"] is False
+
+
+def test_set_afg_output_touches_no_other_item(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """出力制御は設定項目に一切触れない(波形も振幅も読まない・書かない)。"""
+    driver.set_afg_output(1, True)
+
+    assert [c for c in scope.command_log if "OUTP" not in c.upper()] == [
+        ":SYSTem:ERRor?"
+    ]
+
+
+@pytest.mark.parametrize("channel", [0, 3, True])
+def test_set_afg_output_channel_out_of_range_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope, channel: object
+) -> None:
+    """`:SOURce3` は実機のSCPIサーバーを沈黙させる。範囲検証は送信前に行う。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.set_afg_output(channel, True)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_set_afg_output_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.set_afg_output(1, True)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []

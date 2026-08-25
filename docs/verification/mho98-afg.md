@@ -53,7 +53,14 @@
 - read-onlyスイート(`-m device`): **12 passed**(`test_afg_state_answers` 含む)
 - write(`-m device_write -k afg`): **PASS** — `test_configure_afg_set_and_readback`: `get_afg_config` でスナップショット → sine→square / 2 kHz / 1 Vpp / duty 60 を書き込み → applied 確認 → finally で全復元。全工程で output=false を維持
 
-## 4. 未実施・今後の予定
+## 4. PR-AFG2 出力ON実機検証・解放状態(2026-08-26)
 
-- **出力ON(解放状態)の実機検証**: PR-AFG2で実施予定(`RIGOL_TEST_ALLOW_AFG_OUTPUT=1` ゲート、AFG出力に何も接続しない状態で enable→確認→disable)
-- **ループバックFFT検証**: BNCケーブル入手後に実施(`RIGOL_TEST_AFG_LOOPBACK=1`。AFG出力→CH1接続、1kHz正弦を `analyze_waveform` のFFTで±1%突合)。**現在ケーブル不足のため未実施**
+`RIGOL_TEST_ADDRESS=<実機IP> RIGOL_TEST_ALLOW_WRITE=1 RIGOL_TEST_ALLOW_AFG_OUTPUT=1 uv run pytest -m device_write -k afg`
+
+- `test_enable_afg_output_open_circuit`: **PASS** — **AFG出力に何も接続しない(解放)状態**で実施。事前 output=false 確認 → `configure_afg`(sine / 1 kHz / 1 Vpp / offset 0)→ `enable_afg` の**2段階confirmフローを実機で初実行**(1回目: `USER_CONFIRMATION_REQUIRED` + confirm_token発行、コマンド送信ゼロ / 2回目: トークン消費で `:SOURce1:OUTPut:STATe ON` → readback true)→ finally `disable_afg`(confirm不要で即OFF)+ スナップショット全復元 + output=false 最終確認
+- `test_configure_afg_set_and_readback`: PASS(継続)
+- `test_afg_loopback_fft`: **SKIP**(`RIGOL_TEST_AFG_LOOPBACK` 未設定 — 意図どおり)
+
+## 5. 未実施・今後の予定
+
+- **ループバックFFT検証**: BNCケーブル入手後に実施(`RIGOL_TEST_AFG_LOOPBACK=1` を追加指定。AFG出力→CH1接続、1 kHz正弦を `analyze_waveform` のFFTで突合。テストは timebase 5 ms/div で分解能≈20 Hzを確保し、分解能アサート付き)。**現在ケーブル不足のため未実施**。実施後は本章へ結果を追記する
