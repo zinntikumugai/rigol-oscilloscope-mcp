@@ -28,6 +28,7 @@ server.py(FastMCP、19 Tool、同期def+lock直列化)
   → transport/(lan: raw socket 5555 / usb: PyVISA / blocks: IEEE488.2ブロック)
 profiles/(YAML機種プロファイル: verified→family→generic の3層解決)
 testing/(FakeScope: MHO98方言のフェイク機器。Transport層に差し込む)
+skills/ + .claude-plugin/(Claudeプラグイン: 測定ワークフロースキル+マニフェスト。tests/test_plugin.py が整合を検証)
 ```
 
 - MCP SDKのimportは `server.py` に閉じ込める。Toolは全て同期defで、返却は bare `dict` 注釈(structured content回避、実測済みの仕様)
@@ -53,6 +54,6 @@ testing/(FakeScope: MHO98方言のフェイク機器。Transport層に差し込�
 
 ## 検証(タスク完了の条件)
 
-1. `uv run pytest` 全件グリーン(現在847件+device 18件skip)
+1. `uv run pytest` 全件グリーン(現在850件+device 18件skip)
 2. `git grep "172\.16\."` が空
 3. 機器通信に触れた変更は実機スモーク(`-m device` のread-onlyスイート)を実行し、結果を `docs/verification/`(IP・シリアル非記載)に記録する

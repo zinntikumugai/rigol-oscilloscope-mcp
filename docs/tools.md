@@ -209,11 +209,13 @@ Auto Setupは利用者の設定を大きく上書きするため、confirmトー
 
 ## 6. Measurement Assistant(Phase 3)
 
-### `recommend_setup` — READ_ONLY / Phase 3
+Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定目的→推奨設定の対応表(信号種別10種)、UART・未知信号のワークフロー、安全プロンプト、反復上限ガイダンスは [`skills/measurement-workflows/SKILL.md`](../skills/measurement-workflows/SKILL.md) に記載し、Claudeプラグイン([Requirements.md](Requirements.md) 10.3)として配布する。
+
+### `recommend_setup` — READ_ONLY / Phase 3(未実装・フォールバック)
 
 測定目的(signal_type, expected_voltage, expected_frequency など)から推奨設定と根拠(`reasoning_summary`)・警告(`warnings`)を返す。**機器設定は変更しない**。
 
-注記: 推奨ロジックはLLM自身の知識+配布スキル(10章)で代替できる可能性が高く、実装優先度は低い(MVPクリティカルパス外)。スキルでの代替を優先検討する。
+注記: 推奨ロジックはLLM自身の知識+同梱スキルで代替しており、**本Toolは実装していない**。スキルで精度不足が実証された場合のフォールバックとして仕様のみ残す。
 
 ---
 
@@ -246,7 +248,7 @@ Auto Setupは利用者の設定を大きく上書きするため、confirmトー
 | `configure_trigger` | SAFE_WRITE | 2 |
 | `run` / `stop` / `single` | SAFE_WRITE | 2 |
 | `autoset` | RESTRICTED_WRITE | 2 |
-| `recommend_setup` | READ_ONLY | 3 |
+| `recommend_setup`(未実装・スキルで代替) | READ_ONLY | 3 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
 将来(Phase 4): プロトコルデコード、Logic Analyzer、AFG(出力ONはDANGEROUS_WRITE)、高度解析。
