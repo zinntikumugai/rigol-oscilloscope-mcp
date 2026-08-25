@@ -1,0 +1,180 @@
+"""service/measurement.py のテスト。
+
+無効値(機器の番兵値)を正常値としてLLMに解釈させないこと(tools.md 5章)を
+warnings で確認する。
+"""
+
+import json
+
+import pytest
+
+from rigol_oscilloscope_mcp.driver.scope import ScopeDriver
+from rigol_oscilloscope_mcp.driver.session import ScpiSession
+from rigol_oscilloscope_mcp.errors import ErrorCode, ScopeError
+from rigol_oscilloscope_mcp.profiles import load_profile
+from rigol_oscilloscope_mcp.service.measurement import measure
+from rigol_oscilloscope_mcp.testing import FakeScope, FakeTransport
+from rigol_oscilloscope_mcp.testing import fake_scope as fake_scope_module
+
+
+def make_driver(scope: FakeScope, profile_name: str = "mho98") -> ScopeDriver:
+    transport = FakeTransport(scope)
+    transport.open()
+    return ScopeDriver(ScpiSession(transport), load_profile(profile_name))
+
+
+@pytest.fixture
+def scope() -> FakeScope:
+    return FakeScope()
+
+
+@pytest.fixture
+def driver(scope: FakeScope) -> ScopeDriver:
+    return make_driver(scope)
+
+
+@pytest.fixture
+def generic_driver(scope: FakeScope) -> ScopeDriver:
+    return make_driver(scope, "rigol-generic")
+
+
+# --------------------------------------------------------------------------
+# 正常系
+# --------------------------------------------------------------------------
+
+
+def test_measure_returns_channel(driver: ScopeDriver) -> None:
+    assert measure(driver, "CH1", ["frequency"])["channel"] == "CH1"
+
+
+def test_measure_normalizes_channel_name(driver: ScopeDriver) -> None:
+    assert measure(driver, "chan1", ["frequency"])["channel"] == "CH1"
+
+
+def test_measure_values_use_si_suffixed_keys(driver: ScopeDriver) -> None:
+    result = measure(driver, "CH1", ["frequency", "vpp", "duty", "rise_time"])
+
+    assert list(result["values"]) == [
+        "frequency_hz",
+        "vpp_v",
+        "duty_ratio",
+        "rise_time_s",
+    ]
+
+
+def test_measure_values_match_fake_readings(driver: ScopeDriver) -> None:
+    result = measure(driver, "CH1", ["frequency", "vpp"])
+
+    assert result["values"]["frequency_hz"] == pytest.approx(1000.1)
+    assert result["values"]["vpp_v"] == pytest.approx(3.268)
+
+
+def test_measure_quality_is_keyed_by_semantic_name(driver: ScopeDriver) -> None:
+    result = measure(driver, "CH1", ["frequency", "vpp"])
+
+    assert result["quality"] == {"frequency": "valid", "vpp": "valid"}
+
+
+def test_measure_has_no_warnings_when_all_valid(driver: ScopeDriver) -> None:
+    assert measure(driver, "CH1", ["frequency", "vpp"])["warnings"] == []
+
+
+def test_measure_result_is_json_serializable(driver: ScopeDriver) -> None:
+    text = json.dumps(measure(driver, "CH1", ["frequency"]))
+
+    assert json.loads(text)["values"]["frequency_hz"] == pytest.approx(1000.1)
+
+
+def test_measure_dedupes_preserving_order(driver: ScopeDriver, scope: FakeScope) -> None:
+    scope.command_log.clear()
+
+    result = measure(driver, "CH1", ["vpp", "frequency", "vpp", "frequency"])
+
+    assert list(result["values"]) == ["vpp_v", "frequency_hz"]
+    assert len(scope.command_log) == 2
+
+
+# --------------------------------------------------------------------------
+# 異常系
+# --------------------------------------------------------------------------
+
+
+def test_measure_rejects_empty_list(driver: ScopeDriver) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        measure(driver, "CH1", [])
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+
+
+def test_measure_rejects_empty_list_without_sending(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.command_log.clear()
+
+    with pytest.raises(ScopeError):
+        measure(driver, "CH1", [])
+
+    assert scope.command_log == []
+
+
+def test_measure_rejects_unknown_channel(driver: ScopeDriver) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        measure(driver, "CH9", ["frequency"])
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+
+
+def test_measure_propagates_unsupported_feature(generic_driver: ScopeDriver) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        measure(generic_driver, "CH1", ["rise_time"])
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+
+
+# --------------------------------------------------------------------------
+# 無効値(番兵値)
+# --------------------------------------------------------------------------
+
+
+def test_measure_invalid_value_is_none_with_warning(
+    driver: ScopeDriver, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(fake_scope_module._MEASURE_VALUES, "VPP", "9.9E+37")
+
+    result = measure(driver, "CH1", ["frequency", "vpp"])
+
+    assert result["values"]["vpp_v"] is None
+    assert result["quality"]["vpp"] == "unknown"
+    assert result["warnings"] == [
+        "vpp measurement is invalid (possibly no signal or not yet settled)"
+    ]
+
+
+def test_measure_valid_items_are_unaffected_by_invalid_one(
+    driver: ScopeDriver, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(fake_scope_module._MEASURE_VALUES, "VPP", "9.9E+37")
+
+    result = measure(driver, "CH1", ["frequency", "vpp"])
+
+    assert result["values"]["frequency_hz"] == pytest.approx(1000.1)
+    assert result["quality"]["frequency"] == "valid"
+
+
+def test_measure_warns_once_per_invalid_item(
+    driver: ScopeDriver, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(fake_scope_module._MEASURE_VALUES, "VPP", "9.9E+37")
+    monkeypatch.setitem(fake_scope_module._MEASURE_VALUES, "VMIN", "-9.9E+37")
+
+    warnings = measure(driver, "CH1", ["vpp", "vmin"])["warnings"]
+
+    assert len(warnings) == 2
+    assert warnings[0].startswith("vpp ")
+    assert warnings[1].startswith("vmin ")
+
+
+def test_measure_exported_from_service_package() -> None:
+    from rigol_oscilloscope_mcp import service
+
+    assert service.measure is measure

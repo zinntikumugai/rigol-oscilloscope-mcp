@@ -96,7 +96,7 @@ API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。「500 mV」「20 us」等の�
 |---|---|---|---|
 | `sections` | string[] | – | 取得セクションの絞り込み: `channels` / `timebase` / `trigger` / `acquisition`。省略時は全セクション |
 
-全取得は約38クエリ・実測約1.3秒(負荷時はさらに増加)かかるため、目的が明確な場合は `sections` での絞り込みを推奨する(この旨をTool descriptionに記載する)。
+全取得は約39クエリ・実測1.3〜1.5秒(負荷時はさらに増加)かかるため、目的が明確な場合は `sections` での絞り込みを推奨する(この旨をTool descriptionに記載する)。
 
 ### `get_channel` — READ_ONLY / Phase 1
 
@@ -192,14 +192,14 @@ Auto Setupは利用者の設定を大きく上書きするため、confirmトー
 
 | 名前 | 型 | 必須 | 説明 |
 |---|---|---|---|
-| `path` | string | – | 保存先。ディレクトリまたはファイルパス。省略時は設定のデフォルトディレクトリ + タイムスタンプ名(`scope_YYYYmmdd_HHMMSS.png`) |
+| `path` | string | – | 保存先。ディレクトリまたはファイルパス。省略時は設定のデフォルトディレクトリ + タイムスタンプ名(`scope_YYYYmmdd_HHMMSS_mmm.png`。`mmm` はミリ秒3桁で、同一秒内の連続撮影でも上書きしない)。**相対パスはデフォルトディレクトリを基準**に解決する(プロセスのカレントディレクトリ基準ではない)。デフォルトディレクトリの既定はサーバーを起動した実行ディレクトリ(`PWD` 環境変数。無効時はプロセスのカレントディレクトリ)で、`RIGOL_MCP_SCREENSHOT_DIR` で明示指定できる |
 | `format` | `"png"` \| `"jpg"` \| `"jpeg"` \| `"bmp"` \| `"webp"` | – | 省略時は `path` の拡張子から推定。拡張子も無ければ png |
 | `return_image` | bool | – | 既定 true。MCP image content として画像も返す(LLM Visionでの波形確認用)。トークン節約時は false |
 
 動作:
 
 1. プロファイルのスクリーンショットコマンド(MHO98: `:DISPlay:DATA?` → PNG 約97KB)で画像取得
-2. `path` を `~` 展開・正規化し、許可ルート([Requirements.md](Requirements.md) 9章)内であることを検証。外なら `INVALID_PARAMETER`
+2. `path` を `~` 展開・(相対ならデフォルトディレクトリ基準で)正規化し、許可ルート([Requirements.md](Requirements.md) 9章 = 明示指定 + デフォルト保存先 + 一時ディレクトリ)内であることを検証。外なら `INVALID_PARAMETER`(`detail.hint` で `RIGOL_MCP_ALLOWED_DIRS` を案内)
 3. 指定形式へ変換(Pillow)して保存。機器返却形式と同一ならそのまま保存
 4. 返却: 保存した絶対パス、形式、サイズ、(`return_image=true` なら)画像本体
 

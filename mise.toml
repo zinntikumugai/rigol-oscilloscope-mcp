@@ -1,0 +1,7 @@
+[tools]
+python = "3.13"
+uv = "latest"
+
+[env]
+# .pyc / __pycache__ をリポジトリに生成させない
+PYTHONDONTWRITEBYTECODE = "1"

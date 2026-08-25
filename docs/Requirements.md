@@ -10,6 +10,7 @@
 - [tools.md](tools.md) — MCP Toolカタログ(引数・返却・操作クラスの詳細)
 - [device-profiles.md](device-profiles.md) — 機種プロファイル仕様と検証済みプロファイル
 - [verification/mho98-phase0.md](verification/mho98-phase0.md) — Phase 0 実機検証結果(実測エビデンス)
+- [verification/mho98-mvp.md](verification/mho98-mvp.md) — MVP(Phase 1 + 2)実機検証結果
 - [roadmap.md](roadmap.md) — 今後の対応予定(MVP対象外の機能・検討事項)
 
 ---
@@ -252,6 +253,8 @@ Phase 0 実機検証([verification/mho98-phase0.md](verification/mho98-phase0.md
 
 不正なニモニックは機器が無応答となり、タイムアウト(既定5秒)とエラーキュー汚染のコストを伴う(実測)。プロファイルで確認されていないニモニック・測定項目は実機へ送信せず、Tool呼び出し時点で `UNSUPPORTED_FEATURE` を返す。
 
+さらにMVPの実機検証で、**未定義ヘッダのクエリを1回送るだけで機器のSCPIサーバー全体が沈黙し、TCP再接続でも回復しない**ことが判明した(空行 `\n` を1本送ると即座に回復する)。本規範の重要度はPhase 0時点の想定より一段高い。回復手段として、LAN接続の確立直後に空行を1本送る([verification/mho98-mvp.md](verification/mho98-mvp.md) 3.1)。
+
 ### 7.3 requested / applied 両値返却
 
 機器が設定値をスナップするかは機種依存(MHO98は1-2-5にスナップせず指定値をそのまま適用)。設定系Toolは要求値と、read-backで得た実際の適用値を両方返し、LLMは適用値を後続判断に使う。
@@ -292,7 +295,7 @@ confirmトークンの発行・消費、プロファイル解決結果も記録�
 
 ### 8.1 レスポンスとタイムアウト
 
-実測(単一クエリ 30–40 ms、負荷時 0.9–3.0 s、`get_state` ≒ 38クエリで約1.3 s)に基づき、旧v0.1の「設定Query 1秒以内」目標は撤回する。
+実測(単一クエリ 30–40 ms、負荷時 0.9–3.0 s、`get_state` ≒ 39クエリで 1.3–1.5 s)に基づき、旧v0.1の「設定Query 1秒以内」目標は撤回する。
 
 - 単一SCPIクエリのデフォルトタイムアウト: **5秒**(実測で妥当性確認済み。設定で変更可)
 - 複合操作(`get_state` 全取得など)は数秒かかりうることをTool descriptionに明示し、`sections` 絞り込みを提供する
@@ -304,7 +307,7 @@ SCPI通信断時は (1) エラー返却 → (2) 次回Tool呼び出し時に自�
 
 ### 8.3 可観測性
 
-ログレベルは ERROR / WARN / INFO / DEBUG の4段階(旧TRACEはDEBUGに統合)。DEBUGでSCPI送受信を記録できるが、デフォルトでは抑制する。監査ログ(7.6)は通常ログと分離して保存する。
+ログレベルは ERROR / WARN / INFO / DEBUG の4段階(旧TRACEはDEBUGに統合)。DEBUGでSCPI送受信を記録できるが、デフォルトでは抑制する。通常ログの出力先は**stderr**(stdioのstdoutはMCPプロトコル専用)。監査ログ(7.6)は通常ログと分離して保存する。
 
 ### 8.4 セキュリティ
 
@@ -324,12 +327,18 @@ Tool引数(会話でのユーザー指示) > 環境変数 > 設定ファイル >
 | `RIGOL_MCP_TRANSPORT` | `lan` / `usb` | addressから推定 |
 | `RIGOL_MCP_PORT` | LAN SCPIポート | プロファイル既定(5555) |
 | `RIGOL_MCP_TIMEOUT_S` | 単一クエリタイムアウト | 5 |
-| `RIGOL_MCP_SCREENSHOT_DIR` | スクリーンショットのデフォルト保存先 | カレントディレクトリ |
-| `RIGOL_MCP_ALLOWED_DIRS` | 書き込み許可ルート(パス区切りで複数) | デフォルト保存先 + カレント |
+| `RIGOL_MCP_SCREENSHOT_DIR` | スクリーンショットのデフォルト保存先 | 実行ディレクトリ(`PWD`。無効時はカレントディレクトリ) |
+| `RIGOL_MCP_ALLOWED_DIRS` | 書き込み許可ルート(パス区切りで複数) | デフォルト保存先 + 一時ディレクトリ |
 | `RIGOL_MCP_WAVEFORM_MAX_POINTS` | 波形取得の既定上限 | 100000 |
 | `RIGOL_MCP_RAW_SCPI` | `raw_scpi` Toolの有効化 | false |
 | `RIGOL_MCP_LOG_LEVEL` | ログレベル | info |
-| `RIGOL_MCP_AUDIT_LOG` | 監査ログ出力先 | 有効(既定パス) |
+| `RIGOL_MCP_AUDIT_LOG` | 監査ログ出力先 | 有効(`$XDG_STATE_HOME`(既定 `~/.local/state`)`/rigol-oscilloscope-mcp/audit.jsonl`)。`off` / `false` / `0` / `no` で無効 |
+
+保存先パスの扱い:
+
+- `path` 引数の**相対パスはデフォルト保存先を基準**に解決する。プロセスのカレントディレクトリは基準にしない(`uv run --directory` 起動ではサーバー自身のプロジェクトを指してしまうため)
+- 書き込み許可ルートは「`RIGOL_MCP_ALLOWED_DIRS` の明示指定 + デフォルト保存先 + 一時ディレクトリ(`tempfile.gettempdir()`、POSIXでは `/tmp` の実体)」。プロセスのカレントディレクトリは**含めない**
+- 許可ルート外への保存は `INVALID_PARAMETER` で拒否し、エラーの `detail.hint` で `RIGOL_MCP_ALLOWED_DIRS` による追加方法を案内する
 
 デバイスをコンフィグに固定する運用(旧v0.1の `devices.mho98.host` 直書き)は廃止し、上記デフォルト+会話指示の組み合わせに置き換える。
 
@@ -342,7 +351,7 @@ Tool引数(会話でのユーザー指示) > 環境変数 > 設定ファイル >
 - GitHubリポジトリからの `uvx` 起動を標準とする(PyPI公開は当面しない):
 
 ```bash
-uvx --from git+https://github.com/<owner>/rigol-oscilloscope-mcp rigol-oscilloscope-mcp
+uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp rigol-oscilloscope-mcp
 ```
 
 - タグ付きリリースを行い、`@<tag>` でのバージョン固定起動をサポートする
@@ -357,7 +366,7 @@ uvx --from git+https://github.com/<owner>/rigol-oscilloscope-mcp rigol-oscillosc
   "mcpServers": {
     "rigol-oscilloscope": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/<owner>/rigol-oscilloscope-mcp", "rigol-oscilloscope-mcp"],
+      "args": ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp", "rigol-oscilloscope-mcp"],
       "env": { "RIGOL_MCP_SCREENSHOT_DIR": "~/scope-captures" }
     }
   }
@@ -369,7 +378,7 @@ uvx --from git+https://github.com/<owner>/rigol-oscilloscope-mcp rigol-oscillosc
 ```toml
 [mcp_servers.rigol-oscilloscope]
 command = "uvx"
-args = ["--from", "git+https://github.com/<owner>/rigol-oscilloscope-mcp", "rigol-oscilloscope-mcp"]
+args = ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp", "rigol-oscilloscope-mcp"]
 
 [mcp_servers.rigol-oscilloscope.env]
 RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
@@ -384,44 +393,50 @@ MCPサーバー本体に加え、測定ワークフロー(段階的な未知信�
 ### 11.1 フェーズ
 
 - **Phase 0 — SCPI検証: 完了。** 結果は [verification/mho98-phase0.md](verification/mho98-phase0.md)
-- **Phase 1 — Read Only MCP:** `connect` / `disconnect` / `scope_identify` / `get_capabilities` / `get_state` / `get_*` / `measure` / `capture_waveform` / `capture_screenshot`。機器を変更できない状態でMCP連携とプロファイル機構を検証
-- **Phase 2 — Basic Control:** `configure_*` / `run` / `stop` / `single` / `autoset`。Safety Layer(操作クラス・confirmトークン)導入
+- **Phase 1 — Read Only MCP: 完了。** `connect` / `disconnect` / `scope_identify` / `get_capabilities` / `get_state` / `get_*` / `measure` / `capture_waveform` / `capture_screenshot`。機器を変更できない状態でMCP連携とプロファイル機構を検証
+- **Phase 2 — Basic Control: 完了。** `configure_*` / `run` / `stop` / `single` / `autoset`。Safety Layer(操作クラス・confirmトークン)導入。MVPの実機検証結果は [verification/mho98-mvp.md](verification/mho98-mvp.md)
 - **Phase 3 — Measurement Assistant:** スキル(または `recommend_setup`)による測定目的→設定の実用化
 - **Phase 4 — Advanced:** シリアルデコード、Logic Analyzer、AFG、高度解析
 
 ### 11.2 受入基準(MVP = Phase 1 + 2)
 
+消化状況(2026-08-25)。各項目の末尾に根拠を示す。「実機PASS」は
+[verification/mho98-mvp.md](verification/mho98-mvp.md) に記録したMHO98実機での確認、
+「FakeScope」は内蔵のフェイク機器を使った実機不要の検証を指す
+(`tests/test_server_phase1.py` / `tests/test_server_phase2.py` はMCPクライアントセッション経由)。
+
 **接続・識別**
 
-- [ ] 会話で指定したIPアドレスへ `connect` で接続できる(USBはVISAリソースで接続できる)
-- [ ] 接続先未指定かつデフォルト設定なしのとき、ユーザーへの確認を促すエラーが返る
-- [ ] `scope_identify` がモデル・プロファイル名・信頼度を返す
-- [ ] 未知のRigol機種で generic プロファイルにフォールバックし、その旨が明示される
-- [ ] 切断時に適切なエラーとなり、次回呼び出しで再接続を試行する
+- [x] 会話で指定したIPアドレスへ `connect` で接続できる(tests/device/test_readonly.py::test_identify、LAN実機PASS)
+- [ ] USBはVISAリソースで接続できる — **実機未検証**。VISAリソース文字列からのUSB推定・USBTMCの送受信は tests/test_usb_transport.py / tests/test_connection.py::test_visa_resource_address_infers_usb でユニット検証済み(PyVISAのフェイク)。実機確認は [roadmap.md](roadmap.md) 4章へ
+- [x] 接続先未指定かつデフォルト設定なしのとき、ユーザーへの確認を促すエラーが返る(tests/test_server_phase1.py::test_connect_without_address_asks_the_user, tests/test_connection.py, FakeScope)
+- [x] `scope_identify` がモデル・プロファイル名・信頼度を返す(tests/device/test_readonly.py::test_identify で `mho98`/`verified` を実機PASS、tests/test_server_phase1.py でTool返却を検証)
+- [x] 未知のRigol機種で generic プロファイルにフォールバックし、その旨が明示される(tests/test_profiles.py::test_resolve_unknown_rigol_model_falls_back_to_generic ほか、FakeScope。非Rigolベンダーの警告も同ファイル)
+- [x] 切断時に適切なエラーとなり、次回呼び出しで再接続を試行する(tests/test_connection.py::test_require_scope_reconnects_a_dropped_link / ::test_require_scope_reports_disconnected_when_reconnect_fails、FakeScope)
 
 **状態・操作**
 
-- [ ] CH1〜CH4 / Timebase / Trigger の状態を取得できる(`sections` 絞り込み含む)
-- [ ] CH ON/OFF・Vertical Scale・Probe Ratio・Timebase・Edge Trigger を変更でき、requested / applied が返る
-- [ ] Run / Stop / Single を実行できる
+- [x] CH1〜CH4 / Timebase / Trigger の状態を取得できる(`sections` 絞り込み含む)(tests/device/test_readonly.py::test_get_state_all_sections / ::test_get_state_trigger_section_only、実機PASS。全取得1.500 s / trigger のみ0.267 s)
+- [x] CH ON/OFF・Vertical Scale・Probe Ratio・Timebase・Edge Trigger を変更でき、requested / applied が返る(tests/device/test_write.py 全9件、実機PASS・復元漏れゼロ)
+- [x] Run / Stop / Single を実行できる(tests/device/test_write.py::test_run_stop_single、実機PASS)
 
 **Measurement・データ**
 
-- [ ] frequency / vpp / rms / rise_time / fall_time を取得できる(SI単位付きキー)
-- [ ] プロファイル未対応の測定項目は実機へ送信されず `UNSUPPORTED_FEATURE` が返る
-- [ ] 波形サンプルを取得でき、電圧値(V)へ正しく変換されている
-- [ ] スクリーンショットを指定パスへ png / jpg で保存でき、image content も返る
-- [ ] 許可ルート外への保存指定が `INVALID_PARAMETER` で拒否される
+- [x] frequency / vpp / rms / rise_time / fall_time を取得できる(SI単位付きキー)(tests/device/test_readonly.py::test_measure_all_items_on_ch1、10項目すべて実機PASS)
+- [x] プロファイル未対応の測定項目は実機へ送信されず `UNSUPPORTED_FEATURE` が返る(tests/test_scope_driver.py::test_measure_unsupported_name_is_not_sent / ::test_measure_rejects_unknown_name_without_sending で「送信していないこと」を検証、tests/test_measurement_service.py::test_measure_propagates_unsupported_feature、FakeScope)
+- [x] 波形サンプルを取得でき、電圧値(V)へ正しく変換されている(tests/device/test_readonly.py::test_capture_waveform_ch1、実機PASS。1000点・実効200 kSa/s)
+- [x] スクリーンショットを指定パスへ png / jpg で保存でき、image content も返る(保存: tests/device/test_readonly.py::test_capture_screenshot_png / ::test_capture_screenshot_jpg、実機PASS。image content の返却: tests/test_server_phase1.py::test_capture_screenshot_returns_image_content、FakeScope)
+- [x] 許可ルート外への保存指定が `INVALID_PARAMETER` で拒否される(tests/test_server_phase1.py::test_capture_screenshot_rejects_path_outside_allowed_roots, tests/test_paths.py、FakeScope)
 
 **Safety**
 
-- [ ] 50Ωへの変更・Auto Setup が confirmトークンなしで実行されない
-- [ ] `raw_scpi` がデフォルト無効
-- [ ] 書き込み操作が監査ログに Before / After 付きで記録される
+- [x] 50Ωへの変更・Auto Setup が confirmトークンなしで実行されない(tests/test_server_phase2.py::test_50ohm_requires_confirmation_then_succeeds / ::test_autoset_requires_confirmation_then_returns_state / ::test_confirm_token_is_bound_to_the_arguments、FakeScope。**どちらも危険操作のため実機へは意図的に送っていない**)
+- [x] `raw_scpi` がデフォルト無効(tests/test_config.py::test_defaults_with_empty_env で `raw_scpi is False`、tests/test_server_phase2.py::test_list_tools_exposes_phase1_and_phase2 で公開Tool 19個に含まれないことを検証)
+- [x] 書き込み操作が監査ログに Before / After 付きで記録される(tests/device/test_write.py::test_audit_log_records_every_write で実機の書き込み40行を検証、tests/test_server_phase2.py::test_write_operations_are_audited、FakeScope)
 
 **AI連携**
 
-- [ ] 1.1の3つの利用例(接続指示 / x10プローブで1kHz 3V波形表示 / スクショ保存)がLLMからMCP経由で完遂できる
+- [ ] 1.1の3つの利用例(接続指示 / x10プローブで1kHz 3V波形表示 / スクショ保存)がLLMからMCP経由で完遂できる — **LLMホストからの通し確認は未実施**。構成要素は分割して担保済み(MCPプロトコル経由のTool呼び出し: tests/test_server_phase1.py / tests/test_server_phase2.py、FakeScope / 機器操作そのもの: tests/device/ 18件、実機PASS)
 
 ## 12. 未決事項
 
@@ -431,7 +446,7 @@ MCPサーバー本体に加え、測定ワークフロー(段階的な未知信�
 2. RAWモード波形ダウンロードのチャンク処理・上限(実機未検証)
 3. 50Ω設定ニモニック(`FIFT` 想定)を含むRESTRICTED_WRITE系コマンドの実機確認
 4. パラメータlimitsの境界値収集(機種プロファイルへの反映方法を含む)
-5. `RUN` / `STOP` / `SINGle` / `AUToset` 書き込みの実機確認
+5. `AUToset` 書き込みの実機確認(`RUN` / `STOP` / `SINGle` はMVPで確認済み。`:RUN` 直後の `:TRIGger:STATus?` は約0.2秒 `STOP` を返すためポーリングが必要 → [verification/mho98-mvp.md](verification/mho98-mvp.md))
 6. MHO98以外の最初の対応機種と、ファミリプロファイルの括り出し時期
 7. 波形一時ファイルの受け渡し方式(保存場所・寿命・クリーンアップ)
 8. Claudeプラグインに同梱するスキルの構成(測定ワークフロー・安全プロンプトの分割)

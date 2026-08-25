@@ -1,0 +1,487 @@
+"""MCPサーバー(Phase 1: Read Only / Phase 2: 書き込み系 Tool群 / tools.md 8章)。
+
+MCP SDK(FastMCP)への依存は本モジュールに閉じ込め、下位層(service / driver)
+はSDKを知らないまま保つ。
+
+Tool実装の規約:
+
+- 本体は全て**同期関数**とし、登録ラッパー(`_checked_tool`)が `manager.lock`
+  で機器アクセス全体を囲んでSCPI送受信を直列化する(Requirements.md 6.5)。
+  各Tool本体はロックを意識しない
+- `ScopeError` はMCPのエラー応答にせず、`{"error": true, "code": ...}` の
+  **正常返却**へ変換する(同じく登録ラッパーが担う)。LLMがコードを機械的に
+  読めるようにするため(tools.md 0.3)
+- 返却は `dict`(JSONプリミティブのみ)。SDKはこれを1つのtext contentとして
+  JSON整形する。スクリーンショットのみ `[メタデータdict, Image]` を返し、
+  text + image の2 contentになる
+"""
+
+from __future__ import annotations
+
+import inspect
+import json
+import logging
+import os
+import sys
+from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
+from dataclasses import asdict
+from functools import wraps
+from typing import Any
+
+from mcp.server.fastmcp import FastMCP, Image
+
+from . import service
+from .config import Config, load_config
+from .errors import ErrorCode, ScopeError
+from .safety import AuditLogger, ConfirmTokenStore, OperationClass, classify
+from .service import ConnectionManager, ConnectionStatus, ControlService
+from .service.connection import DISCONNECTED_MESSAGE
+
+SERVER_NAME = "rigol-oscilloscope-mcp"
+
+INSTRUCTIONS = (
+    "Server for controlling Rigol oscilloscopes over SCPI. "
+    "Connect first with connect (ask the user for the device address), "
+    "then check the current settings with get_state before operating. "
+    "For numeric readings, prefer measure over the capture_screenshot image."
+)
+
+# errors.ErrorCode は機器由来のコード集合。想定外の例外はそれと区別する。
+INTERNAL_ERROR = "INTERNAL_ERROR"
+
+# 実機なしで手動E2Eを行うためのフラグ(FakeScopeを機器の代わりに使う)
+FAKE_ENV_VAR = "RIGOL_MCP_FAKE"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+# --------------------------------------------------------------------------
+# 組み立て
+# --------------------------------------------------------------------------
+
+
+#: config.log_level(9章)→ logging のレベル定数
+_LOG_LEVELS = {
+    "error": logging.ERROR,
+    "warn": logging.WARNING,
+    "info": logging.INFO,
+    "debug": logging.DEBUG,
+}
+
+PACKAGE_LOGGER = __name__.rsplit(".", 1)[0]
+
+
+def _configure_logging(level: str) -> None:
+    """パッケージロガーだけを設定する(Requirements.md 8.3)。
+
+    MCPは**stdoutをプロトコルに使う**ため、出力先は必ずstderr。ルートロガーを
+    汚さないよう basicConfig は使わず、伝播も切る。多重呼び出しで
+    ハンドラが積み重ならないよう、未設定のときだけ1つ付ける。
+    """
+    logger = logging.getLogger(PACKAGE_LOGGER)
+    logger.setLevel(_LOG_LEVELS.get(level, logging.INFO))
+    logger.propagate = False
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(handler)
+
+
+def _fake_enabled(env: Mapping[str, str] | None = None) -> bool:
+    value = (os.environ if env is None else env).get(FAKE_ENV_VAR)
+    return value is not None and value.strip().lower() in _TRUTHY
+
+
+def _fake_transport_factory() -> Callable[[str, str, int, float], Any]:
+    """FakeScope を1台だけ持ち、再接続でも同じ状態を返すファクトリ。"""
+    from .testing import FakeScope, FakeTransport  # noqa: PLC0415 - 通常経路には載せない
+
+    scope = FakeScope()
+
+    def factory(transport: str, address: str, port: int, timeout_s: float) -> FakeTransport:
+        return FakeTransport(scope)
+
+    return factory
+
+
+def _build_manager(config: Config, audit: AuditLogger) -> ConnectionManager:
+    factory = _fake_transport_factory() if _fake_enabled() else None
+    return ConnectionManager(config, transport_factory=factory, audit=audit)
+
+
+# --------------------------------------------------------------------------
+# エラー変換・返却整形
+# --------------------------------------------------------------------------
+
+
+def _tool_result(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """例外を機械可読なエラーdictへ変換する(MCPのisErrorには頼らない)。"""
+
+    @wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except ScopeError as exc:
+            return {"error": True, **exc.to_dict()}
+        except Exception as exc:  # noqa: BLE001 - Toolは例外を漏らさず返す
+            return {
+                "error": True,
+                "code": INTERNAL_ERROR,
+                "message": str(exc),
+                "detail": {"type": type(exc).__name__},
+            }
+
+    return wrapper
+
+
+#: 承認(confirmトークン)を要求する操作クラス(Requirements.md 6.1 / 6.2)
+_CONFIRM_REQUIRED = (OperationClass.RESTRICTED_WRITE, OperationClass.DANGEROUS_WRITE)
+
+
+def _locked(lock: AbstractContextManager[Any]) -> Callable[..., Any]:
+    """Tool本体全体を機器アクセスのロックで囲む(Requirements.md 6.5)。"""
+
+    def decorate(fn: Callable[..., Any]) -> Callable[..., Any]:
+        @wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            with lock:
+                return fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorate
+
+
+def _checked_tool(
+    server: FastMCP, lock: AbstractContextManager[Any]
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """操作クラス表と整合するToolだけを登録するデコレータを返す。
+
+    表(safety/classes.py)を静的な飾りにせず、起動時の不変条件にする:
+    表に無いTool名は `classify` の fail-closed で、承認必須クラスなのに
+    `confirm_token` を受けないToolは SAFETY_POLICY_DENIED で起動を失敗させる。
+
+    併せて、全Toolに共通の定型(ロック取得とエラー変換)をここで一度だけ被せる。
+    実効順序はエラー変換が最外・ロックが本体側(ロック解放後に変換される)。
+    """
+
+    def register(fn: Callable[..., Any]) -> Callable[..., Any]:
+        if classify(fn.__name__) in _CONFIRM_REQUIRED:
+            if "confirm_token" not in inspect.signature(fn).parameters:
+                raise ScopeError(
+                    ErrorCode.SAFETY_POLICY_DENIED,
+                    f"{fn.__name__} requires confirmation for its operation class "
+                    f"but has no confirm_token parameter",
+                    {"tool": fn.__name__},
+                )
+        return server.tool()(_tool_result(_locked(lock)(fn)))
+
+    return register
+
+
+def _profile_dict(name: str | None, confidence: str | None) -> dict | None:
+    return None if name is None else {"name": name, "confidence": confidence}
+
+
+def _status_dict(status: ConnectionStatus) -> dict:
+    """ConnectionStatus をTool返却用のJSON dictへ(tools.md 1章)。"""
+    data: dict[str, Any] = {
+        "connected": status.connected,
+        "address": status.address,
+        "transport": status.transport,
+        "port": status.port,
+        "idn": asdict(status.idn) if status.idn is not None else None,
+        "profile": _profile_dict(status.profile_name, status.profile_confidence),
+        "unsupported_vendor": status.unsupported_vendor,
+    }
+    if not status.connected:
+        # 未接続はエラーにせず、次の一手(connect)をLLMへ示す
+        data["message"] = DISCONNECTED_MESSAGE
+    return data
+
+
+# --------------------------------------------------------------------------
+# サーバー生成
+# --------------------------------------------------------------------------
+
+
+def create_server(
+    config: Config | None = None,
+    connection_manager: ConnectionManager | None = None,
+) -> FastMCP:
+    """Phase 1 / Phase 2 のToolを登録したサーバーを組み立てる。
+
+    `config` 省略時は環境変数・設定ファイルから解決する。
+    `connection_manager` 省略時は生成し、`RIGOL_MCP_FAKE=1` なら実機の代わりに
+    FakeScope へ接続する(実機なしでの手動確認用)。
+    """
+    resolved_config = load_config() if config is None else config
+    _configure_logging(resolved_config.log_level)
+    audit = AuditLogger(resolved_config.audit_log)
+    print(f"audit log: {audit.path or 'disabled'}", file=sys.stderr)
+    manager = (
+        _build_manager(resolved_config, audit)
+        if connection_manager is None
+        else connection_manager
+    )
+    # confirmトークンはサーバー(=セッション)寿命で共有する。世代バインドは
+    # 呼び出しごとに manager.generation を渡すことで効かせる(Requirements.md 6.2)
+    control = ControlService(ConfirmTokenStore(), audit)
+
+    server = FastMCP(SERVER_NAME, instructions=INSTRUCTIONS)
+    _register = _checked_tool(server, manager.lock)
+
+    # -- 接続管理 ---------------------------------------------------------
+
+    @_register
+    def connect(
+        address: str | None = None,
+        transport: str | None = None,
+        port: int | None = None,
+    ) -> dict:
+        """Connect to the oscilloscope.
+
+        Pass the address the user gave you (IP address etc.) as address.
+        If you do not know it, ask the user instead of guessing. When omitted,
+        transport is inferred from the address format ("lan" / "usb") and port
+        falls back to the profile default. Any existing connection is replaced.
+        """
+        return _status_dict(manager.connect(address=address, transport=transport, port=port))
+
+    @_register
+    def disconnect() -> dict:
+        """Close the current connection (not an error if not connected)."""
+        manager.disconnect()
+        return _status_dict(manager.status())
+
+    @_register
+    def scope_identify() -> dict:
+        """Return the connection state and device identity (*IDN?, profile).
+
+        Not an error when disconnected; returns connected: false instead.
+        """
+        return _status_dict(manager.status())
+
+    @_register
+    def get_capabilities() -> dict:
+        """Return the features available on the connected device (channel count, supported features).
+
+        When the profile confidence is generic, unverified features are restricted.
+        """
+        driver = manager.require_scope()
+        status = manager.status()
+        return {
+            "profile": _profile_dict(driver.profile.name, driver.profile.confidence),
+            "capabilities": dict(driver.profile.capabilities),
+            "unsupported_vendor": status.unsupported_vendor,
+        }
+
+    # -- 状態取得 ---------------------------------------------------------
+
+    @_register
+    def get_state(sections: list[str] | None = None) -> dict:
+        """Get the main settings (channels / timebase / trigger / acquisition) in one call.
+
+        When you know what you need, narrowing with sections is much faster
+        (a full read is about 39 queries and can take several seconds).
+        Omitting sections returns every section.
+        """
+        return service.get_state(manager.require_scope(), sections)
+
+    @_register
+    def get_channel(channel: str) -> dict:
+        """Return the state of one channel ("CH1" to "CH4")."""
+        return service.get_channel_dict(manager.require_scope(), channel)
+
+    @_register
+    def get_timebase() -> dict:
+        """Return the horizontal (timebase) state."""
+        return service.get_timebase_dict(manager.require_scope())
+
+    @_register
+    def get_trigger() -> dict:
+        """Return the trigger settings and status."""
+        return service.get_trigger_dict(manager.require_scope())
+
+    @_register
+    def get_acquisition_state() -> dict:
+        """Return the acquisition state (whether it is running, and the trigger status)."""
+        return service.get_acquisition_dict(manager.require_scope())
+
+    # -- 測定・データ取得 -------------------------------------------------
+
+    @_register
+    def measure(channel: str, measurements: list[str]) -> dict:
+        """Measure the given channel.
+
+        Choose measurements from frequency / period / vpp / vmax / vmin / vavg /
+        rms / duty / rise_time / fall_time. Returned values use SI-suffixed keys
+        (frequency_hz, vpp_v, ...); do not trust a value whose quality is not valid.
+        """
+        return service.measure(manager.require_scope(), channel, measurements)
+
+    @_register
+    def capture_waveform(channel: str, max_points: int | None = None) -> dict:
+        """Capture waveform data and return it converted to volts (V).
+
+        When there are many points the data is written to a CSV file and its
+        path is returned in data_file. Screen data may be decimated, so read the
+        effective sample rate as the reciprocal of sample_interval_s.
+        """
+        return service.capture_waveform(
+            manager.require_scope(), resolved_config, channel, max_points
+        )
+
+    @_register
+    def capture_screenshot(
+        path: str | None = None,
+        format: str | None = None,
+        return_image: bool = True,
+    ) -> Any:
+        """Capture the screen, save it, and also return the image (for visual checks).
+
+        path is the destination directory or file (defaults to the configured
+        default directory). A relative path is resolved against the invocation
+        directory (the default save location). Saving outside the allowed roots
+        is rejected (add roots with RIGOL_MCP_ALLOWED_DIRS).
+        format is png / jpg / jpeg / bmp / webp. With return_image=false only the
+        metadata is returned, without the image (saves tokens).
+        For numeric readings use measure, not this image.
+        """
+        shot = service.capture_screenshot(
+            manager.require_scope(), resolved_config, path=path, format=format
+        )
+        metadata = {
+            "saved_path": shot.saved_path,
+            "format": shot.format,
+            "size_bytes": shot.size_bytes,
+            "mime": shot.mime,
+        }
+        if not return_image:
+            return metadata
+        return [metadata, Image(data=shot.image_bytes, format=shot.format)]
+
+    # -- 設定変更(tools.md 3章)-------------------------------------------
+
+    @_register
+    def configure_channel(
+        channel: str,
+        enabled: bool | None = None,
+        scale_v_per_div: float | None = None,
+        offset_v: float | None = None,
+        coupling: str | None = None,
+        probe_ratio: float | None = None,
+        bandwidth_limit: bool | None = None,
+        impedance: str | None = None,
+        confirm_token: str | None = None,
+    ) -> dict:
+        """Configure the vertical axis (a channel). Omitted items are left unchanged.
+
+        channel is "CH1" to "CH4", coupling is DC / AC / GND, impedance is
+        "1M" / "50". Specify at least one item to change. The device may snap
+        values, so trust applied (the read-back value), not requested.
+
+        impedance="50" risks damaging the device and needs the confirmation flow:
+        the first call does not execute and returns a confirm_token, so ask the
+        human user whether to proceed and then call again with the same
+        arguments plus that confirm_token.
+        """
+        return control.configure_channel(
+            manager.require_scope(),
+            manager.generation,
+            channel,
+            enabled=enabled,
+            scale_v_per_div=scale_v_per_div,
+            offset_v=offset_v,
+            coupling=coupling,
+            probe_ratio=probe_ratio,
+            bandwidth_limit=bandwidth_limit,
+            impedance=impedance,
+            confirm_token=confirm_token,
+        )
+
+    @_register
+    def configure_timebase(
+        scale_s_per_div: float | None = None,
+        position_s: float | None = None,
+    ) -> dict:
+        """Configure the horizontal axis (timebase). Omitted items are left unchanged.
+
+        Specify at least one item to change. The device may snap values, so trust
+        applied (the read-back value).
+        """
+        return control.configure_timebase(
+            manager.require_scope(),
+            scale_s_per_div=scale_s_per_div,
+            position_s=position_s,
+        )
+
+    @_register
+    def configure_trigger(
+        source: str | None = None,
+        level_v: float | None = None,
+        slope: str | None = None,
+        sweep_mode: str | None = None,
+    ) -> dict:
+        """Configure the edge trigger. Omitted items are left unchanged.
+
+        source is "CH1" to "CH4", slope is rising / falling / either, and
+        sweep_mode is auto / normal / single. Specify at least one item to change.
+        """
+        return control.configure_trigger(
+            manager.require_scope(),
+            source=source,
+            level_v=level_v,
+            slope=slope,
+            sweep_mode=sweep_mode,
+        )
+
+    # -- Acquisition(tools.md 4章)-----------------------------------------
+
+    @_register
+    def run() -> dict:
+        """Start waveform acquisition (continuous run)."""
+        return control.run(manager.require_scope())
+
+    @_register
+    def stop() -> dict:
+        """Stop waveform acquisition (freezes the waveform on screen)."""
+        return control.stop(manager.require_scope())
+
+    @_register
+    def single() -> dict:
+        """Perform a single-shot acquisition (triggers once, then stops)."""
+        return control.single(manager.require_scope())
+
+    @_register
+    def autoset(confirm_token: str | None = None) -> dict:
+        """Run Auto Setup (autoscale).
+
+        This changes the current settings substantially (vertical scale,
+        timebase and trigger are auto-adjusted and the previous settings are
+        lost), so it needs the confirmation flow: the first call does not
+        execute and returns a confirm_token, so ask the human user whether to
+        proceed and then call again with that confirm_token.
+        After execution the changed main settings are returned in state.
+        """
+        return control.autoset(
+            manager.require_scope(), manager.generation, confirm_token
+        )
+
+    return server
+
+
+# --------------------------------------------------------------------------
+# エントリポイント
+# --------------------------------------------------------------------------
+
+
+def main() -> int:
+    """stdioでサーバーを起動する。設定エラーは stderr へ出して終了する。"""
+    try:
+        server = create_server()
+    except ScopeError as exc:
+        print(json.dumps(exc.to_dict(), ensure_ascii=False), file=sys.stderr)
+        return 1
+    server.run()
+    return 0
