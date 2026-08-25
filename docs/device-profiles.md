@@ -1,7 +1,7 @@
 # 機種プロファイル仕様
 
 **対象文書:** [Requirements.md](Requirements.md) 4章の詳細仕様
-**実測根拠:** [phase0-results.md](phase0-results.md)
+**実測根拠:** [verification/mho98-phase0.md](verification/mho98-phase0.md)
 
 本システム `rigol-oscilloscope-mcp` は、Rigolオシロスコープの機種ごとの個体差(SCPI方言、対応機能、パラメータ範囲)を**機種プロファイル**で吸収する。プロファイルはコードから分離した宣言的データ(パッケージ同梱のYAML)とし、新機種対応をプロファイル追加だけで完結できることを目標とする。
 
@@ -76,7 +76,7 @@ limits が未定義の項目は、(1) 保守的なデフォルト範囲で検証
 
 ## 3. 検証済みプロファイル: MHO98
 
-Phase 0 実機検証([phase0-results.md](phase0-results.md)、firmware 00.01.00)に基づく最初の verified プロファイル。プロファイル仕様の実例を兼ねる。
+Phase 0 実機検証([verification/mho98-phase0.md](verification/mho98-phase0.md)、firmware 00.01.00)に基づく最初の verified プロファイル。プロファイル仕様の実例を兼ねる。
 
 ```yaml
 # profiles/mho98.yaml (イメージ)

@@ -9,7 +9,7 @@
 
 - [tools.md](tools.md) — MCP Toolカタログ(引数・返却・操作クラスの詳細)
 - [device-profiles.md](device-profiles.md) — 機種プロファイル仕様と検証済みプロファイル
-- [phase0-results.md](phase0-results.md) — Phase 0 実機検証結果(実測エビデンス)
+- [verification/mho98-phase0.md](verification/mho98-phase0.md) — Phase 0 実機検証結果(実測エビデンス)
 - [roadmap.md](roadmap.md) — 今後の対応予定(MVP対象外の機能・検討事項)
 
 ---
@@ -86,7 +86,7 @@ LLMに `:CHAN1:SCAL 1` のようなSCPI文字列を直接生成・送信させ�
 
 ### 3.1 対象機種
 
-- **第一検証機:** RIGOL MHO98(Phase 0 実機検証済み → [phase0-results.md](phase0-results.md))
+- **第一検証機:** RIGOL MHO98(Phase 0 実機検証済み → [verification/mho98-phase0.md](verification/mho98-phase0.md))
 - **プロファイル対応機種:** 同型のSCPI対応Rigolオシロスコープ(MHO/DHO系など)。機種ごとの個体差(SCPI方言、機能有無、パラメータ範囲)は機種プロファイル([device-profiles.md](device-profiles.md))で吸収する
 - **未知のRigol機種:** `*IDN?` に基づく汎用プロファイルでベストエフォート動作(degradedであることを明示)
 - Rigol以外のベンダーは対象外(接続時に警告を返すが拒否はしない)
@@ -241,7 +241,7 @@ RESTRICTED_WRITE / DANGEROUS_WRITE の承認は、ホストUIに依存しない2
 
 ## 7. 動作原則
 
-Phase 0 実機検証([phase0-results.md](phase0-results.md))から導かれた、全機種共通の規範。
+Phase 0 実機検証([verification/mho98-phase0.md](verification/mho98-phase0.md))から導かれた、全機種共通の規範。
 
 ### 7.1 エラーキュー管理
 
@@ -383,7 +383,7 @@ MCPサーバー本体に加え、測定ワークフロー(段階的な未知信�
 
 ### 11.1 フェーズ
 
-- **Phase 0 — SCPI検証: 完了。** 結果は [phase0-results.md](phase0-results.md)
+- **Phase 0 — SCPI検証: 完了。** 結果は [verification/mho98-phase0.md](verification/mho98-phase0.md)
 - **Phase 1 — Read Only MCP:** `connect` / `disconnect` / `scope_identify` / `get_capabilities` / `get_state` / `get_*` / `measure` / `capture_waveform` / `capture_screenshot`。機器を変更できない状態でMCP連携とプロファイル機構を検証
 - **Phase 2 — Basic Control:** `configure_*` / `run` / `stop` / `single` / `autoset`。Safety Layer(操作クラス・confirmトークン)導入
 - **Phase 3 — Measurement Assistant:** スキル(または `recommend_setup`)による測定目的→設定の実用化
