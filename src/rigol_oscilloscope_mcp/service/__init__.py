@@ -1,5 +1,34 @@
 """サービス層(接続ライフサイクルと、Toolから呼ばれる操作の組み立て)。"""
 
 from .connection import ConnectionManager, ConnectionStatus
+from .measurement import measure
+from .paths import allowed_roots, resolve_write_path
+from .screenshot import SUPPORTED_FORMATS, ScreenshotResult, capture_screenshot
+from .state import (
+    VALID_SECTIONS,
+    get_acquisition_dict,
+    get_channel_dict,
+    get_state,
+    get_timebase_dict,
+    get_trigger_dict,
+)
+from .waveform import INLINE_POINTS_LIMIT, capture_waveform
 
-__all__ = ["ConnectionManager", "ConnectionStatus"]
+__all__ = [
+    "INLINE_POINTS_LIMIT",
+    "SUPPORTED_FORMATS",
+    "VALID_SECTIONS",
+    "ConnectionManager",
+    "ConnectionStatus",
+    "ScreenshotResult",
+    "allowed_roots",
+    "capture_screenshot",
+    "capture_waveform",
+    "get_acquisition_dict",
+    "get_channel_dict",
+    "get_state",
+    "get_timebase_dict",
+    "get_trigger_dict",
+    "measure",
+    "resolve_write_path",
+]
