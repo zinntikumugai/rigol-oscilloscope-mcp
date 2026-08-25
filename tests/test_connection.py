@@ -181,6 +181,75 @@ def test_reconnect_replaces_previous_connection(
     assert manager.generation == 2
 
 
+# --- 失敗時に既存接続を保持する --------------------------------------------
+
+
+class _ExplodingTransport(FakeTransport):
+    """openは成功するが問い合わせに応答しないトランスポート。"""
+
+    def query(self, command: str, timeout_s: float | None = None) -> str:
+        raise ScopeError(ErrorCode.TIMEOUT, "機器が応答しませんでした", {"command": command})
+
+
+def test_failed_connect_keeps_the_live_connection(
+    manager: ConnectionManager, factory: RecordingFactory
+) -> None:
+    manager.connect(address="192.0.2.10")
+    live = factory.transports[0]
+    driver = manager.require_scope()
+
+    def failing(*args: object) -> FakeTransport:
+        raise ScopeError(ErrorCode.DEVICE_NOT_FOUND, "接続できません")
+
+    manager._transport_factory = failing  # type: ignore[attr-defined]
+
+    with pytest.raises(ScopeError) as excinfo:
+        manager.connect(address="192.0.2.99")
+
+    assert excinfo.value.code == ErrorCode.DEVICE_NOT_FOUND
+    status = manager.status()
+    assert status.connected is True
+    assert status.address == "192.0.2.10"
+    assert manager.generation == 1
+    assert live.is_open is True  # 旧トランスポートはcloseされていない
+    assert driver.identify().model == "MHO98"  # 既存driverで操作を継続できる
+
+
+def test_failed_connect_closes_the_new_transport(
+    manager: ConnectionManager, factory: RecordingFactory
+) -> None:
+    manager.connect(address="192.0.2.10")
+    live = factory.transports[0]
+    doomed = _ExplodingTransport(factory.scope)
+
+    manager._transport_factory = lambda *args: doomed  # type: ignore[attr-defined]
+
+    with pytest.raises(ScopeError) as excinfo:
+        manager.connect(address="192.0.2.99")
+
+    assert excinfo.value.code == ErrorCode.TIMEOUT
+    assert doomed.is_open is False  # 開きかけた新トランスポートは後始末される
+    assert live.is_open is True
+    assert manager.status().address == "192.0.2.10"
+    assert manager.generation == 1
+
+
+def test_failed_connect_while_disconnected_still_errors(
+    manager: ConnectionManager,
+) -> None:
+    def failing(*args: object) -> FakeTransport:
+        raise ScopeError(ErrorCode.DEVICE_NOT_FOUND, "接続できません")
+
+    manager._transport_factory = failing  # type: ignore[attr-defined]
+
+    with pytest.raises(ScopeError) as excinfo:
+        manager.connect(address="192.0.2.99")
+
+    assert excinfo.value.code == ErrorCode.DEVICE_NOT_FOUND
+    assert manager.status().connected is False
+    assert manager.generation == 0
+
+
 # --------------------------------------------------------------------------
 # status / disconnect
 # --------------------------------------------------------------------------

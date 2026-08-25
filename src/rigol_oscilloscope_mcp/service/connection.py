@@ -139,9 +139,11 @@ class ConnectionManager:
         return self._establish(resolved_address, resolved_transport, resolved_port)
 
     def _establish(self, address: str, transport: str, port: int) -> ConnectionStatus:
-        """open → drain → *IDN? → プロファイル解決(Requirements.md 4.4)。"""
-        self.disconnect()
+        """open → drain → *IDN? → プロファイル解決(Requirements.md 4.4)。
 
+        新接続を完全に確立できた場合にのみ既存接続と差し替える。失敗時は旧接続
+        (と generation・status)を無傷のまま残し、開きかけた新接続だけ閉じる。
+        """
         timeout_s = self.config.timeout_s
         link = self._transport_factory(transport, address, port, timeout_s)
         link.open()
@@ -156,7 +158,12 @@ class ConnectionManager:
             link.close()
             raise
 
-        self._transport = link
+        previous, self._transport = self._transport, link
+        if previous is not None:
+            try:
+                previous.close()
+            except Exception:  # noqa: BLE001 - 旧接続の後始末失敗で新接続を捨てない
+                pass
         self._scope = scope
         self.generation += 1
         self._status = ConnectionStatus(
