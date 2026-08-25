@@ -1,1591 +1,436 @@
-# RIGOL MHO98 AI操作MCPサーバー 要件定義書
+# rigol-oscilloscope-mcp 要件定義書
 
-**文書バージョン:** 0.1
-**対象機器:** RIGOL MHO98 Limited Edition
-**システム仮称:** `rigol-oscilloscope-mcp`
-**作成日:** 2026-08-22
+**文書バージョン:** 1.0
+**対象機器:** Rigol製 SCPI対応デジタルオシロスコープ(第一検証機: MHO98)
+**実装環境:** Python(mise + uv 管理)
+**更新日:** 2026-08-25
+
+関連文書:
+
+- [tools.md](tools.md) — MCP Toolカタログ(引数・返却・操作クラスの詳細)
+- [device-profiles.md](device-profiles.md) — 機種プロファイル仕様と検証済みプロファイル
+- [phase0-results.md](phase0-results.md) — Phase 0 実機検証結果(実測エビデンス)
 
 ---
 
-## 1. 概要
+## 1. 概要・目的
 
 ### 1.1 背景
 
-RIGOL MHO98は高機能なデジタルオシロスコープであるが、オシロスコープに不慣れな利用者にとって、以下の設定を適切に行うには一定の知識が必要となる。
+オシロスコープでの測定には Vertical Scale、Timebase、Trigger、Probe Ratio といった設定の知識が必要で、不慣れな利用者には敷居が高い。本システムは、Rigol製オシロスコープをLLMからModel Context Protocol(MCP)経由で操作可能にし、利用者が測定目的を自然言語で伝えるだけで、適切な設定・波形取得・測定・解析を行える環境を提供する。
 
-* Vertical Scale
-* Horizontal Timebase
-* Trigger
-* Coupling
-* Input Impedance
-* Probe Ratio
-* Acquisition Mode
-* Memory Depth
-* Measurement
-* Protocol Decode
-* Logic Analyzer
-* AFG
+想定する利用者の指示の例:
 
-本システムでは、これらの操作をLLMからModel Context Protocol（MCP）経由で実行できるようにし、利用者が
+> 「Rigol MHO98を接続している。IPは192.168.1.120。」
+> 「x10プローブで、1kHz 3Vの波形を見えるようにしてほしい」
+> 「現在の波形をスクショして ~/captures に保存して」
 
-> 「3.3 VのUART 115200 bpsをCH1で確認したい」
+制御経路はGUI自動操作ではなく、Rigol機が標準サポートするSCPI(LAN / USB)とする。
 
-> 「この電源のリップルを確認したい」
-
-> 「この波形の立ち上がり時間とオーバーシュートを調べて」
-
-といった**測定目的を自然言語で指定するだけで、適切なオシロスコープ設定・波形取得・測定・解析を行える環境**を構築する。
-
-MHO98はLANおよびUSB Device経由のSCPIによるリモート制御をサポートしているため、本システムはGUIの自動操作ではなくSCPIを主要な制御経路として使用する。
-
----
-
-# 2. 目的
-
-本システムの目的は以下とする。
+### 1.2 目的
 
 1. オシロスコープの操作知識が十分でなくても測定を実施できること
-2. LLMが測定目的に応じて適切なMHO98設定を選択できること
-3. 波形・測定値・スクリーンショットをLLMが取得できること
+2. 会話で指定された接続先・測定目的に応じて、LLMが適切な設定・取得・解析を行えること
+3. 波形・測定値・スクリーンショットをLLMが取得し、スクリーンショットは指定場所へ画像ファイルとして保存できること
 4. 測定結果に応じてLLMが設定を再調整できること
-5. LLMによる危険な設定変更をMCPサーバー側で防止できること
+5. 危険な設定変更をMCPサーバー側で防止できること
 6. 実行された操作を利用者が追跡できること
-7. 将来的にMHO98固有機能を段階的に追加できること
+7. MHO98以外のRigol機種を、機種プロファイルの追加で段階的にサポートできること
 
----
+### 1.3 名称
 
-# 3. システムコンセプト
+システム名は `rigol-oscilloscope-mcp` に統一する(旧仮称 `rigol-mho98-mcp` は廃止)。
 
-システム構成は以下を基本とする。
+## 2. コンセプトと責任分界
 
-```text
-User
- │
- │ 自然言語
- ▼
-LLM
-(ChatGPT / Claude / Codex 等)
- │
- │ MCP
- ▼
-rigol-mho98-mcp
- │
- ├─ Measurement Planner Interface
- ├─ Safety Policy
- ├─ State Manager
- ├─ SCPI Abstraction
- ├─ Waveform Acquisition
- └─ Audit Log
- │
- │ SCPI
- ▼
-LAN / USB
- │
- ▼
-RIGOL MHO98
-```
-
-MCPサーバーは単なるSCPI Proxyとはせず、
+### 2.1 構成
 
 ```text
-LLM
- ↓
-意味的なTool
- ↓
-安全性検証
- ↓
-SCPI生成
- ↓
-MHO98
+User ──自然言語──▶ LLM (Claude / Codex / ChatGPT 等)
+                     │ MCP (stdio)
+                     ▼
+            rigol-oscilloscope-mcp
+                     │ SCPI (LAN / USB)
+                     ▼
+            Rigolオシロスコープ ── Probe ──▶ DUT
 ```
 
-の責務分離を行う。
-
----
-
-# 4. 基本方針
-
-## 4.1 SCPIの直接公開を避ける
-
-以下のようなToolを基本とする。
+MCPサーバーは単なるSCPIプロキシとせず、次の責務分離を行う:
 
 ```text
-scope.set_channel(...)
-scope.set_timebase(...)
-scope.set_trigger(...)
-scope.measure(...)
+LLM → 意味的Tool → 安全性検証 → プロファイル適用 → SCPI生成 → 機器
 ```
 
-LLMが
+### 2.2 意味的Tool原則(SCPIの直接公開を避ける)
+
+LLMに `:CHAN1:SCAL 1` のようなSCPI文字列を直接生成・送信させる方式を標準動作としない。公開するのは `configure_channel` / `measure` のような意味的Toolのみとする。
+
+理由: 不正コマンド送信の防止、機器状態破壊の防止、パラメータ範囲チェック、安全ポリシー適用、機種・ファームウェア差異の吸収、操作ログの意味的記録。
+
+任意SCPI実行(`raw_scpi`)はデフォルト無効の開発用Toolとしてのみ存在する([tools.md](tools.md) 7章)。
+
+### 2.3 責任分界(成功基準)
+
+本システムの成功基準は「オシロスコープの各ノブやメニュー構造を詳しく知らない利用者でも、何を測定したいのかをAIへ伝えることで、安全性を維持しながら適切な測定を開始できること」とする。
+
+同時に「AIが測定機器の物理的な安全性まで理解している」という前提には立たない:
+
+| 主体 | 責務 |
+|---|---|
+| AI (LLM) | 測定設定の判断と結果解析の支援 |
+| MCPサーバー | 機器制御、パラメータ検証、安全ポリシーの担保、操作記録 |
+| 人間 | DUT・プローブ・グラウンド等の物理接続と電気的安全の担保 |
+
+## 3. 対象範囲
+
+### 3.1 対象機種
+
+- **第一検証機:** RIGOL MHO98(Phase 0 実機検証済み → [phase0-results.md](phase0-results.md))
+- **プロファイル対応機種:** 同型のSCPI対応Rigolオシロスコープ(MHO/DHO系など)。機種ごとの個体差(SCPI方言、機能有無、パラメータ範囲)は機種プロファイル([device-profiles.md](device-profiles.md))で吸収する
+- **未知のRigol機種:** `*IDN?` に基づく汎用プロファイルでベストエフォート動作(degradedであることを明示)
+- Rigol以外のベンダーは対象外(接続時に警告を返すが拒否はしない)
+
+### 3.2 MVP機能範囲
+
+- 接続管理: 会話指示ベースの接続(LAN / USB)、機器識別、プロファイル解決、切断・再接続
+- Analog Channel: CH ON/OFF、Vertical Scale/Offset、Coupling、Probe Ratio、Bandwidth Limit、Input Impedance
+- Horizontal: Timebase Scale/Position、Sample Rate・Memory Depth取得
+- Trigger: Edge Trigger(Source / Level / Slope / Sweep Mode)、Trigger Status
+- Acquisition: Run / Stop / Single / Auto Setup(要承認)
+- Measurement: frequency, period, vpp, vmax, vmin, vavg, rms, duty, rise_time, fall_time
+- データ取得: 波形サンプル、スクリーンショット(ファイル保存 + 画像返却)、状態一括取得
+
+### 3.3 将来対応(Phase 4以降)
+
+シリアルプロトコルデコード(UART/I²C/SPI/CAN/LIN)、Logic Analyzer(D0–D15)、AFG(出力ONはDANGEROUS_WRITE)、ホスト側高度解析(FFT等)。各1行に留め、詳細は着手時に定義する。
+
+### 3.4 非対象
+
+- Firmware Update、Calibration、Factory Service操作、ネットワーク/Wi-Fi設定変更、ライセンス管理、機器内ファイルの任意操作
+- 任意SCPIの無制限実行、電源ON/OFFの外部制御
+- プローブ・DUTの物理接続、電気的安全性の自動保証(人間の責務)
+- 複数台の同時接続(単一アクティブ接続のみ。将来拡張の余地は残す)
+- 機器の自動探索(mDNS / ネットワークスキャン)
+- ネットワークMCP(HTTP/SSE公開)。stdioローカル利用のみ
+
+## 4. アーキテクチャ要件
+
+### 4.1 レイヤ構成
 
 ```text
-:CHAN1:SCAL 1
-```
-
-などのSCPI文字列を直接生成して送信する方式を標準動作としない。
-
-理由は以下。
-
-* 不正なコマンド送信防止
-* 機器状態破壊の防止
-* パラメータ範囲チェック
-* 安全ポリシー適用
-* MHO98ファームウェア差異の吸収
-* 操作ログの意味的記録
-
----
-
-## 4.2 「設定」ではなく「測定目的」を扱えること
-
-低レベルToolに加えて、高レベルなMeasurement Assistant用Toolを提供する。
-
-例:
-
-```text
-prepare_measurement(
-    type="uart",
-    expected_voltage=3.3,
-    baud_rate=115200,
-    channel="CH1"
-)
-```
-
-または汎用的に、
-
-```text
-recommend_setup(
-    signal_type="uart",
-    expected_voltage=3.3,
-    expected_frequency=115200,
-    objective="observe_waveform"
-)
-```
-
-を提供する。
-
-LLMが推奨設定を決定した後、別Toolを使用して実際に設定を反映する。
-
----
-
-# 5. 対象範囲
-
-## 5.1 MVP対象
-
-初期バージョンでは以下を対象とする。
-
-### 接続
-
-* LAN接続
-* USB接続
-* `*IDN?` 等による機器識別
-* 接続状態確認
-* タイムアウト処理
-* 再接続
-
-### Analog Channel
-
-* CH1～CH4 ON/OFF
-* Vertical Scale
-* Vertical Offset
-* Coupling
-* Probe Ratio
-* Bandwidth Limit
-* Input Impedance
-* Channel Label取得
-
-### Horizontal
-
-* Timebase
-* Horizontal Position
-* Sample Rate取得
-* Memory Depth取得
-
-### Trigger
-
-MVPではEdge Triggerを必須とする。
-
-* Source
-* Level
-* Rising
-* Falling
-* Either
-* Trigger Mode
-* Trigger Status
-
-### Acquisition
-
-* Run
-* Stop
-* Single
-* Auto Scale / Auto Setup
-* Acquisition State取得
-
-### Measurement
-
-少なくとも以下を対象とする。
-
-* Frequency
-* Period
-* Vpp
-* Vmax
-* Vmin
-* Vavg
-* RMS
-* Duty Cycle
-* Rise Time
-* Fall Time
-
-### データ取得
-
-* 波形サンプル取得
-* スクリーンショット取得
-* Acquisition Metadata取得
-
-### 状態取得
-
-* 現在の主要設定一覧
-* Channel状態
-* Trigger状態
-* Horizontal状態
-* Acquisition状態
-
----
-
-# 6. 将来対応範囲
-
-以下はMVP後に追加する。
-
-## 6.1 Serial Protocol Decode
-
-MHO98は標準でRS232/UART、I²C、SPI、LIN、CAN、CAN-FDなど複数のシリアルデコード機能を備える。
-
-対象候補:
-
-* UART / RS232
-* I²C
-* SPI
-* CAN
-* CAN-FD
-* LIN
-
-例:
-
-```text
-protocol.configure_uart(...)
-protocol.decode_uart(...)
-```
-
----
-
-## 6.2 Logic Analyzer
-
-以下を対象とする。
-
-* Digital Channel状態取得
-* Threshold設定
-* D0～D15設定
-* Logic Capture
-* Protocol Decode連携
-
-ロジックプローブの物理接続状態についてはAIから完全には確認できないため、人間による確認を前提とする。
-
----
-
-## 6.3 Function / Arbitrary Waveform Generator
-
-MHO98は2ch、100 MHz、1 GSa/sのAFGを搭載する。
-
-将来的に以下を提供する。
-
-```text
-afg.configure(...)
-afg.get_state(...)
-afg.enable(...)
-afg.disable(...)
-```
-
-ただし**出力ONはDangerous Operationとして扱う**。
-
----
-
-## 6.4 高度解析
-
-オシロ本体だけでなくMCPホスト上で以下を解析できる構成を検討する。
-
-* FFT
-* Jitter
-* Overshoot
-* Undershoot
-* Ringing
-* Noise
-* Signal Integrity
-* Statistical Measurement
-
----
-
-# 7. 非対象
-
-初期バージョンでは以下を対象外とする。
-
-* Firmware Update
-* Calibration
-* Factory Service操作
-* Network設定変更
-* Wi-Fi設定変更
-* ライセンス管理
-* 機器内部ファイルの任意操作
-* 任意SCPIコマンドの無制限実行
-* 電源ON/OFFの外部制御
-* プローブの物理接続
-* DUTへの物理配線
-* 電気的安全性の自動保証
-
----
-
-# 8. MCP Tool要件
-
-## 8.1 Device
-
-### `scope.identify`
-
-機器を識別する。
-
-返却例:
-
-```json
-{
-  "manufacturer": "RIGOL TECHNOLOGIES",
-  "model": "MHO98",
-  "serial": "...",
-  "firmware": "...",
-  "connected": true
-}
-```
-
----
-
-### `scope.get_capabilities`
-
-接続された機器が利用可能な機能を返す。
-
-```json
-{
-  "analog_channels": 4,
-  "digital_channels": 16,
-  "afg_channels": 2,
-  "protocol_decode": true,
-  "waveform_download": true
-}
-```
-
-固定値ではなく、可能な限り実機から取得した情報と機種Capabilities定義を組み合わせる。
-
----
-
-### `scope.get_state`
-
-主要設定を一括取得する。
-
-LLMが操作前に現在状態を把握するための主要Toolとする。
-
----
-
-# 9. Channel操作
-
-### `scope.get_channel`
-
-入力:
-
-```text
-channel
-```
-
-取得項目:
-
-* enabled
-* scale
-* offset
-* coupling
-* impedance
-* probe_ratio
-* bandwidth_limit
-
----
-
-### `scope.configure_channel`
-
-入力:
-
-```text
-channel
-enabled?
-scale?
-offset?
-coupling?
-probe_ratio?
-bandwidth_limit?
-impedance?
-```
-
-未指定項目は変更しない。
-
----
-
-## 9.1 Input Impedance
-
-以下を区別する。
-
-```text
-1MΩ
-50Ω
-```
-
-**50Ωへの変更は高リスク設定とする。**
-
-LLMからの通常操作では自動変更しない。
-
-50Ωへ変更する場合は、
-
-1. 現在値確認
-2. Safety Policy判定
-3. 明示的なユーザー承認
-4. 設定変更
-
-を要求する。
-
----
-
-# 10. Horizontal操作
-
-### `scope.configure_timebase`
-
-入力:
-
-```text
-scale
-position?
-```
-
-### `scope.get_timebase`
-
-返却:
-
-* scale
-* position
-* sample_rate
-* memory_depth
-
----
-
-# 11. Trigger操作
-
-### `scope.configure_trigger`
-
-MVP:
-
-```text
-type = edge
-source
-level
-slope
-mode
-```
-
-例:
-
-```json
-{
-  "type": "edge",
-  "source": "CH1",
-  "level": 1.65,
-  "slope": "rising",
-  "mode": "normal"
-}
-```
-
----
-
-### `scope.get_trigger`
-
-現在のTrigger状態を取得する。
-
----
-
-# 12. Acquisition操作
-
-以下を提供する。
-
-```text
-scope.run()
-scope.stop()
-scope.single()
-scope.autoset()
-scope.get_acquisition_state()
-```
-
----
-
-## 12.1 Auto Setup
-
-Auto Setupは便利である一方、利用者が設定した値を大きく変更する。
-
-そのため、
-
-* AIが勝手に最初からAuto Setupを使わない
-* 現在設定を取得する
-* 必要に応じてAuto Setupを使用する
-* 使用したことをTool Resultに明記する
-
-ものとする。
-
----
-
-# 13. Measurement
-
-### `scope.measure`
-
-入力例:
-
-```json
-{
-  "channel": "CH1",
-  "measurements": [
-    "frequency",
-    "vpp",
-    "rms",
-    "rise_time"
-  ]
-}
-```
-
-返却例:
-
-```json
-{
-  "channel": "CH1",
-  "frequency_hz": 1000123,
-  "vpp_v": 3.28,
-  "rms_v": 1.72,
-  "rise_time_s": 4.2e-9
-}
-```
-
----
-
-## 13.1 測定品質情報
-
-可能であれば単なる値だけでなく、
-
-```text
-valid
-overflow
-no_signal
-unstable
-unknown
-```
-
-等の状態を返す。
-
-LLMが無効な測定値を正常値として解釈しない構造とする。
-
----
-
-# 14. 波形取得
-
-### `scope.capture_waveform`
-
-入力:
-
-```text
-channel
-range?
-max_points?
-format?
-```
-
-返却:
-
-* Samples
-* Sample Interval
-* Time Origin
-* Voltage Scale
-* Voltage Offset
-* Channel
-* Acquisition Timestamp
-
-巨大波形をMCPレスポンスへ直接格納することは避ける。
-
-大量データの場合は一時ファイル等として保持し、LLMにはメタデータと参照情報を返す。
-
----
-
-# 15. スクリーンショット
-
-### `scope.capture_screenshot`
-
-現在のMHO98画面を画像として取得する。
-
-用途:
-
-* 波形形状確認
-* Trigger状態確認
-* Protocol Decode確認
-* オシロ画面上の異常確認
-* LLM Visionによる解析
-
-数値測定についてはスクリーンショットOCRではなく、可能な限りSCPI Measurement結果を優先する。
-
----
-
-# 16. Measurement Assistant
-
-本プロジェクトで特に重要な機能とする。
-
-## 16.1 `measurement.recommend_setup`
-
-入力:
-
-```text
-signal_type
-expected_voltage?
-expected_frequency?
-expected_baud_rate?
-channel?
-objective
-```
-
-例:
-
-```json
-{
-  "signal_type": "uart",
-  "expected_voltage": 3.3,
-  "expected_baud_rate": 115200,
-  "channel": "CH1",
-  "objective": "inspect_data"
-}
-```
-
-返却:
-
-```json
-{
-  "recommended": {
-    "coupling": "DC",
-    "probe_ratio": 10,
-    "vertical_scale": 1.0,
-    "timebase": 0.00002,
-    "trigger_source": "CH1",
-    "trigger_level": 1.65,
-    "trigger_slope": "rising"
-  },
-  "reasoning_summary": [
-    "3.3 V logic signal",
-    "115200 bps UART"
-  ],
-  "warnings": []
-}
-```
-
-本Tool自体では機器設定を変更しない。
-
----
-
-## 16.2 推奨プリセット
-
-将来的に少なくとも以下をサポートする。
-
-```text
-digital
-uart
-i2c
-spi
-pwm
-clock
-power_ripple
-switching_power_supply
-audio
-unknown_signal
-```
-
----
-
-# 17. AIフィードバックループ
-
-システムは以下のワークフローを許容する。
-
-```text
-測定目的
+MCP Layer(Toolの公開・入出力変換)
    ↓
-現在状態取得
+Service Layer(測定・波形・状態管理のユースケース)
    ↓
-設定提案
+Safety Layer(操作クラス判定・confirmトークン・パラメータ検証)
    ↓
-設定変更
+Profile-aware Driver(機種プロファイルに基づくSCPI生成・応答解釈)
    ↓
-Single Acquisition
-   ↓
-Measurement取得
-   ↓
-Waveform / Screenshot取得
-   ↓
-LLM解析
-   ↓
-必要なら設定微調整
-   ↓
-再測定
-   ↓
-最終結果
+Transport(LAN raw socket / USB USBTMC)
 ```
 
-ただし無制限ループを禁止する。
+### 4.2 機種プロファイル
 
-標準最大再測定回数を設定可能とする。
+機種差の吸収は宣言的なプロファイルデータ(パッケージ同梱YAML)で行い、コード変更なしで新機種を追加できる構造とする。プロファイルは capabilities(機能有無)/ dialect・quirks(SCPI方言と実機挙動の癖)/ limits(パラメータ範囲)からなり、モデル完全一致 → ファミリ → 汎用Rigol の3層で解決する。詳細は [device-profiles.md](device-profiles.md)。
 
-例:
+### 4.3 トランスポート
+
+- **LAN:** raw socket SCPI。ポートはプロファイル既定(Rigolは5555)。実機検証済み
+- **USB:** USBTMC(PyVISA + pyvisa-py)。VISAリソース文字列での指定に対応
+
+### 4.4 接続ライフサイクル
+
+- 接続先は**会話でのユーザー指示が基本**。`connect(address, transport?, port?)` で接続し、設定(環境変数/コンフィグ)のデフォルト接続先は任意のフォールバック。優先順位: **Tool引数(=会話指示) > 設定デフォルト**。どちらも無ければ、接続先をユーザーに確認するようLLMを誘導するエラーを返す
+- 接続シーケンス: トランスポートopen → エラーキューdrain → `*IDN?` → プロファイル解決 → 識別情報返却
+- 単一アクティブ接続とし、再 `connect` は既存接続を置換する
+- 接続状態は `scope_identify` で確認できる(未接続時もエラーでなく `connected: false` を返す)
+
+### 4.5 実装環境
+
+- Python(バージョンは mise で管理、依存・仮想環境は uv で管理)
+- 主要依存: MCP SDK(Python)、PyVISA + pyvisa-py(USB)、Pillow(画像変換)。依存は最小限に保つ
+- MCPサーバーはstdioで動作し、対話的TTYを前提としない
+
+## 5. MCP Tool要件
+
+詳細仕様(引数・返却・エラー)は [tools.md](tools.md)。ここでは一覧のみ示す。
+
+| 分類 | Tool | クラス | Phase |
+|---|---|---|---|
+| 接続 | `connect` / `disconnect` | SAFE_WRITE | 1 |
+| 識別 | `scope_identify` / `get_capabilities` | READ_ONLY | 1 |
+| 状態 | `get_state` / `get_channel` / `get_timebase` / `get_trigger` / `get_acquisition_state` | READ_ONLY | 1 |
+| 測定 | `measure` | READ_ONLY | 1 |
+| データ | `capture_waveform` / `capture_screenshot` | READ_ONLY | 1 |
+| 設定 | `configure_channel` / `configure_timebase` / `configure_trigger` | SAFE_WRITE(50ΩのみRESTRICTED) | 2 |
+| 取込 | `run` / `stop` / `single` | SAFE_WRITE | 2 |
+| 取込 | `autoset` | RESTRICTED_WRITE | 2 |
+| 支援 | `recommend_setup` | READ_ONLY | 3 |
+| 開発 | `raw_scpi`(デフォルト無効) | DANGEROUS_WRITE | – |
+
+### 5.1 利用例
+
+**例1: 接続(会話指示ベース)**
+
+> 「Rigol MHO98を接続している。IPは192.168.1.120。」
 
 ```text
-max_iterations = 5
+connect(address="192.168.1.120")
+→ { connected: true, model: "MHO98", profile: { name: "mho98", confidence: "verified" } }
 ```
 
----
+**例2: 波形を見えるようにする**
 
-# 18. 安全要件
-
-本項目を最重要要件とする。
-
-MHO98は**非絶縁オシロスコープ**であり、各入出力GNDは筐体およびUSB/HDMI等のデジタルインターフェースGNDから絶縁されていない。RIGOLも浮遊測定を絶縁プローブなしで行わないことを明示している。また測定カテゴリはCategory Iである。
-
-したがってAIによる自動制御で電気的安全性を保証してはならない。
-
----
-
-## 18.1 操作クラス
-
-すべての操作を以下に分類する。
-
-### READ_ONLY
-
-自動実行可能。
-
-例:
-
-* 設定取得
-* Measurement取得
-* Screenshot
-* Waveform取得
-* Trigger Status取得
-* Device情報取得
-
-### SAFE_WRITE
-
-原則として自動実行可能。
-
-例:
-
-* Vertical Scale
-* Vertical Offset
-* Timebase
-* Trigger Level
-* Trigger Source
-* Channel ON/OFF
-* Bandwidth Limit
-
-ただしPolicy Engineによる範囲確認を必須とする。
-
-### RESTRICTED_WRITE
-
-ユーザー承認または事前Policyを要求する。
-
-例:
-
-* 50Ω Input Impedance
-* Probe Ratioの大幅変更
-* Auto Setup
-* Factory Default
-
-### DANGEROUS_WRITE
-
-ユーザーの明示確認なしで実行してはならない。
-
-例:
-
-* AFG Output Enable
-* 任意SCPI
-* Safety Policyを無効化する操作
-
----
-
-# 19. 物理安全確認
-
-AIが判断できない項目を明示する。
-
-以下はMCP側で自動確認できない。
-
-* Probeが実際にどこへ接続されているか
-* Ground Clipの接続先
-* DUTの実電圧
-* Probeの最大入力電圧
-* Probe種類
-* Differential Probeの実装着
-* DUTが商用電源へ接続されているか
-* 絶縁状態
-
-したがって危険が想定される測定では、
+> 「x10プローブで、1kHz 3Vの波形を見えるようにしてほしい」
 
 ```text
-requires_physical_confirmation = true
+get_state(sections=["channels","timebase","trigger"])
+→ configure_channel(channel="CH1", probe_ratio=10, coupling="DC", scale_v_per_div=1.0)
+→ configure_timebase(scale_s_per_div=0.0002)      # 1kHz × 数周期
+→ configure_trigger(type="edge", source="CH1", level_v=1.5, slope="rising", sweep_mode="auto")
+→ run()
+→ measure(channel="CH1", measurements=["frequency","vpp"])   # 意図通りか検証
+→ capture_screenshot()                                        # Visionで波形確認
 ```
 
-を返す。
+**例3: スクリーンショット**
 
----
-
-# 20. 商用電源測定
-
-通常のMCP操作対象外とする。
-
-利用者が、
+> 「現在の波形をスクショして ~/captures に保存して」
 
 ```text
-100V AC
-コンセント
-商用電源
-一次側
-AC mains
+capture_screenshot(path="~/captures")
+→ { saved_path: "/Users/.../captures/scope_20260825_143000.png", format: "png", ... } + 画像
 ```
 
-等を指定した場合、MCP/LLMは通常のパッシブプローブによる測定手順を自動実行してはならない。
+## 6. 安全要件
 
-必要な測定については適切な差動・絶縁プローブ等が使用されていることを人間が確認する必要がある。
+本章を最重要要件とする。MHO98をはじめ多くのRigolオシロは**非絶縁**であり(各入力GNDは筐体・USB等のGNDと共通、測定カテゴリ Category I)、AIによる自動制御で電気的安全性を保証してはならない。
 
----
+### 6.1 操作クラス
 
-# 21. Raw SCPI
+すべての操作を4クラスに分類する。
 
-### `scope.raw_scpi`
+| クラス | 実行条件 | 例 |
+|---|---|---|
+| READ_ONLY | 自動実行可 | 各種取得、measure、screenshot、waveform |
+| SAFE_WRITE | 原則自動実行可(パラメータ範囲検証必須) | scale / offset / timebase / trigger level / CH ON-OFF / run / stop / single / connect |
+| RESTRICTED_WRITE | ユーザー承認(confirmトークン)必須 | 50Ω入力インピーダンス、Auto Setup、Factory Default |
+| DANGEROUS_WRITE | ユーザーの明示確認なしで実行禁止 | AFG出力ON(将来)、raw_scpi、安全ポリシー無効化 |
 
-MVPではデフォルト無効とする。
+### 6.2 確認フロー(confirmトークン方式)
 
-設定例:
+RESTRICTED_WRITE / DANGEROUS_WRITE の承認は、ホストUIに依存しない2段階呼び出しで表現する:
 
-```yaml
-raw_scpi:
-  enabled: false
-```
+1. 1回目の呼び出し: 実行せず `USER_CONFIRMATION_REQUIRED` を返す。返却には操作内容の説明、リスク説明、`confirm_token`(短寿命・単回有効)を含め、**「トークンを使う前に、必ず人間の利用者へ操作可否を確認すること」**をLLMへ指示する文言を含める
+2. 2回目の呼び出し: 同一引数 + `confirm_token` で実行
 
-有効化した場合でも、
+トークンは操作内容にバインドし、引数が変われば無効とする。トークン発行・消費は監査ログに記録する。
 
-* Queryのみ許可
-* Allowlist
-* Denylist
-* Audit Log
-* Confirmation
+### 6.3 物理安全確認
 
-を適用できること。
+プローブの接続先、Ground Clipの接続先、DUTの実電圧、プローブ耐圧、絶縁状態などはMCPから確認できない。危険が想定される測定では返却に `requires_physical_confirmation: true` を含め、人間による物理確認を促す。
 
-開発・デバッグ目的以外では使用しない。
+### 6.4 商用電源測定
 
----
+利用者が商用電源(100V AC、コンセント、一次側、AC mains 等)の測定を指示した場合、通常のパッシブプローブによる測定手順を自動実行してはならない。適切な差動・絶縁プローブの使用を人間が確認することを前提とし、その旨を返却する。
 
-# 22. 状態管理
+### 6.5 排他制御
 
-設定変更前後の状態を保持する。
+単一アクティブ接続・プロセス内ロックとする。同時に複数のTool呼び出しが到達した場合も機器へのSCPI送受信は直列化する。複数プロセス/セッション間の分散ロックは設けない(非対象)。
 
-例:
+## 7. 動作原則
+
+Phase 0 実機検証([phase0-results.md](phase0-results.md))から導かれた、全機種共通の規範。
+
+### 7.1 エラーキュー管理
+
+- **接続時drain:** エラーキューは前セッションの残留で汚染されうる(実測)。接続確立時に `:SYSTem:ERRor?` を空になるまで読み捨てる
+- **set後検証:** コマンド送信成功だけで処理成功とみなさない。設定系は send → error queue確認 → read-back を必須とし、連続実行時もどのコマンドで失敗したか追跡できること
+
+### 7.2 未確認ニモニックの送信禁止
+
+不正なニモニックは機器が無応答となり、タイムアウト(既定5秒)とエラーキュー汚染のコストを伴う(実測)。プロファイルで確認されていないニモニック・測定項目は実機へ送信せず、Tool呼び出し時点で `UNSUPPORTED_FEATURE` を返す。
+
+### 7.3 requested / applied 両値返却
+
+機器が設定値をスナップするかは機種依存(MHO98は1-2-5にスナップせず指定値をそのまま適用)。設定系Toolは要求値と、read-backで得た実際の適用値を両方返し、LLMは適用値を後続判断に使う。
+
+### 7.4 パラメータ検証とエラーコード
+
+LLM指定値をそのままSCPIへ渡さず、プロファイルのlimits → 保守的デフォルト → 実機read-back の順で検証する。Toolエラーは機械可読形式とし、以下のコードを区別する:
 
 ```text
-Before
- ↓
-Action
- ↓
-After
+DEVICE_NOT_FOUND / DEVICE_DISCONNECTED / DEVICE_BUSY / TIMEOUT
+INVALID_PARAMETER / UNSUPPORTED_FEATURE
+SAFETY_POLICY_DENIED / USER_CONFIRMATION_REQUIRED
+ACQUISITION_FAILED / NO_SIGNAL / WAVEFORM_TRANSFER_FAILED / SCPI_ERROR
 ```
 
-Audit Log:
+### 7.5 単位の正規化
+
+API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。キー名に単位を含める(`frequency_hz`, `scale_v_per_div`)。接頭辞付き表現(500 mV等)の変換はLLMの責務。内部は float + SI に正規化する。
+
+### 7.6 監査ログ
+
+書き込み操作は Before / Action / After を記録する:
 
 ```json
 {
   "timestamp": "...",
-  "tool": "scope.configure_channel",
-  "requested": {
-    "channel": "CH1",
-    "scale": 1.0
-  },
-  "before": {
-    "scale": 0.5
-  },
-  "after": {
-    "scale": 1.0
-  },
+  "tool": "configure_channel",
+  "requested": { "channel": "CH1", "scale_v_per_div": 1.0 },
+  "before": { "scale_v_per_div": 0.5 },
+  "after": { "scale_v_per_div": 1.0 },
   "result": "success"
 }
 ```
 
----
+confirmトークンの発行・消費、プロファイル解決結果も記録対象とする。
 
-# 23. Exclusive Control
+## 8. 非機能要件
 
-同一MHO98に対する複数LLMセッションからの同時設定変更を防止する。
+### 8.1 レスポンスとタイムアウト
 
-MHO98のWeb Controlについても同一IPへの同時リモートログインに制限があることが公式資料に記載されているため、MCP側でも単一の制御セッションとして扱う。
+実測(単一クエリ 30–40 ms、負荷時 0.9–3.0 s、`get_state` ≒ 38クエリで約1.3 s)に基づき、旧v0.1の「設定Query 1秒以内」目標は撤回する。
 
-以下を実装する。
+- 単一SCPIクエリのデフォルトタイムアウト: **5秒**(実測で妥当性確認済み。設定で変更可)
+- 複合操作(`get_state` 全取得など)は数秒かかりうることをTool descriptionに明示し、`sections` 絞り込みを提供する
+- 巨大メモリ全体の波形を不用意にダウンロードしない(`max_points` 既定値と上限を設定で持つ)
 
-```text
-Device Lock
-Session Owner
-Lock Timeout
-Force Unlock
-```
+### 8.2 信頼性
 
-READ_ONLYアクセスについては将来的に並列化を検討する。
+SCPI通信断時は (1) エラー返却 → (2) 次回Tool呼び出し時に自動再接続試行 → (3) `*IDN?` で機器再確認、とする。自動再接続後に未完了の設定変更を勝手に再実行しない。
 
----
+### 8.3 可観測性
 
-# 24. エラー処理
+ログレベルは ERROR / WARN / INFO / DEBUG の4段階(旧TRACEはDEBUGに統合)。DEBUGでSCPI送受信を記録できるが、デフォルトでは抑制する。監査ログ(7.6)は通常ログと分離して保存する。
 
-以下を区別する。
+### 8.4 セキュリティ
 
-```text
-DEVICE_NOT_FOUND
-DEVICE_DISCONNECTED
-DEVICE_BUSY
-TIMEOUT
-INVALID_PARAMETER
-UNSUPPORTED_COMMAND
-UNSUPPORTED_FEATURE
-SAFETY_POLICY_DENIED
-USER_CONFIRMATION_REQUIRED
-ACQUISITION_FAILED
-NO_SIGNAL
-WAVEFORM_TRANSFER_FAILED
-SCPI_ERROR
-```
+MCPサーバーはstdioでローカル実行し、オシロスコープは信頼できるLAN内に置く(インターネット直接公開しない)。ネットワークMCP化(認証・TLS等)は非対象。スクリーンショット保存は許可ルート検証(9章)によりファイルシステムへの書き込み範囲を制限する。
 
-LLMが原因を判断できるよう、Tool Errorは機械可読形式とする。
+## 9. 設定
 
----
-
-# 25. SCPI Error Queue
-
-コマンド送信成功だけで処理成功とはみなさない。
-
-必要に応じてSCPI Error Queueを確認し、
+すべての設定は**環境変数で指定可能**とする(config.tomlしか持たないホストからも渡せるようにするため)。任意でTOML設定ファイルも読めるものとし、優先順位は:
 
 ```text
-send command
- ↓
-query error
- ↓
-validate
+Tool引数(会話でのユーザー指示) > 環境変数 > 設定ファイル > 組み込みデフォルト
 ```
 
-する。
+| 環境変数 | 内容 | デフォルト |
+|---|---|---|
+| `RIGOL_MCP_ADDRESS` | デフォルト接続先(IP / VISAリソース) | なし(会話指示を要求) |
+| `RIGOL_MCP_TRANSPORT` | `lan` / `usb` | addressから推定 |
+| `RIGOL_MCP_PORT` | LAN SCPIポート | プロファイル既定(5555) |
+| `RIGOL_MCP_TIMEOUT_S` | 単一クエリタイムアウト | 5 |
+| `RIGOL_MCP_SCREENSHOT_DIR` | スクリーンショットのデフォルト保存先 | カレントディレクトリ |
+| `RIGOL_MCP_ALLOWED_DIRS` | 書き込み許可ルート(パス区切りで複数) | デフォルト保存先 + カレント |
+| `RIGOL_MCP_WAVEFORM_MAX_POINTS` | 波形取得の既定上限 | 100000 |
+| `RIGOL_MCP_RAW_SCPI` | `raw_scpi` Toolの有効化 | false |
+| `RIGOL_MCP_LOG_LEVEL` | ログレベル | info |
+| `RIGOL_MCP_AUDIT_LOG` | 監査ログ出力先 | 有効(既定パス) |
 
-複数コマンドを連続実行する場合も、どの操作でエラーとなったか追跡できること。
+デバイスをコンフィグに固定する運用(旧v0.1の `devices.mho98.host` 直書き)は廃止し、上記デフォルト+会話指示の組み合わせに置き換える。
 
----
+## 10. 配布・ホスト統合
 
-# 26. Parameter Validation
+本章はパッケージング・起動・ホスト設定のみを扱う。本体動作へ課す制約は次の3点に限る: (1) stdioで対話的TTYなしに動作すること、(2) 全設定が環境変数で指定可能なこと、(3) 危険操作の確認がホストUI非依存(confirmトークン方式)であること。
 
-LLMが指定した値をそのままSCPIへ渡してはならない。
+### 10.1 配布
 
-例:
+- GitHubリポジトリからの `uvx` 起動を標準とする(PyPI公開は当面しない):
 
-```text
-CH1 scale = -100 V/div
+```bash
+uvx --from git+https://github.com/<owner>/rigol-oscilloscope-mcp rigol-oscilloscope-mcp
 ```
 
-等はMCP側で拒否する。
+- タグ付きリリースを行い、`@<tag>` でのバージョン固定起動をサポートする
+- 開発環境は mise(Pythonバージョン)+ uv(依存・仮想環境)で管理する
 
-Validation情報は、
+### 10.2 ホスト設定例
 
-1. MHO98 Programming Guide
-2. Capabilities定義
-3. 実機Query
+**Claude Code(`.mcp.json` または `claude mcp add`):**
 
-の順で管理する。
-
----
-
-# 27. 単位
-
-MCP APIではSI基本単位を原則とする。
-
-例:
-
-```text
-Voltage       V
-Time          s
-Frequency     Hz
-Resistance    Ω
-Sample Rate   Sa/s
+```json
+{
+  "mcpServers": {
+    "rigol-oscilloscope": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/<owner>/rigol-oscilloscope-mcp", "rigol-oscilloscope-mcp"],
+      "env": { "RIGOL_MCP_SCREENSHOT_DIR": "~/scope-captures" }
+    }
+  }
+}
 ```
 
-LLMから
+**Codex(`~/.codex/config.toml`):**
 
-```text
-500 mV
-20 us
-115.2 kHz
+```toml
+[mcp_servers.rigol-oscilloscope]
+command = "uvx"
+args = ["--from", "git+https://github.com/<owner>/rigol-oscilloscope-mcp", "rigol-oscilloscope-mcp"]
+
+[mcp_servers.rigol-oscilloscope.env]
+RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 ```
 
-などが指定された場合の変換はLLMまたはMCP Adapterで行う。
+### 10.3 Claudeプラグイン化(将来)
 
-Tool内部ではfloat + SI単位に正規化する。
+MCPサーバー本体に加え、測定ワークフロー(段階的な未知信号探索、UART確認手順など)と安全プロンプト(物理確認の促し、商用電源測定の拒否)をスキルとして同梱するClaudeプラグインを提供する。旧v0.1の操作例(UART測定、Unknown Signal探索)や測定反復の上限ガイダンス(旧 `max_iterations`)は、サーバー要件ではなくこのスキルの素材とする。
 
----
+## 11. 開発フェーズと受入基準
 
-# 28. 非機能要件
+### 11.1 フェーズ
 
-## 28.1 レスポンス
+- **Phase 0 — SCPI検証: 完了。** 結果は [phase0-results.md](phase0-results.md)
+- **Phase 1 — Read Only MCP:** `connect` / `disconnect` / `scope_identify` / `get_capabilities` / `get_state` / `get_*` / `measure` / `capture_waveform` / `capture_screenshot`。機器を変更できない状態でMCP連携とプロファイル機構を検証
+- **Phase 2 — Basic Control:** `configure_*` / `run` / `stop` / `single` / `autoset`。Safety Layer(操作クラス・confirmトークン)導入
+- **Phase 3 — Measurement Assistant:** スキル(または `recommend_setup`)による測定目的→設定の実用化
+- **Phase 4 — Advanced:** シリアルデコード、Logic Analyzer、AFG、高度解析
 
-通常の設定Query:
+### 11.2 受入基準(MVP = Phase 1 + 2)
 
-```text
-目標: 1秒以内
-```
+**接続・識別**
 
-波形転送:
+- [ ] 会話で指定したIPアドレスへ `connect` で接続できる(USBはVISAリソースで接続できる)
+- [ ] 接続先未指定かつデフォルト設定なしのとき、ユーザーへの確認を促すエラーが返る
+- [ ] `scope_identify` がモデル・プロファイル名・信頼度を返す
+- [ ] 未知のRigol機種で generic プロファイルにフォールバックし、その旨が明示される
+- [ ] 切断時に適切なエラーとなり、次回呼び出しで再接続を試行する
 
-```text
-取得ポイント数に依存
-```
+**状態・操作**
 
-巨大Memory全体を不用意にダウンロードしない。
+- [ ] CH1〜CH4 / Timebase / Trigger の状態を取得できる(`sections` 絞り込み含む)
+- [ ] CH ON/OFF・Vertical Scale・Probe Ratio・Timebase・Edge Trigger を変更でき、requested / applied が返る
+- [ ] Run / Stop / Single を実行できる
 
----
+**Measurement・データ**
 
-## 28.2 信頼性
+- [ ] frequency / vpp / rms / rise_time / fall_time を取得できる(SI単位付きキー)
+- [ ] プロファイル未対応の測定項目は実機へ送信されず `UNSUPPORTED_FEATURE` が返る
+- [ ] 波形サンプルを取得でき、電圧値(V)へ正しく変換されている
+- [ ] スクリーンショットを指定パスへ png / jpg で保存でき、image content も返る
+- [ ] 許可ルート外への保存指定が `INVALID_PARAMETER` で拒否される
 
-SCPI通信切断時には、
+**Safety**
 
-1. エラー返却
-2. 自動再接続試行
-3. Device ID再確認
+- [ ] 50Ωへの変更・Auto Setup が confirmトークンなしで実行されない
+- [ ] `raw_scpi` がデフォルト無効
+- [ ] 書き込み操作が監査ログに Before / After 付きで記録される
 
-を行う。
+**AI連携**
 
-自動再接続後に設定変更を勝手に再実行しない。
+- [ ] 1.1の3つの利用例(接続指示 / x10プローブで1kHz 3V波形表示 / スクショ保存)がLLMからMCP経由で完遂できる
 
----
+## 12. 未決事項
 
-## 28.3 可観測性
+以下は実装・追加検証の中で決定する(Phase 0で解決済みの項目は削除済み):
 
-ログレベル:
-
-```text
-ERROR
-WARN
-INFO
-DEBUG
-TRACE
-```
-
-TRACEではSCPI送受信を記録可能とする。
-
-ただしデフォルトではSCPI全文の大量ログを抑制する。
-
----
-
-# 29. セキュリティ
-
-## 29.1 Network
-
-MHO98はインターネットへ直接公開しない。
-
-推奨:
-
-```text
-MHO98
- │
-LAN
- │
-Trusted LAN
- │
-MCP Host
-```
-
-MCP Hostを経由して制御する。
-
----
-
-## 29.2 MCP Server
-
-初期構成ではローカル用途を想定する。
-
-優先:
-
-```text
-MCP stdio
-```
-
-将来的にネットワークMCPを使用する場合:
-
-* Authentication
-* TLS
-* Network ACL
-* Device ACL
-* Session管理
-
-を追加する。
-
----
-
-# 30. 設定ファイル
-
-例:
-
-```yaml
-devices:
-  mho98:
-    transport: lan
-    host: 192.168.1.100
-    timeout: 5s
-
-safety:
-  raw_scpi: false
-  auto_setup: confirm
-  impedance_50ohm: confirm
-  afg_enable: confirm
-  factory_reset: confirm
-
-waveform:
-  default_max_points: 100000
-  absolute_max_points: 1000000
-
-agent:
-  max_measurement_iterations: 5
-
-logging:
-  level: info
-  audit: true
-```
-
----
-
-# 31. 実装方針
-
-要件上は言語を固定しない。
-
-ただしPoCについては以下を第一候補とする。
-
-```text
-Python
-+
-PyVISA / Socket SCPI
-+
-MCP SDK
-```
-
-理由:
-
-* VISA/SCPI検証が容易
-* 波形解析ライブラリが豊富
-* NumPy等との連携が容易
-* MCP Tool実装が容易
-
-SCPI Adapterを独立させ、
-
-```text
-MCP Layer
-    ↓
-Service Layer
-    ↓
-Safety Layer
-    ↓
-Rigol MHO98 Driver
-    ↓
-Transport
-```
-
-とする。
-
-将来的にGo等へ移行してもMCP Tool仕様が変わらない設計とする。
-
----
-
-# 32. モジュール構成案
-
-```text
-rigol-mho98-mcp/
-
-  mcp/
-    tools
-    resources
-
-  service/
-    oscilloscope
-    measurement
-    waveform
-
-  safety/
-    policy
-    confirmation
-    validator
-
-  driver/
-    mho98/
-      channel
-      horizontal
-      trigger
-      acquisition
-      measurement
-      waveform
-      system
-
-  transport/
-    visa
-    tcp
-
-  analyzer/
-    waveform
-    fft
-
-  audit/
-
-  config/
-```
-
----
-
-# 33. MCP Resource
-
-ToolだけでなくResourceとして以下を公開することを検討する。
-
-```text
-rigol://mho98/state
-rigol://mho98/capabilities
-rigol://mho98/last-measurement
-rigol://mho98/safety-policy
-```
-
-LLMが毎回Toolを実行せず状態を参照できる構成を目指す。
-
----
-
-# 34. 操作例
-
-## 34.1 UART測定
-
-利用者:
-
-> CH1につないだ3.3V UART、115200bpsを見たい。
-
-想定処理:
-
-```text
-scope.get_state
-
-        ↓
-
-measurement.recommend_setup
- signal_type=uart
- voltage=3.3
- baud=115200
-
-        ↓
-
-scope.configure_channel
- CH1
- DC
- 1 V/div程度
-
-        ↓
-
-scope.configure_timebase
-
-        ↓
-
-scope.configure_trigger
- CH1
- rising
- 約1.65 V
-
-        ↓
-
-scope.single
-
-        ↓
-
-scope.measure
-
-        ↓
-
-scope.capture_screenshot
-
-        ↓
-
-LLM解析
-```
-
----
-
-# 35. Unknown Signal測定
-
-利用者:
-
-> CH1の信号が何なのかよく分からない。調べて。
-
-AIは一度に大きく設定を変更せず、
-
-```text
-状態確認
- ↓
-安全な入力条件確認
- ↓
-粗いTimebase
- ↓
-波形取得
- ↓
-振幅確認
- ↓
-Timebase調整
- ↓
-Trigger設定
- ↓
-再取得
- ↓
-Frequency / Vpp測定
-```
-
-のように段階的に探索する。
-
----
-
-# 36. Acceptance Criteria
-
-MVP完成条件を以下とする。
-
-## 接続
-
-* [ ] MHO98をLAN経由で検出できる
-* [ ] `scope.identify`が成功する
-* [ ] 切断時に適切なエラーとなる
-
-## 状態
-
-* [ ] CH1～CH4状態を取得できる
-* [ ] Timebaseを取得できる
-* [ ] Trigger状態を取得できる
-
-## 操作
-
-* [ ] CH ON/OFFを変更できる
-* [ ] Vertical Scaleを変更できる
-* [ ] Timebaseを変更できる
-* [ ] Edge Triggerを設定できる
-* [ ] Run/Stop/Singleを実行できる
-
-## Measurement
-
-* [ ] Frequencyを取得できる
-* [ ] Vppを取得できる
-* [ ] RMSを取得できる
-* [ ] Rise/Fall Timeを取得できる
-
-## Data
-
-* [ ] Waveform Samplesを取得できる
-* [ ] Screenshotを取得できる
-
-## Safety
-
-* [ ] 50Ωへの変更を無条件実行しない
-* [ ] AFG ONを無条件実行しない
-* [ ] Raw SCPIがデフォルト無効
-* [ ] 危険操作にはConfirmationが必要
-* [ ] 操作ログを保存する
-
-## AI
-
-* [ ] LLMからMCP経由で状態取得できる
-* [ ] 自然言語要求から適切な設定変更を実行できる
-* [ ] Acquisition後のMeasurementを取得できる
-* [ ] 必要に応じて設定変更→再測定を行える
-
----
-
-# 37. 開発フェーズ
-
-## Phase 0 — SCPI検証
-
-MCPを実装する前に実機で確認する。
-
-```text
-LAN接続
-*IDN?
-CH Query
-Timebase Query
-Trigger Query
-Measurement
-Waveform Download
-Screenshot
-```
-
-ここでMHO98 Programming Guideと実機挙動の差異を確認する。
-
----
-
-## Phase 1 — Read Only MCP
-
-実装:
-
-```text
-identify
-get_state
-get_channel
-get_timebase
-get_trigger
-measure
-capture_screenshot
-capture_waveform
-```
-
-AIから機器を変更できない安全な状態でMCP連携を検証する。
-
----
-
-## Phase 2 — Basic Control
-
-追加:
-
-```text
-configure_channel
-configure_timebase
-configure_trigger
-run
-stop
-single
-```
-
-Safety Policyを導入する。
-
----
-
-## Phase 3 — Measurement Assistant
-
-追加:
-
-```text
-recommend_setup
-measurement workflow
-automatic re-measurement
-```
-
-この段階で、
-
-> 「UARTを見たい」
-
-のような自然言語操作を実用化する。
-
----
-
-## Phase 4 — Advanced Features
-
-追加:
-
-```text
-Serial Decode
-Logic Analyzer
-AFG
-FFT
-Advanced Waveform Analysis
-```
-
----
-
-# 38. 成功基準
-
-本システムの最終的な成功基準は、
-
-> オシロスコープの各ノブやメニュー構造を詳しく知らない利用者でも、「何を測定したいのか」をAIへ伝えることで、安全性を維持しながら適切な測定を開始できること
-
-とする。
-
-同時に、
-
-> AIが測定機器の物理的な安全性まで理解している
-
-という前提には立たず、
-
-```text
-AI
-= 測定設定と解析を支援する
-
-MCP
-= 機器制御と安全ポリシーを担保する
-
-人間
-= DUT・Probe・Ground等の物理安全を担保する
-```
-
-という責任分界を維持する。
-
----
-
-# 39. 今後の詳細設計で決定する事項
-
-以下は要件定義では確定せず、実機SCPI検証後に決定する。
-
-1. LAN接続時のTransport方式
-2. USB接続時のVISA Resource形式
-3. Screenshot取得SCPI
-4. Waveform転送フォーマット
-5. Binary Block処理方式
-6. 各Measurement SCPIの対応表
-7. 全パラメータ許容範囲
-8. SCPI Error Queue処理
-9. AFG SCPI仕様
-10. Logic Analyzer SCPI仕様
-11. Serial Decode SCPI仕様
-12. Firmware Versionごとの差異
-13. MCP SDKおよび実装言語
-14. Waveform一時ファイルの受け渡し方式
-15. User ConfirmationのMCP上での表現方法
-
-これらは**MHO98 Programming Guideと実機を照合した上で詳細設計書に落とし込む**。
-
-RIGOL公式サイトではMHO98専用Programming Guideが公開されており、2026-02-26版が掲載されている。
-
----
-
-# 40. 最終構成イメージ
-
-```text
-                   ┌─────────────────┐
-                   │      User       │
-                   └────────┬────────┘
-                            │
-                         Natural
-                         Language
-                            │
-                   ┌────────▼────────┐
-                   │       LLM       │
-                   └────────┬────────┘
-                            │ MCP
-             ┌──────────────▼──────────────┐
-             │       rigol-mho98-mcp       │
-             │                             │
-             │  Measurement Assistant      │
-             │          │                  │
-             │     Safety Policy           │
-             │          │                  │
-             │     Scope Service           │
-             │          │                  │
-             │      SCPI Driver            │
-             └──────────────┬──────────────┘
-                            │
-                     LAN / USB SCPI
-                            │
-                  ┌─────────▼─────────┐
-                  │    RIGOL MHO98    │
-                  └───────────────────┘
-                            │
-                Probe / Logic / AFG
-                            │
-                  ┌─────────▼─────────┐
-                  │       DUT         │
-                  └───────────────────┘
-```
+1. USB(USBTMC)接続の実機検証と、VISAリソース文字列の推奨形式
+2. RAWモード波形ダウンロードのチャンク処理・上限(実機未検証)
+3. 50Ω設定ニモニック(`FIFT` 想定)を含むRESTRICTED_WRITE系コマンドの実機確認
+4. パラメータlimitsの境界値収集(機種プロファイルへの反映方法を含む)
+5. `RUN` / `STOP` / `SINGle` / `AUToset` 書き込みの実機確認
+6. MHO98以外の最初の対応機種と、ファミリプロファイルの括り出し時期
+7. 波形一時ファイルの受け渡し方式(保存場所・寿命・クリーンアップ)
+8. Claudeプラグインに同梱するスキルの構成(測定ワークフロー・安全プロンプトの分割)
