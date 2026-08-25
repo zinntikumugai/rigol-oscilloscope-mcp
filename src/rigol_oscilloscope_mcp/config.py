@@ -178,13 +178,6 @@ def _choice(key: str, value: str | None, allowed: tuple[str, ...]) -> str | None
     return lowered
 
 
-def _dedupe(paths: tuple[Path, ...]) -> tuple[Path, ...]:
-    seen: dict[Path, None] = {}
-    for path in paths:
-        seen.setdefault(path, None)
-    return tuple(seen)
-
-
 def _audit_log(src: _Source, env: Mapping[str, str]) -> Path | None:
     """監査ログの出力先。既定は有効で、`off` 等の偽値でのみ無効化する(9章)。
 
@@ -269,7 +262,10 @@ def load_config(
     screenshot_dir = _as_path(src, "screenshot_dir") or _pwd_dir(env) or Path.cwd().resolve()
     # 許可ルートには保存先を必ず含める(Requirements 9章)。プロセスのカレントは
     # --directory 起動でサーバーのプロジェクトになりうるため自動追加しない。
-    allowed_dirs = _dedupe(_as_path_list(src, "allowed_dirs") + (screenshot_dir,))
+    # dict は挿入順を保つため、順序を保った重複除去になる
+    allowed_dirs = tuple(
+        dict.fromkeys(_as_path_list(src, "allowed_dirs") + (screenshot_dir,))
+    )
 
     return Config(
         address=address,

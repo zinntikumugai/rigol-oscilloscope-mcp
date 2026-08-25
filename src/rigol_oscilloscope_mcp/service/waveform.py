@@ -16,7 +16,7 @@ import os
 import tempfile
 
 from ..config import Config
-from ..driver.scope import _CHANNEL_RE, ScopeDriver
+from ..driver.scope import ScopeDriver, normalize_channel
 from ..errors import ErrorCode, ScopeError
 
 # これ以下の点数はレスポンスにサンプル配列を直接含める
@@ -30,12 +30,6 @@ NOTE = (
 FILE_PREFIX = "rigol_waveform_"
 FILE_SUFFIX = ".csv"
 CSV_HEADER = "time_s,volts"
-
-
-def _channel_label(channel: str) -> str:
-    """`CHANnel1` / `1` → `CH1`。解釈できない値の検証はドライバに委ねる。"""
-    match = _CHANNEL_RE.match(channel.strip()) if isinstance(channel, str) else None
-    return f"CH{int(match.group(1))}" if match else channel
 
 
 def _write_csv(times: list[float], volts: list[float]) -> str:
@@ -82,7 +76,7 @@ def capture_waveform(
     ]
 
     result = {
-        "channel": _channel_label(channel),
+        "channel": normalize_channel(channel),
         "points": len(samples),
         "sample_interval_s": preamble.xincrement,
         "time_origin_s": preamble.xorigin,

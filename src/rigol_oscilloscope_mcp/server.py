@@ -5,11 +5,12 @@ MCP SDK(FastMCP)への依存は本モジュールに閉じ込め、下位層(ser
 
 Tool実装の規約:
 
-- 本体は全て**同期関数**とし、`manager.lock` で機器アクセス全体を囲んで
-  SCPI送受信を直列化する(Requirements.md 6.5)
+- 本体は全て**同期関数**とし、登録ラッパー(`_checked_tool`)が `manager.lock`
+  で機器アクセス全体を囲んでSCPI送受信を直列化する(Requirements.md 6.5)。
+  各Tool本体はロックを意識しない
 - `ScopeError` はMCPのエラー応答にせず、`{"error": true, "code": ...}` の
-  **正常返却**へ変換する。LLMがコードを機械的に読めるようにするため
-  (tools.md 0.3)
+  **正常返却**へ変換する(同じく登録ラッパーが担う)。LLMがコードを機械的に
+  読めるようにするため(tools.md 0.3)
 - 返却は `dict`(JSONプリミティブのみ)。SDKはこれを1つのtext contentとして
   JSON整形する。スクリーンショットのみ `[メタデータdict, Image]` を返し、
   text + image の2 contentになる
@@ -23,6 +24,7 @@ import logging
 import os
 import sys
 from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import asdict
 from functools import wraps
 from typing import Any
@@ -136,12 +138,31 @@ def _tool_result(fn: Callable[..., Any]) -> Callable[..., Any]:
 _CONFIRM_REQUIRED = (OperationClass.RESTRICTED_WRITE, OperationClass.DANGEROUS_WRITE)
 
 
-def _checked_tool(server: FastMCP) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+def _locked(lock: AbstractContextManager[Any]) -> Callable[..., Any]:
+    """Tool本体全体を機器アクセスのロックで囲む(Requirements.md 6.5)。"""
+
+    def decorate(fn: Callable[..., Any]) -> Callable[..., Any]:
+        @wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            with lock:
+                return fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorate
+
+
+def _checked_tool(
+    server: FastMCP, lock: AbstractContextManager[Any]
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """操作クラス表と整合するToolだけを登録するデコレータを返す。
 
     表(safety/classes.py)を静的な飾りにせず、起動時の不変条件にする:
     表に無いTool名は `classify` の fail-closed で、承認必須クラスなのに
     `confirm_token` を受けないToolは SAFETY_POLICY_DENIED で起動を失敗させる。
+
+    併せて、全Toolに共通の定型(ロック取得とエラー変換)をここで一度だけ被せる。
+    実効順序はエラー変換が最外・ロックが本体側(ロック解放後に変換される)。
     """
 
     def register(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -152,7 +173,7 @@ def _checked_tool(server: FastMCP) -> Callable[[Callable[..., Any]], Callable[..
                     f"{fn.__name__} は承認必須の操作クラスですが confirm_token 引数がありません",
                     {"tool": fn.__name__},
                 )
-        return server.tool()(fn)
+        return server.tool()(_tool_result(_locked(lock)(fn)))
 
     return register
 
@@ -207,12 +228,11 @@ def create_server(
     control = ControlService(ConfirmTokenStore(), audit)
 
     server = FastMCP(SERVER_NAME, instructions=INSTRUCTIONS)
-    _register = _checked_tool(server)
+    _register = _checked_tool(server, manager.lock)
 
     # -- 接続管理 ---------------------------------------------------------
 
     @_register
-    @_tool_result
     def connect(
         address: str | None = None,
         transport: str | None = None,
@@ -225,88 +245,70 @@ def create_server(
         address の形式から推定("lan" / "usb")、port は省略時にプロファイル既定。
         既存の接続がある場合は置き換わる。
         """
-        with manager.lock:
-            return _status_dict(manager.connect(address=address, transport=transport, port=port))
+        return _status_dict(manager.connect(address=address, transport=transport, port=port))
 
     @_register
-    @_tool_result
     def disconnect() -> dict:
         """現在の接続を閉じる(未接続でもエラーにならない)。"""
-        with manager.lock:
-            manager.disconnect()
-            return _status_dict(manager.status())
+        manager.disconnect()
+        return _status_dict(manager.status())
 
     @_register
-    @_tool_result
     def scope_identify() -> dict:
         """接続状態と機器の識別情報(*IDN?・プロファイル)を返す。
 
         未接続でもエラーにはならず connected: false を返す。
         """
-        with manager.lock:
-            return _status_dict(manager.status())
+        return _status_dict(manager.status())
 
     @_register
-    @_tool_result
     def get_capabilities() -> dict:
         """接続中の機器で利用できる機能(チャンネル数・対応機能)を返す。
 
         プロファイルの信頼度が generic の場合、未検証の機能は制限される。
         """
-        with manager.lock:
-            driver = manager.require_scope()
-            status = manager.status()
-            return {
-                "profile": _profile_dict(driver.profile.name, driver.profile.confidence),
-                "capabilities": dict(driver.profile.capabilities),
-                "unsupported_vendor": status.unsupported_vendor,
-            }
+        driver = manager.require_scope()
+        status = manager.status()
+        return {
+            "profile": _profile_dict(driver.profile.name, driver.profile.confidence),
+            "capabilities": dict(driver.profile.capabilities),
+            "unsupported_vendor": status.unsupported_vendor,
+        }
 
     # -- 状態取得 ---------------------------------------------------------
 
     @_register
-    @_tool_result
     def get_state(sections: list[str] | None = None) -> dict:
         """主要設定(channels / timebase / trigger / acquisition)を一括取得する。
 
         目的が明確なら sections で絞ると高速(全取得は約39クエリ・数秒かかること
         がある)。省略時は全セクション。
         """
-        with manager.lock:
-            return service.get_state(manager.require_scope(), sections)
+        return service.get_state(manager.require_scope(), sections)
 
     @_register
-    @_tool_result
     def get_channel(channel: str) -> dict:
         """1チャンネルの状態("CH1"〜"CH4")を返す。"""
-        with manager.lock:
-            return service.get_channel_dict(manager.require_scope(), channel)
+        return service.get_channel_dict(manager.require_scope(), channel)
 
     @_register
-    @_tool_result
     def get_timebase() -> dict:
         """水平軸(時間軸)の状態を返す。"""
-        with manager.lock:
-            return service.get_timebase_dict(manager.require_scope())
+        return service.get_timebase_dict(manager.require_scope())
 
     @_register
-    @_tool_result
     def get_trigger() -> dict:
         """トリガの設定と状態を返す。"""
-        with manager.lock:
-            return service.get_trigger_dict(manager.require_scope())
+        return service.get_trigger_dict(manager.require_scope())
 
     @_register
-    @_tool_result
     def get_acquisition_state() -> dict:
         """波形取り込みの状態(実行中かどうか・トリガ状態)を返す。"""
-        with manager.lock:
-            return service.get_acquisition_dict(manager.require_scope())
+        return service.get_acquisition_dict(manager.require_scope())
 
     # -- 測定・データ取得 -------------------------------------------------
 
     @_register
-    @_tool_result
     def measure(channel: str, measurements: list[str]) -> dict:
         """指定チャンネルを測定する。
 
@@ -314,11 +316,9 @@ def create_server(
         duty / rise_time / fall_time から選ぶ。返却値はSI単位
         (frequency_hz, vpp_v など)で、quality が valid でない値は信用しない。
         """
-        with manager.lock:
-            return service.measure(manager.require_scope(), channel, measurements)
+        return service.measure(manager.require_scope(), channel, measurements)
 
     @_register
-    @_tool_result
     def capture_waveform(channel: str, max_points: int | None = None) -> dict:
         """波形データを取得し、電圧(V)へ変換して返す。
 
@@ -326,13 +326,11 @@ def create_server(
         画面表示データは間引きされていることがあるため、実効レートは
         sample_interval_s の逆数を見る。
         """
-        with manager.lock:
-            return service.capture_waveform(
-                manager.require_scope(), resolved_config, channel, max_points
-            )
+        return service.capture_waveform(
+            manager.require_scope(), resolved_config, channel, max_points
+        )
 
     @_register
-    @_tool_result
     def capture_screenshot(
         path: str | None = None,
         format: str | None = None,
@@ -348,10 +346,9 @@ def create_server(
         画像を返さずメタデータのみになる(トークン節約)。
         数値の読み取りはこの画像ではなく measure を使うこと。
         """
-        with manager.lock:
-            shot = service.capture_screenshot(
-                manager.require_scope(), resolved_config, path=path, format=format
-            )
+        shot = service.capture_screenshot(
+            manager.require_scope(), resolved_config, path=path, format=format
+        )
         metadata = {
             "saved_path": shot.saved_path,
             "format": shot.format,
@@ -365,7 +362,6 @@ def create_server(
     # -- 設定変更(tools.md 3章)-------------------------------------------
 
     @_register
-    @_tool_result
     def configure_channel(
         channel: str,
         enabled: bool | None = None,
@@ -388,23 +384,21 @@ def create_server(
         1回目は実行されず confirm_token が返るので、人間の利用者に実行可否を
         確認したうえで、同じ引数に confirm_token を添えて再度呼ぶこと。
         """
-        with manager.lock:
-            return control.configure_channel(
-                manager.require_scope(),
-                manager.generation,
-                channel,
-                enabled=enabled,
-                scale_v_per_div=scale_v_per_div,
-                offset_v=offset_v,
-                coupling=coupling,
-                probe_ratio=probe_ratio,
-                bandwidth_limit=bandwidth_limit,
-                impedance=impedance,
-                confirm_token=confirm_token,
-            )
+        return control.configure_channel(
+            manager.require_scope(),
+            manager.generation,
+            channel,
+            enabled=enabled,
+            scale_v_per_div=scale_v_per_div,
+            offset_v=offset_v,
+            coupling=coupling,
+            probe_ratio=probe_ratio,
+            bandwidth_limit=bandwidth_limit,
+            impedance=impedance,
+            confirm_token=confirm_token,
+        )
 
     @_register
-    @_tool_result
     def configure_timebase(
         scale_s_per_div: float | None = None,
         position_s: float | None = None,
@@ -414,15 +408,13 @@ def create_server(
         変更する項目を最低1つ指定すること。機器が値をスナップすることがあるため、
         結果は applied(read-back値)を信頼する。
         """
-        with manager.lock:
-            return control.configure_timebase(
-                manager.require_scope(),
-                scale_s_per_div=scale_s_per_div,
-                position_s=position_s,
-            )
+        return control.configure_timebase(
+            manager.require_scope(),
+            scale_s_per_div=scale_s_per_div,
+            position_s=position_s,
+        )
 
     @_register
-    @_tool_result
     def configure_trigger(
         source: str | None = None,
         level_v: float | None = None,
@@ -434,40 +426,32 @@ def create_server(
         source は "CH1"〜"CH4"、slope は rising / falling / either、
         sweep_mode は auto / normal / single。変更する項目を最低1つ指定すること。
         """
-        with manager.lock:
-            return control.configure_trigger(
-                manager.require_scope(),
-                source=source,
-                level_v=level_v,
-                slope=slope,
-                sweep_mode=sweep_mode,
-            )
+        return control.configure_trigger(
+            manager.require_scope(),
+            source=source,
+            level_v=level_v,
+            slope=slope,
+            sweep_mode=sweep_mode,
+        )
 
     # -- Acquisition(tools.md 4章)-----------------------------------------
 
     @_register
-    @_tool_result
     def run() -> dict:
         """波形取り込みを開始する(連続実行)。"""
-        with manager.lock:
-            return control.run(manager.require_scope())
+        return control.run(manager.require_scope())
 
     @_register
-    @_tool_result
     def stop() -> dict:
         """波形取り込みを停止する(画面の波形を固定する)。"""
-        with manager.lock:
-            return control.stop(manager.require_scope())
+        return control.stop(manager.require_scope())
 
     @_register
-    @_tool_result
     def single() -> dict:
         """シングルショット取り込みを行う(1回トリガして停止する)。"""
-        with manager.lock:
-            return control.single(manager.require_scope())
+        return control.single(manager.require_scope())
 
     @_register
-    @_tool_result
     def autoset(confirm_token: str | None = None) -> dict:
         """Auto Setup(オートスケール)を実行する。
 
@@ -477,10 +461,9 @@ def create_server(
         確認したうえで confirm_token を添えて再度呼ぶこと。
         実行後は変更された主要設定を state で返す。
         """
-        with manager.lock:
-            return control.autoset(
-                manager.require_scope(), manager.generation, confirm_token
-            )
+        return control.autoset(
+            manager.require_scope(), manager.generation, confirm_token
+        )
 
     return server
 

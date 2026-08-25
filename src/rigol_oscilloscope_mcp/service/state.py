@@ -12,18 +12,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import asdict
 
-from ..driver.scope import DEFAULT_ANALOG_CHANNELS, ScopeDriver
+from ..driver.scope import ScopeDriver
 from ..errors import ErrorCode, ScopeError
 
 VALID_SECTIONS = ("channels", "timebase", "trigger", "acquisition")
 
 # :TRIGger:STATus? の生値がこれなら停止中(TD / WAIT / AUTO 等は動作中)
 STOPPED_STATUS = "STOP"
-
-
-def _analog_channels(driver: ScopeDriver) -> int:
-    count = driver.profile.capabilities.get("analog_channels", DEFAULT_ANALOG_CHANNELS)
-    return count if isinstance(count, int) else DEFAULT_ANALOG_CHANNELS
 
 
 def get_channel_dict(driver: ScopeDriver, channel: str) -> dict:
@@ -50,7 +45,7 @@ def get_acquisition_dict(driver: ScopeDriver) -> dict:
 def _channels_dict(driver: ScopeDriver) -> dict:
     return {
         f"CH{n}": get_channel_dict(driver, f"CH{n}")
-        for n in range(1, _analog_channels(driver) + 1)
+        for n in range(1, driver.analog_channels + 1)
     }
 
 

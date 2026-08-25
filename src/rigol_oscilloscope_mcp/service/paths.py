@@ -44,10 +44,10 @@ def allowed_roots(config: Config) -> tuple[Path, ...]:
     (Requirements.md 9章)。カレントディレクトリは含めない。
     """
     candidates = (*config.allowed_dirs, config.screenshot_dir, *_temp_roots())
-    roots: dict[Path, None] = {}
-    for candidate in candidates:
-        roots.setdefault(Path(candidate).expanduser().resolve(), None)
-    return tuple(roots)
+    # dict は挿入順を保つため、順序を保った重複除去になる
+    return tuple(
+        dict.fromkeys(Path(c).expanduser().resolve() for c in candidates)
+    )
 
 
 def _is_directory_argument(raw: str, expanded: Path) -> bool:

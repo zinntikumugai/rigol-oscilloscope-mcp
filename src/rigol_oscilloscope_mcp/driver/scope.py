@@ -73,6 +73,16 @@ _NON_CHANNEL_SOURCE_RE = re.compile(r"^(?:EXT5?|ACL(?:INE)?|D(?:[0-9]|1[0-5]))$"
 _NUMBER_RE = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
 
 
+def normalize_channel(value: str) -> str:
+    """`CHANnel1` / `chan1` / `1` → `CH1`。
+
+    表記ゆれの吸収のみを行う公開API。解釈できない値はそのまま返す
+    (存在するチャンネルかどうかの検証は `ScopeDriver` の責務)。
+    """
+    match = _CHANNEL_RE.match(value.strip()) if isinstance(value, str) else None
+    return f"CH{int(match.group(1))}" if match else value
+
+
 def _invalid(message: str, detail: dict) -> ScopeError:
     return ScopeError(ErrorCode.INVALID_PARAMETER, message, detail)
 
@@ -147,12 +157,13 @@ class ScopeDriver:
         self.session = session
         self.profile = profile
 
-    # -- 内部: 検証 -------------------------------------------------------
-
     @property
-    def _analog_channels(self) -> int:
+    def analog_channels(self) -> int:
+        """この機種のアナログチャンネル数(プロファイル未宣言なら既定値)。"""
         count = self.profile.capabilities.get("analog_channels", DEFAULT_ANALOG_CHANNELS)
         return count if isinstance(count, int) else DEFAULT_ANALOG_CHANNELS
+
+    # -- 内部: 検証 -------------------------------------------------------
 
     def _channel_number(self, channel: str) -> int:
         """`CH1` / `CHANnel1` / `1` → 1。プロファイルのチャンネル数で範囲検証する。"""
@@ -165,7 +176,7 @@ class ScopeDriver:
                 {"channel": channel},
             )
         number = int(match.group(1))
-        available = self._analog_channels
+        available = self.analog_channels
         if not 1 <= number <= available:
             raise _invalid(
                 f"チャンネル {channel} は存在しません(この機種は CH1〜CH{available})",
@@ -263,9 +274,8 @@ class ScopeDriver:
     def _normalize_source(text: str) -> str:
         """`CHAN1` → `CH1`、`ACL` → `ACLINE`。それ以外は生値を大文字で返す。"""
         token = text.strip().upper()
-        match = _CHANNEL_RE.match(token)
-        if match:
-            return f"CH{int(match.group(1))}"
+        if _CHANNEL_RE.match(token):
+            return normalize_channel(token)
         return "ACLINE" if token in ("ACL", "ACLINE") else token
 
     def _trigger_source(self, source: str) -> str:

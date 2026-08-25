@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from ..driver.scope import ScopeDriver
+from ..driver.scope import ScopeDriver, normalize_channel
 from ..errors import ErrorCode, ScopeError
 
 VALID_QUALITY = "valid"
@@ -21,14 +21,10 @@ def _warning(name: str) -> str:
     return f"{name} の測定値は無効です(no signal / 未安定の可能性)"
 
 
-def _unique(names: list[str]) -> list[str]:
-    """重複を除く(順序は維持)。同一項目を2度問い合わせない。"""
-    return list(dict.fromkeys(names))
-
-
 def measure(driver: ScopeDriver, channel: str, measurements: list[str]) -> dict:
     """指定チャンネルの測定値を読む。"""
-    names = _unique(measurements)
+    # 重複除去(順序は維持)。同一項目を2度問い合わせない。
+    names = list(dict.fromkeys(measurements))
     if not names:
         raise ScopeError(
             ErrorCode.INVALID_PARAMETER,
@@ -41,7 +37,7 @@ def measure(driver: ScopeDriver, channel: str, measurements: list[str]) -> dict:
     return {
         # 返却は正規化名で揃える(`chan1` / `1` でも "CH1")。
         # 検証済みの入力に対する表記ゆれ吸収のみで、判定はドライバが済ませている。
-        "channel": ScopeDriver._normalize_source(channel),
+        "channel": normalize_channel(channel),
         "values": {r.key: r.value for r in results},
         "quality": {r.name: r.quality for r in results},
         "warnings": [_warning(r.name) for r in results if r.quality != VALID_QUALITY],

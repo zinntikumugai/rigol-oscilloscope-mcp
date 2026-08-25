@@ -238,7 +238,9 @@ class ControlService:
         self, driver: ScopeDriver, tool: str, action: Callable[[], None]
     ) -> dict:
         with self._audited(tool, {}) as record:
-            record.before({"trigger_status": driver.get_trigger_status()})
+            # before は監査記録専用。無効時は実機への1クエリ(≒30ms)を省く
+            if self._audit.enabled:
+                record.before({"trigger_status": driver.get_trigger_status()})
             action()
             status = driver.get_trigger_status()
             record.after({"trigger_status": status})
@@ -266,13 +268,15 @@ class ControlService:
         )
 
         with self._audited("autoset", {}) as record:
-            # before はチャンネル4本分(28クエリ)を避け、水平軸とトリガに絞る
-            record.before(
-                {
-                    "timebase": get_timebase_dict(driver),
-                    "trigger": get_trigger_dict(driver),
-                }
-            )
+            # before はチャンネル4本分(28クエリ)を避け、水平軸とトリガに絞る。
+            # 記録専用なので、監査無効時はクエリごと省く
+            if self._audit.enabled:
+                record.before(
+                    {
+                        "timebase": get_timebase_dict(driver),
+                        "trigger": get_trigger_dict(driver),
+                    }
+                )
             driver.autoset()
             state = get_state(driver, AUTOSET_SECTIONS)
             record.after(

@@ -6,6 +6,7 @@ Tool登録を薄いラッパーに通し、`safety/classes.py` の表を飾り�
 
 import logging
 import sys
+import threading
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -35,7 +36,7 @@ def test_create_server_registers_every_tool(config: Config) -> None:
 
 
 def test_unknown_tool_name_fails_at_registration() -> None:
-    register = _checked_tool(FastMCP("test"))
+    register = _checked_tool(FastMCP("test"), threading.RLock())
 
     def not_in_the_table() -> dict:
         return {}
@@ -47,7 +48,7 @@ def test_unknown_tool_name_fails_at_registration() -> None:
 
 
 def test_restricted_tool_without_confirm_token_fails_at_registration() -> None:
-    register = _checked_tool(FastMCP("test"))
+    register = _checked_tool(FastMCP("test"), threading.RLock())
 
     def autoset() -> dict:  # RESTRICTED_WRITE なのに confirm_token を受けない
         return {}
@@ -60,7 +61,7 @@ def test_restricted_tool_without_confirm_token_fails_at_registration() -> None:
 
 
 def test_restricted_tool_with_confirm_token_registers() -> None:
-    register = _checked_tool(FastMCP("test"))
+    register = _checked_tool(FastMCP("test"), threading.RLock())
 
     def autoset(confirm_token: str | None = None) -> dict:
         return {}

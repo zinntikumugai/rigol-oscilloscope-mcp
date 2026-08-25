@@ -979,6 +979,45 @@ def test_confirm_flow_works_without_audit_log(
     service.autoset(driver, 0, confirm_token=excinfo.value.detail["confirm_token"])
 
 
+def test_run_skips_the_before_query_without_audit_log(
+    store: ConfirmTokenStore, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """記録専用の事前クエリは監査無効時に発行しない(実機1クエリ≒30msの節約)。"""
+    service = ControlService(store, AuditLogger(None))
+    scope.command_log.clear()
+
+    service.run(driver)
+
+    # 返却用の1回(:RUN の後)だけ
+    assert sent(scope, ":TRIGGER:STATUS?") == [":TRIGger:STATus?"]
+
+
+def test_run_keeps_the_before_query_with_audit_log(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope, audit_path: Path
+) -> None:
+    """監査有効時は従来どおり before / after の2回とも問い合わせる。"""
+    scope.command_log.clear()
+
+    service.run(driver)
+
+    assert sent(scope, ":TRIGGER:STATUS?") == [":TRIGger:STATus?"] * 2
+    assert set(rows(audit_path)[-1]["before"]) == {"trigger_status"}
+
+
+def test_autoset_skips_the_before_state_without_audit_log(
+    store: ConfirmTokenStore, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    service = ControlService(store, AuditLogger(None))
+    with pytest.raises(ScopeError) as excinfo:
+        service.autoset(driver, 0)
+    scope.command_log.clear()
+
+    service.autoset(driver, 0, confirm_token=excinfo.value.detail["confirm_token"])
+
+    before_autoset = scope.command_log[: scope.command_log.index(":AUToscale")]
+    assert before_autoset == []
+
+
 # ==========================================================================
 # パッケージ公開
 # ==========================================================================
