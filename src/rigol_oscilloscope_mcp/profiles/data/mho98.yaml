@@ -50,6 +50,28 @@ dialect:
     ascii: ASCii
     dec: DEC
     bin: BIN
+  # 信号発生(:SOURce<n>、ガイド3.25章)。MHO900は2ch・番号付き。DHO800/900は
+  # 番号なし:SOURce(DGモジュール)で別方言のため未宣言。実機検証: mho98-afg.md
+  # (:SOURce3 は1発でSCPIサーバーを沈黙させるため、afg_channels での範囲検証必須)
+  afg_prefix: ":SOURce{n}"
+  afg_waveforms:
+    sine: SINusoid
+    square: SQUare
+    ramp: RAMP
+    noise: NOISe
+    dc: DC
+    arb: ARB
+    exp_rise: EXPRise
+    exp_fall: EXPFall
+    ecg: ECG1
+    gaussian: GAUSsian
+    lorentz: LORentz
+    haversine: HAVersine
+    sinc: SINC
+    # PULSe はガイドにもファームにも無い(送ると -222。mho98-afg.md 2章)
+  afg_impedances:
+    highz: OMEG
+    "50": FIFTy
   # オプション照会(MHO900専用。DHO800/900には存在しない)。実機検証:
   # docs/verification/mho98-unlicensed.md。*OPT? はRigol全シリーズで未定義
   # ヘッダ(送るとSCPIサーバーが沈黙)なので絶対に使わない。<type>リスト外の

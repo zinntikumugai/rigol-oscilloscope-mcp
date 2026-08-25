@@ -1,4 +1,4 @@
-"""safety/classes.py のテスト(Requirements.md 6.1 / tools.md 9章)。"""
+"""safety/classes.py のテスト(Requirements.md 6.1 / tools.md 10章)。"""
 
 import pytest
 
@@ -9,7 +9,7 @@ from rigol_oscilloscope_mcp.safety.classes import (
     classify,
 )
 
-# docs/tools.md 9章のサマリ表(Phase 1/2/4 + 開発用 raw_scpi)
+# docs/tools.md 10章のサマリ表(Phase 1/2/4 + 開発用 raw_scpi)
 EXPECTED = {
     "connect": "SAFE_WRITE",
     "disconnect": "SAFE_WRITE",
@@ -33,6 +33,8 @@ EXPECTED = {
     "autoset": "RESTRICTED_WRITE",
     "configure_decode": "SAFE_WRITE",
     "get_decode_result": "READ_ONLY",
+    "configure_afg": "SAFE_WRITE",
+    "get_afg_state": "READ_ONLY",
     "raw_scpi": "DANGEROUS_WRITE",
 }
 

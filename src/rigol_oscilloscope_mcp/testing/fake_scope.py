@@ -293,6 +293,41 @@ _BUS_PROTOCOL_PROPS: dict[str, tuple[tuple[str, str, object, object], ...]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# 信号発生(:SOURce<n> / docs/verification/mho98-afg.md)
+# ---------------------------------------------------------------------------
+
+#: 信号発生チャンネル数(実機実測: :SOURce3 は沈黙する)
+AFG_COUNT = 2
+
+_AFG_FUNCTIONS = (
+    "SINusoid", "SQUare", "RAMP", "NOISe", "DC", "ARB", "EXPRise", "EXPFall",
+    "ECG1", "GAUSsian", "LORentz", "HAVersine", "SINC",
+)
+_AFG_IMPEDANCES = ("OMEG", "FIFTy")
+
+#: 実機が返すトークンのうち、短形正規化では再現できないもの(実測: 設定後の
+#: `:SOURce1:IMPedance?` は長形の `FIFTy` を返す)。
+_AFG_RESPONSE_FORMS = {"FIFT": "FIFTy"}
+
+#: 信号発生の属性: (内部キー, ニモニック仕様, 型, 既定値)。
+#: 型 "nr3" は指数1桁NR3(`1.000000E+3`)、"dec6" は小数6桁(`0.000000`)で、
+#: いずれも実機プローブの応答形式そのまま(mho98-afg.md 1章)。
+#: 範囲外値のサイレントクランプは**再現しない**(実機固有の癖であり、
+#: ドライバ側の対処は requested / applied の突合に集約されている)。
+_AFG_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("output", "OUTPut:STATe", "bool", False),
+    ("function", "FUNCtion", _AFG_FUNCTIONS, "SIN"),
+    ("frequency", "FREQuency", "nr3", 1000.0),
+    ("amplitude", "VOLTage:AMPLitude", "nr3", 5.0),
+    ("offset", "VOLTage:OFFSet", "dec6", 0.0),
+    ("phase", "PHASe", "dec6", 0.0),
+    ("impedance", "IMPedance", _AFG_IMPEDANCES, "OMEG"),
+    ("duty", "FUNCtion:SQUare:DUTY", "nr3", 50.0),
+    ("symmetry", "FUNCtion:RAMP:SYMMetry", "nr3", 50.0),
+)
+
+
 class FakeScope:
     """MHO98方言のフェイク機器(SCPIコマンド1件単位で応答する)。"""
 
@@ -345,6 +380,11 @@ class FakeScope:
                 },
             }
             for n in range(1, BUS_COUNT + 1)
+        }
+        # 信号発生(2ch)。既定はガイドの初期値 = 実機プローブの実測値
+        self.afg: dict[int, dict] = {
+            n: {key: default for key, _, _, default in _AFG_PROPS}
+            for n in range(1, AFG_COUNT + 1)
         }
         self.timebase: dict[str, float] = {"scale": 2.0e-4, "offset": 0.0}
         self.trigger: dict[str, object] = {
@@ -577,6 +617,7 @@ class FakeScope:
             ),
         ]
         entries += self._bus_entries()
+        entries += self._afg_entries()
         return tuple(
             (re.compile(pattern, re.IGNORECASE), handler)
             for pattern, handler in entries
@@ -655,6 +696,30 @@ class FakeScope:
                         ),
                     )
                 )
+        return entries
+
+    def _afg_entries(self) -> list[tuple[str, Callable]]:
+        """信号発生のディスパッチ表(`:SOURce1` / `:SOURce2` のみ)。
+
+        `:SOURce3` はどのパターンにも一致せず、実機同様に沈黙する
+        (docs/verification/mho98-afg.md 1章)。
+        """
+        source = rf":?{_mn('SOURce')}([1-{AFG_COUNT}])"
+        entries: list[tuple[str, Callable]] = []
+        for key, spec, kind, _default in _AFG_PROPS:
+            path = ":".join(_mn(part) for part in spec.split(":"))
+            entries.append(
+                (
+                    rf"{source}:{path}\?",
+                    lambda m, k=key, t=kind: self._afg_query(m, k, t),
+                )
+            )
+            entries.append(
+                (
+                    rf"{source}:{path}\s+{_VALUE}",
+                    lambda m, k=key, t=kind: self._afg_write(m, k, t, m.group(2)),
+                )
+            )
         return entries
 
     # -- 内部: ハンドラ ---------------------------------------------------
@@ -826,6 +891,33 @@ class FakeScope:
         else:
             value = self._enum(token, kind)  # 列挙(仕様タプル)
         self._bus(match)[protocol][key] = value
+        return None
+
+    # -- 内部: 信号発生 ---------------------------------------------------
+
+    def _afg(self, match: re.Match[str]) -> dict:
+        return self.afg[int(match.group(1))]
+
+    def _afg_query(self, match: re.Match[str], key: str, kind: object) -> bytes:
+        value = self._afg(match)[key]
+        if kind == "bool":
+            return b"1" if value else b"0"
+        if kind == "nr3":
+            return _nr3_single_digit_exponent(float(value)).encode("ascii")
+        if kind == "dec6":
+            return f"{float(value):.6f}".encode("ascii")
+        return _AFG_RESPONSE_FORMS.get(str(value), str(value)).encode("ascii")
+
+    def _afg_write(
+        self, match: re.Match[str], key: str, kind: object, token: str
+    ) -> None:
+        if kind == "bool":
+            value: object = self._on_off(token)
+        elif kind in ("nr3", "dec6"):
+            value = self._float(token)
+        else:
+            value = self._enum(token, kind)  # 列挙(仕様タプル)
+        self._afg(match)[key] = value
         return None
 
     def _measure_item(self, match: re.Match[str]) -> bytes:

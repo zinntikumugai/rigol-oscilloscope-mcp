@@ -270,6 +270,61 @@ class ControlService:
             "changed": before != after,
         }
 
+    def configure_afg(
+        self,
+        driver: ScopeDriver,
+        channel: int = 1,
+        *,
+        waveform: str | None = None,
+        frequency_hz: float | None = None,
+        amplitude_vpp: float | None = None,
+        offset_v: float | None = None,
+        phase_deg: float | None = None,
+        duty_percent: float | None = None,
+        symmetry_percent: float | None = None,
+        impedance: str | None = None,
+    ) -> dict:
+        """信号発生器を設定する(SAFE_WRITE)。未指定の項目は変更しない。
+
+        **出力状態には一切触れない**ため、この操作だけで信号が外へ出ることはない
+        (出力のON/OFFは承認フロー付きの別Toolの責務)。したがって引数依存の昇格も
+        承認要求も無い。
+        """
+        requested = _specified(
+            {
+                "waveform": waveform,
+                "frequency_hz": frequency_hz,
+                "amplitude_vpp": amplitude_vpp,
+                "offset_v": offset_v,
+                "phase_deg": phase_deg,
+                "duty_percent": duty_percent,
+                "symmetry_percent": symmetry_percent,
+                "impedance": impedance,
+            }
+        )
+        if not requested:
+            raise _invalid(
+                "No item to change was specified "
+                "(specify at least one of waveform / frequency_hz / amplitude_vpp / "
+                "offset_v / phase_deg / duty_percent / symmetry_percent / impedance)",
+                {"channel": channel},
+            )
+
+        args = {"channel": channel, **requested}
+        with self._audited("configure_afg", args) as record:
+            before = driver.get_afg_config(channel)
+            record.before(before)
+            applied = driver.configure_afg(channel, **requested)
+            after = driver.get_afg_config(channel)
+            record.after(after)
+
+        return {
+            "channel": after["channel"],
+            "requested": requested,
+            "applied": applied,
+            "changed": before != after,
+        }
+
     # -- Acquisition ------------------------------------------------------
 
     def run(self, driver: ScopeDriver) -> dict:

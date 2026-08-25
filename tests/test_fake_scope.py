@@ -669,3 +669,70 @@ def test_bus_data_is_empty_while_the_event_table_is_off(scope: FakeScope) -> Non
 
     assert scope.handle(":BUS1:EVENt?") == b"0"
     assert scope.handle(":BUS1:DATA?") == b"#9000000000\n"
+
+
+# --------------------------------------------------------------------------
+# 信号発生(:SOURce<n> / docs/verification/mho98-afg.md)
+# --------------------------------------------------------------------------
+
+
+def test_afg_defaults_match_the_probe(scope: FakeScope) -> None:
+    """既定値・応答形式は実機プローブ(mho98-afg.md 1章)そのまま。"""
+    assert scope.handle(":SOURce1:OUTPut:STATe?") == b"0"
+    assert scope.handle(":SOURce1:FUNCtion?") == b"SIN"  # 短形で返る
+    assert scope.handle(":SOURce1:FREQuency?") == b"1.000000E+3"
+    assert scope.handle(":SOURce1:VOLTage:AMPLitude?") == b"5.000000E+0"
+    assert scope.handle(":SOURce1:VOLTage:OFFSet?") == b"0.000000"
+    assert scope.handle(":SOURce1:PHASe?") == b"0.000000"
+    assert scope.handle(":SOURce1:IMPedance?") == b"OMEG"
+    assert scope.handle(":SOURce1:FUNCtion:SQUare:DUTY?") == b"5.000000E+1"
+    assert scope.handle(":SOURce1:FUNCtion:RAMP:SYMMetry?") == b"5.000000E+1"
+    assert scope.handle(":SOURce2:OUTPut:STATe?") == b"0"
+
+
+def test_afg_round_trip(scope: FakeScope) -> None:
+    scope.handle(":SOURce1:FUNCtion SQUare")
+    scope.handle(":SOURce1:FREQuency 2000")
+    scope.handle(":SOURce1:VOLTage:AMPLitude 1")
+    scope.handle(":SOURce1:IMPedance FIFTy")
+    scope.handle(":SOURce1:FUNCtion:SQUare:DUTY 60")
+    scope.handle(":SOURce1:FUNCtion:RAMP:SYMMetry 40")
+
+    assert scope.handle(":SOURce1:FUNCtion?") == b"SQU"
+    assert scope.handle(":SOURce1:FREQuency?") == b"2.000000E+3"
+    assert scope.handle(":SOURce1:VOLTage:AMPLitude?") == b"1.000000E+0"
+    # 実機実測: 設定後の返却は長形の `FIFTy`
+    assert scope.handle(":SOURce1:IMPedance?") == b"FIFTy"
+    assert scope.handle(":SOURce1:FUNCtion:SQUare:DUTY?") == b"6.000000E+1"
+    # 波形に依らず保存される(Square中でもRAMPの対称性は書ける)
+    assert scope.handle(":SOURce1:FUNCtion:RAMP:SYMMetry?") == b"4.000000E+1"
+    # ch2 は独立
+    assert scope.handle(":SOURce2:FUNCtion?") == b"SIN"
+
+
+def test_afg_output_state_is_modeled_but_untouched_by_the_driver(
+    scope: FakeScope,
+) -> None:
+    """出力状態は存在する(本PRのドライバは読むだけで書かない)。"""
+    scope.handle(":SOURce2:OUTPut:STATe ON")
+
+    assert scope.handle(":SOURce2:OUTPut:STATe?") == b"1"
+    assert scope.handle(":SOURce1:OUTPut:STATe?") == b"0"
+
+
+def test_afg_unknown_waveform_is_rejected(scope: FakeScope) -> None:
+    """ガイド外トークン。実機は -222 で明示拒否(沈黙しない)するが、
+    フェイクはエラー系を一律 SilentTimeout に畳む。ドライバは表に無い
+    トークンをそもそも送らないため、この差は実装に影響しない。
+    """
+    with pytest.raises(SilentTimeout):
+        scope.handle(":SOURce1:FUNCtion PULSe")
+
+
+def test_afg_channel3_is_silent(scope: FakeScope) -> None:
+    """`:SOURce3` は実機のSCPIサーバーを沈黙させる(mho98-afg.md 1章)。"""
+    with pytest.raises(SilentTimeout):
+        scope.handle(":SOURce3:FUNCtion?")
+
+    with pytest.raises(SilentTimeout):
+        scope.handle(":SOURce3:OUTPut:STATe?")

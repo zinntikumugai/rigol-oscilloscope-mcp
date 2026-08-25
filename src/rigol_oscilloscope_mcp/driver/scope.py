@@ -77,6 +77,37 @@ DEFAULT_ANALOG_CHANNELS = 4
 STOPPED_TRIGGER_STATUS = "STOP"
 PREAMBLE_FIELDS = 10
 
+# -- 信号発生(AFG、tools.md 7章 / MHO900プログラミングガイド 3.25)----------
+#
+# 送信順は固定(下記の並び順)。インピーダンスと周波数が振幅の、振幅がオフセットの
+# 許容範囲を決めるため、範囲の広い側から順に送る。
+#: 意味的キー → `:SOURce<n>` 相対のSCPIパス(この並びが送信順)
+_AFG_ITEMS: tuple[tuple[str, str], ...] = (
+    ("waveform", ":FUNCtion"),
+    ("impedance", ":IMPedance"),
+    ("frequency_hz", ":FREQuency"),
+    ("amplitude_vpp", ":VOLTage:AMPLitude"),
+    ("offset_v", ":VOLTage:OFFSet"),
+    ("phase_deg", ":PHASe"),
+    ("duty_percent", ":FUNCtion:SQUare:DUTY"),
+    ("symmetry_percent", ":FUNCtion:RAMP:SYMMetry"),
+)
+
+#: 出力状態。本層は**読むだけ**で書き込まない(出力のON/OFFは別Toolの責務)
+_AFG_OUTPUT_PATH = ":OUTPut:STATe"
+
+#: 数値項目の値域 (下限, 上限, 下限を除外するか)。上限 None はモデルオプション・
+#: 出力インピーダンス依存で宣言できないため機器に委ねる(範囲外は**エラーキューに
+#: 何も積まずクランプされる**ので、requested / applied の突合で検出する。
+#: docs/verification/mho98-afg.md 2章)。offset_v は範囲を持たない。
+_AFG_RANGES: dict[str, tuple[float, float | None, bool]] = {
+    "frequency_hz": (0.0, None, True),
+    "amplitude_vpp": (0.0, None, True),
+    "phase_deg": (0.0, 360.0, False),
+    "duty_percent": (1.0, 99.0, False),
+    "symmetry_percent": (0.0, 100.0, False),
+}
+
 _CHANNEL_RE = re.compile(r"^(?:CH|CHAN|CHANNEL)?\s*([0-9]+)$", re.IGNORECASE)
 # 非チャンネルのトリガソース。読み値をそのまま書き戻せるよう表記は1つに固定する
 # (`ACL` / `ACLine` はどちらも `ACLINE`)。
@@ -100,6 +131,22 @@ def _invalid(message: str, detail: dict) -> ScopeError:
 
 def _unsupported(message: str, detail: dict) -> ScopeError:
     return ScopeError(ErrorCode.UNSUPPORTED_FEATURE, message, detail)
+
+
+def _afg_number(key: str, value: object) -> str:
+    """AFGの数値項目を送信トークンへ。値域は**送信前**にここで検証する。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise _invalid(f"{key} is not a number: {value!r}", {"key": key, "value": value})
+    number = float(value)
+    low, high, exclusive = _AFG_RANGES.get(key, (None, None, False))
+    too_low = low is not None and (number <= low if exclusive else number < low)
+    if too_low or (high is not None and number > high):
+        allowed = f"greater than {low}" if high is None else f"between {low} and {high}"
+        raise _invalid(
+            f"{key} must be {allowed}: {value!r}",
+            {"key": key, "value": value, "min": low, "max": high},
+        )
+    return format_number(number)
 
 
 def _optional_number(text: str) -> float | None:
@@ -842,6 +889,139 @@ class ScopeDriver:
             "events": events,
             "warnings": warnings,
         }
+
+    # -- 信号発生(tools.md 7章)-------------------------------------------
+
+    @property
+    def afg_channels(self) -> int:
+        """信号発生チャンネル数(プロファイル未宣言なら 0 = 非対応)。"""
+        count = self.profile.capabilities.get("afg_channels")
+        return count if isinstance(count, int) and count > 0 else 0
+
+    def _afg_prefix(self, channel: int) -> tuple[int, str]:
+        """`(番号, ":SOURce<n>")`。**範囲外の番号は絶対に送らない**。
+
+        実機MHO98は `:SOURce3` の1発でSCPIサーバー全体が沈黙する
+        (docs/verification/mho98-afg.md 1章)。宣言の不在(`afg_prefix` 未宣言)は
+        そのまま非対応のゲートで、DHO800/900の番号なし `:SOURce`(DGモジュール)は
+        別方言なのでここには載らない。
+        """
+        template = self._required_dialect("afg_prefix", "the function generator")
+        count = self.afg_channels
+        if count < 1:
+            raise _unsupported(
+                "this model's profile does not declare how many function generator "
+                "channels exist",
+                {"capability": "afg_channels", "profile": self.profile.name},
+            )
+        if (
+            isinstance(channel, bool)
+            or not isinstance(channel, int)
+            or not 1 <= channel <= count
+        ):
+            raise _invalid(
+                f"function generator channel {channel!r} does not exist "
+                f"(this model has channel 1-{count})",
+                {"channel": channel, "afg_channels": count},
+            )
+        return channel, template.replace("{n}", str(channel))
+
+    def _afg_enum(self, dialect_key: str, what: str) -> tuple[object, object]:
+        """プロファイルの対応表から (値→トークン, 応答→値) を組み立てる。"""
+        mapping = self.profile.dialect.get(dialect_key)
+        if not isinstance(mapping, dict) or not mapping:
+            raise _unsupported(
+                f"this model's profile does not declare a value to use for {what}",
+                {"dialect": dialect_key, "profile": self.profile.name},
+            )
+        return profile_enum(tuple(mapping.items()))
+
+    def _afg_item(self, key: str) -> tuple[object, object]:
+        """項目1件の (値→トークン, 応答→値) 変換器。"""
+        if key == "waveform":
+            return self._afg_enum("afg_waveforms", "the function generator waveform")
+        if key == "impedance":
+            return self._afg_enum(
+                "afg_impedances", "the function generator output impedance"
+            )
+        return (lambda value, k: _afg_number(k, value)), parse_nr3
+
+    def configure_afg(
+        self,
+        channel: int,
+        *,
+        waveform: str | None = None,
+        frequency_hz: float | None = None,
+        amplitude_vpp: float | None = None,
+        offset_v: float | None = None,
+        phase_deg: float | None = None,
+        duty_percent: float | None = None,
+        symmetry_percent: float | None = None,
+        impedance: str | None = None,
+    ) -> dict:
+        """信号発生器を設定し、read-backした適用値を返す。
+
+        **出力状態(`:OUTPut:STATe`)には一切触れない。** 出力のON/OFFは別Tool
+        (承認フロー付き)の責務で、本メソッドの実行で信号が外へ出ることはない。
+
+        全ての検証を送信前に済ませる(不正なチャンネル番号1発で実機のSCPIサーバーが
+        沈黙するため)。送信順は `_AFG_ITEMS` の並び順に固定する。
+        """
+        number, prefix = self._afg_prefix(channel)
+        values = {
+            "waveform": waveform,
+            "impedance": impedance,
+            "frequency_hz": frequency_hz,
+            "amplitude_vpp": amplitude_vpp,
+            "offset_v": offset_v,
+            "phase_deg": phase_deg,
+            "duty_percent": duty_percent,
+            "symmetry_percent": symmetry_percent,
+        }
+        if all(value is None for value in values.values()):
+            raise _invalid(
+                "No item to change was specified "
+                f"(specify at least one of {' / '.join(values)})",
+                {"channel": number},
+            )
+
+        # 先に全項目を検証してから送る(1項目でも不正なら1コマンドも送らない)
+        plan: list[tuple[str, str, str, object]] = []
+        for key, path in _AFG_ITEMS:
+            value = values[key]
+            if value is None:
+                continue
+            to_scpi, from_scpi = self._afg_item(key)
+            plan.append(
+                (
+                    key,
+                    f"{prefix}{path} {to_scpi(value, key)}",
+                    f"{prefix}{path}?",
+                    from_scpi,
+                )
+            )
+
+        applied: dict[str, object] = {"channel": number}
+        for key, set_cmd, query, from_scpi in plan:
+            applied[key] = from_scpi(self.session.set_and_verify(set_cmd, query))
+        return applied
+
+    def get_afg_config(self, channel: int) -> dict:
+        """信号発生チャンネルの現在設定を意味的なキーで返す。
+
+        出力状態は**読むだけ**(書き込みは行わない)。
+        """
+        number, prefix = self._afg_prefix(channel)
+        query = self.session.query
+
+        config: dict[str, object] = {
+            "channel": number,
+            "output": parse_bool(query(f"{prefix}{_AFG_OUTPUT_PATH}?")),
+        }
+        for key, path in _AFG_ITEMS:
+            _, from_scpi = self._afg_item(key)
+            config[key] = from_scpi(query(f"{prefix}{path}?"))
+        return config
 
     # -- Acquisition ------------------------------------------------------
 
