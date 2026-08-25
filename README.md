@@ -55,6 +55,26 @@ args = ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp",
 RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 ```
 
+### ローカルのcloneから起動する場合
+
+リポジトリを手元にcloneして開発版を使うときは、`uv run --directory` で起動する。
+
+```json
+{
+  "mcpServers": {
+    "rigol-oscilloscope": {
+      "command": "/path/to/uv",
+      "args": ["run", "--directory", "/path/to/rigol-oscilloscope-mcp", "rigol-oscilloscope-mcp"],
+      "env": { "PYTHONDONTWRITEBYTECODE": "1" }
+    }
+  }
+}
+```
+
+- `command` は、GUIホスト(デスクトップアプリ)のPATHに `uv` が無い場合に絶対パスで書く。パスは `which uv`(mise管理なら `mise which uv`)で確認する
+- `PYTHONDONTWRITEBYTECODE=1` は明示する。プロジェクト外から起動すると `mise.toml` の `[env]` が効かないため、`__pycache__` がclone内に書かれるのを防ぐ
+- スクリーンショットのデフォルト保存先は、`--directory` で移動した先ではなく**サーバーを起動した実行ディレクトリ**になる。固定したい場合は `RIGOL_MCP_SCREENSHOT_DIR` を指定する
+
 ## 設定(環境変数)
 
 すべての設定は環境変数で指定できる(TOML設定ファイルも任意で使える)。
@@ -66,7 +86,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 | `RIGOL_MCP_TRANSPORT` | `lan` / `usb` | addressから推定 |
 | `RIGOL_MCP_PORT` | LAN SCPIポート | プロファイル既定(5555) |
 | `RIGOL_MCP_TIMEOUT_S` | 単一クエリのタイムアウト(秒) | 5 |
-| `RIGOL_MCP_SCREENSHOT_DIR` | スクリーンショットの既定保存先 | カレントディレクトリ |
+| `RIGOL_MCP_SCREENSHOT_DIR` | スクリーンショットの既定保存先 | 実行ディレクトリ(`PWD`。無効時はカレントディレクトリ) |
 | `RIGOL_MCP_ALLOWED_DIRS` | 書き込み許可ルート(パス区切りで複数) | 既定保存先 + カレント |
 | `RIGOL_MCP_WAVEFORM_MAX_POINTS` | 波形取得の既定上限 | 100000 |
 | `RIGOL_MCP_RAW_SCPI` | `raw_scpi` Toolの有効化(予約: Tool自体が未実装) | false |
@@ -109,6 +129,13 @@ RIGOL_TEST_ADDRESS=<あなたのオシロのIP> RIGOL_TEST_ALLOW_WRITE=1 uv run 
 
 `<あなたのオシロのIP>` にはご自身の機器のアドレスを入れる(例示が必要な場合は
 ドキュメント用に予約された `192.0.2.x`(TEST-NET-1)を使うこと)。
+
+## トラブルシューティング
+
+| 症状 | 対処 |
+|---|---|
+| `spawn uv ENOENT`(サーバーが起動しない) | GUIホストのPATHに `uv` が無い。MCP設定の `command` を絶対パス(`which uv` / `mise which uv` の出力)に書き換える |
+| スクリーンショットが意図しない場所に保存される | 既定はサーバーを起動した実行ディレクトリ。`RIGOL_MCP_SCREENSHOT_DIR` で保存先を明示指定する |
 
 ## 安全上の注意
 

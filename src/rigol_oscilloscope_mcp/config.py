@@ -185,6 +185,26 @@ def _dedupe(paths: tuple[Path, ...]) -> tuple[Path, ...]:
     return tuple(seen)
 
 
+def _pwd_dir(env: Mapping[str, str]) -> Path | None:
+    """PWD環境変数が指す実行ディレクトリ(使えなければ None)。
+
+    uv run --directory 等で cwd が書き換わっても、spawn元のシェル/ホストが
+    継承させた PWD にはユーザーの実行ディレクトリが残る。os.chdir() は PWD を
+    更新しないためこれが使える。GUIホストが PWD=/ で起動するようなケースは
+    書き込み可否チェックで弾く。
+    """
+    raw = env.get("PWD")
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        return None
+    path = path.resolve()
+    if not path.is_dir() or not os.access(path, os.W_OK):
+        return None
+    return path
+
+
 def load_config(
     env: Mapping[str, str] | None = None,
     config_file: Path | None = None,
@@ -194,6 +214,10 @@ def load_config(
     env が None なら os.environ を使う。config_file が None のときは
     env の RIGOL_MCP_CONFIG を参照し、それも無ければファイルは読まない。
     不正値は ScopeError(INVALID_PARAMETER) を送出する。
+
+    screenshot_dir だけは
+    RIGOL_MCP_SCREENSHOT_DIR(env/TOML) > PWD環境変数 > Path.cwd()
+    の順で解決する(9章)。
     """
     env = os.environ if env is None else env
 
@@ -226,7 +250,7 @@ def load_config(
     raw_scpi = _as_bool(src, "raw_scpi")
 
     cwd = Path.cwd().resolve()
-    screenshot_dir = _as_path(src, "screenshot_dir") or cwd
+    screenshot_dir = _as_path(src, "screenshot_dir") or _pwd_dir(env) or cwd
     # 許可ルートには保存先とカレントを必ず含める(Requirements 9章)
     allowed_dirs = _dedupe(
         _as_path_list(src, "allowed_dirs") + (screenshot_dir, cwd)

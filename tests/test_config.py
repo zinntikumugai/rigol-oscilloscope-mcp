@@ -313,3 +313,51 @@ def test_error_detail_names_the_offending_key() -> None:
     with pytest.raises(ScopeError) as exc:
         load_config(env={"RIGOL_MCP_PORT": "abc"})
     assert "port" in str(exc.value.detail) or "port" in exc.value.message
+
+
+# --- PWD(実行ディレクトリ)フォールバック -----------------------------------
+
+
+def test_pwd_becomes_default_screenshot_dir(tmp_path: Path) -> None:
+    cfg = load_config(env={"PWD": str(tmp_path)})
+    assert cfg.screenshot_dir == tmp_path.resolve()
+
+
+def test_screenshot_dir_env_wins_over_pwd(tmp_path: Path) -> None:
+    shots = tmp_path / "shots"
+    shots.mkdir()
+    cfg = load_config(
+        env={"RIGOL_MCP_SCREENSHOT_DIR": str(shots), "PWD": str(tmp_path)}
+    )
+    assert cfg.screenshot_dir == shots.resolve()
+
+
+def test_missing_pwd_falls_back_to_cwd(tmp_path: Path) -> None:
+    cfg = load_config(env={"PWD": str(tmp_path / "nope")})
+    assert cfg.screenshot_dir == Path.cwd().resolve()
+
+
+def test_relative_pwd_falls_back_to_cwd() -> None:
+    cfg = load_config(env={"PWD": "relative/dir"})
+    assert cfg.screenshot_dir == Path.cwd().resolve()
+
+
+def test_unwritable_pwd_falls_back_to_cwd(tmp_path: Path) -> None:
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o555)
+    try:
+        cfg = load_config(env={"PWD": str(locked)})
+    finally:
+        locked.chmod(0o755)
+    assert cfg.screenshot_dir == Path.cwd().resolve()
+
+
+def test_no_pwd_key_keeps_cwd_default() -> None:
+    cfg = load_config(env={})
+    assert cfg.screenshot_dir == Path.cwd().resolve()
+
+
+def test_pwd_dir_is_in_allowed_dirs(tmp_path: Path) -> None:
+    cfg = load_config(env={"PWD": str(tmp_path)})
+    assert tmp_path.resolve() in cfg.allowed_dirs
