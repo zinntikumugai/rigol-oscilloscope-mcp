@@ -1,0 +1,26 @@
+# 汎用Rigolプロファイル(フォールバック専用: match は定義しない)
+# 未知のRigol機種に対し、共通性の高いSCPIコマンドのみでベストエフォート動作する。
+# ここに載るニモニックだけを「確認済み」として扱う(docs/device-profiles.md 4.2)。
+model: generic
+confidence: generic
+
+capabilities:
+  analog_channels: 4
+  screenshot: true
+  waveform_download: true
+  measurements: [frequency, period, vpp, vmax, vmin]
+
+dialect:
+  scpi_port: 5555
+  screenshot_command: ":DISPlay:DATA?"
+  screenshot_format: png
+  measurement_items:
+    frequency: FREQuency
+    period: PERiod
+    vpp: VPP
+    vmax: VMAX
+    vmin: VMIN
+  invalid_query_behavior: silent_timeout
+  error_queue_stale_on_connect: true
+
+limits: {}

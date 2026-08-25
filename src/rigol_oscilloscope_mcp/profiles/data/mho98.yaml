@@ -1,0 +1,44 @@
+# 検証済みプロファイル: MHO98(docs/device-profiles.md 3章)
+# 実測根拠: docs/verification/mho98-phase0.md(firmware 00.01.00)
+model: MHO98
+match: "^MHO9[0-9]" # IDNモデル文字列の一致規則(完全一致系)
+inherits: rigol-generic
+confidence: verified
+
+capabilities:
+  analog_channels: 4
+  digital_channels: 16
+  afg_channels: 2
+  protocol_decode: true
+  waveform_download: true
+  screenshot: true
+  impedance_50ohm: true
+  measurements:
+    [frequency, period, vpp, vmax, vmin, vavg, rms, duty, rise_time, fall_time]
+
+dialect:
+  scpi_port: 5555
+  screenshot_command: ":DISPlay:DATA?"
+  screenshot_format: png
+  measurement_items:
+    frequency: FREQuency
+    period: PERiod
+    vpp: VPP
+    vmax: VMAX
+    vmin: VMIN
+    vavg: VAVG # VAVerage は不可(実測)
+    rms: VRMS
+    duty: PDUTy # 返却単位は比率(0.5002 = 50.02%)
+    rise_time: RTIMe
+    fall_time: FTIMe
+  waveform_preamble:
+    yorigin: 0
+    yreference: 128
+  nr3_single_digit_exponent: true
+  snaps_to_125: false
+  invalid_query_behavior: silent_timeout # + error queue に -100
+  error_queue_stale_on_connect: true
+
+limits:
+  probe_ratio: [0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000] # 要実機確認
+  # vertical_scale / timebase_scale 等は未検証 → 実機read-backフォールバック
