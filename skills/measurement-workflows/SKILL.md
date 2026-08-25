@@ -40,17 +40,29 @@ Scaling rules (the instrument snaps values itself — trust the `applied` field 
 3. `configure_channel` → `configure_timebase` → `configure_trigger`
 4. `single`, wait for the trigger, then `measure` (frequency, vpp) and `capture_screenshot`
 5. Interpret: bit time should be 1/baud; if the trace shows no edges, re-check the physical connection with the user
+6. **To read the bytes**, use the instrument's decoder instead of eyeballing the trace:
+   `configure_decode(protocol="uart", enabled=true, event_table=true, settings={"rx_source": "CH1", "baud_bps": 115200, "rx_threshold_v": <Vpp/2>})`,
+   stop acquisition, then `get_decode_result` — it returns the decoded events
+   (time, Tx/Rx, data byte, error). The same pattern works for i2c / spi / can /
+   lin / parallel; calling `configure_decode` with an unknown settings key
+   returns the valid keys for that protocol.
+
+## Serial decode notes
+
+- Decode is display-side only: it changes no acquisition settings and is fully reversible.
+- Enable the bus (`enabled=true`) before or together with `event_table=true` — the event table needs the bus display on.
+- Stop acquisition (`stop`) before `get_decode_result` for a stable table; while running it is a snapshot.
+- Decoded columns vary by protocol; the `data` cell honors the `data_format` you set (hex/ascii/dec/bin).
 
 ## Unknown-signal exploration workflow
 
 Never change everything at once. Narrow down step by step:
 
 1. `get_state`, then set a coarse timebase (1 ms/div) and vertical scale (per the table)
-2. `capture_screenshot` or `capture_waveform` and inspect
-3. Adjust `scale_v_per_div` to the observed amplitude
-4. Narrow `scale_s_per_div` until individual periods are visible
-5. Set the trigger (edge, half the observed amplitude), re-acquire
-6. `measure` frequency and vpp to confirm
+2. `analyze_waveform` (stats + fft) — it reports min/max/mean/vpp and the dominant frequencies without shipping raw samples; use `stats.vpp_v` to set the vertical scale and `fft.dominant_frequency_hz` to pick the timebase (mind `frequency_resolution_hz`: a coarse record gives a coarse estimate)
+3. Narrow `scale_s_per_div` until individual periods are visible; `capture_screenshot` when you need to see the wave shape
+4. Set the trigger (edge, half the observed amplitude), re-acquire
+5. `measure` frequency and vpp to confirm; if the signal looks like a serial protocol, follow the decode step from the UART workflow
 
 ## Iteration limit
 

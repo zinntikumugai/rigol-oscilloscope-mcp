@@ -85,6 +85,9 @@ def test_skill_references_real_tools():
         "measure",
         "capture_waveform",
         "capture_screenshot",
+        "configure_decode",
+        "get_decode_result",
+        "analyze_waveform",
     ):
         assert tool in body, f"skill does not mention tool {tool}"
         assert tool in TOOL_CLASSES
