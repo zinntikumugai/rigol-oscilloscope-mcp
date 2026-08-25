@@ -10,6 +10,7 @@
 - [tools.md](tools.md) — MCP Toolカタログ(引数・返却・操作クラスの詳細)
 - [device-profiles.md](device-profiles.md) — 機種プロファイル仕様と検証済みプロファイル
 - [phase0-results.md](phase0-results.md) — Phase 0 実機検証結果(実測エビデンス)
+- [roadmap.md](roadmap.md) — 今後の対応予定(MVP対象外の機能・検討事項)
 
 ---
 
@@ -102,7 +103,7 @@ LLMに `:CHAN1:SCAL 1` のようなSCPI文字列を直接生成・送信させ�
 
 ### 3.3 将来対応(Phase 4以降)
 
-シリアルプロトコルデコード(UART/I²C/SPI/CAN/LIN)、Logic Analyzer(D0–D15)、AFG(出力ONはDANGEROUS_WRITE)、ホスト側高度解析(FFT等)。各1行に留め、詳細は着手時に定義する。
+シリアルプロトコルデコード(UART/I²C/SPI/CAN/LIN)、Logic Analyzer(D0–D15)、AFG(出力ONはDANGEROUS_WRITE)、ホスト側高度解析(FFT等)。予定の詳細は [roadmap.md](roadmap.md) に記録し、着手時に要件へ昇格させる。
 
 ### 3.4 非対象
 
