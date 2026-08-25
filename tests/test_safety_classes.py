@@ -21,6 +21,7 @@ EXPECTED = {
     "get_trigger": "READ_ONLY",
     "get_acquisition_state": "READ_ONLY",
     "measure": "READ_ONLY",
+    "clear_measurements": "SAFE_WRITE",
     "capture_waveform": "READ_ONLY",
     "analyze_waveform": "READ_ONLY",
     "capture_screenshot": "READ_ONLY",

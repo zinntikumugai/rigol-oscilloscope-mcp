@@ -430,6 +430,20 @@ class ScopeDriver:
                 results.append(MeasurementResult(name, key, value, "valid"))
         return results
 
+    def clear_measurements(self) -> None:
+        """Resultビューの全測定項目を消す(issue #16)。
+
+        `:MEASure:ITEM?`(クエリ形)でも項目が有効化されて画面に蓄積するのが
+        実機仕様のため、その掃除を担う。ニモニックはファミリで分岐する
+        (MHO900: DELete / DHO800系: CLEar)ためdialect宣言必須 —
+        未宣言プロファイルでは1コマンドも送らず UNSUPPORTED_FEATURE。
+        write-onlyでreadbackは存在しない(run/stopと同じ扱い)。
+        """
+        command = self._required_dialect(
+            "measurement_clear", "clearing the measurement items"
+        )
+        self.session.write_checked(command)
+
     # -- 画面・波形 -------------------------------------------------------
 
     def capture_screenshot_bytes(self) -> bytes:

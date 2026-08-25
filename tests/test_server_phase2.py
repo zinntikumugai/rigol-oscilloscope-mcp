@@ -51,6 +51,7 @@ PHASE2_TOOLS = {
 
 PHASE4_TOOLS = {
     "analyze_waveform",
+    "clear_measurements",
 }
 
 
@@ -71,9 +72,12 @@ def config(tmp_path: Path, audit_path: Path) -> Config:
 
 
 @pytest.fixture
-def manager(config: Config) -> ConnectionManager:
-    scope = FakeScope()
+def scope() -> FakeScope:
+    return FakeScope()
 
+
+@pytest.fixture
+def manager(config: Config, scope: FakeScope) -> ConnectionManager:
     def factory(transport: str, address: str, port: int, timeout_s: float) -> FakeTransport:
         return FakeTransport(scope)
 
@@ -279,6 +283,27 @@ def test_run_stop_single(server) -> None:
     assert payload(stopped)["result"] == "ok"
     assert payload(state)["running"] is False
     assert payload(shot)["result"] == "ok"
+
+
+def test_clear_measurements_roundtrip(server, scope) -> None:
+    """measureで蓄積したResultビュー項目をclear_measurementsで消す(issue #16)。"""
+    connected(server)
+
+    measured, cleared = run_calls(
+        server,
+        ("measure", {"channel": "CH1", "measurements": ["vpp"]}),
+        ("clear_measurements", {}),
+    )
+
+    assert "vpp_v" in payload(measured)["values"]
+    assert payload(cleared) == {"result": "ok"}
+    assert scope.measurement_items == []
+
+
+def test_clear_measurements_requires_connection(server) -> None:
+    result = data(server, "clear_measurements")
+
+    assert result["error"] is True
 
 
 def test_autoset_requires_confirmation_then_returns_state(server) -> None:

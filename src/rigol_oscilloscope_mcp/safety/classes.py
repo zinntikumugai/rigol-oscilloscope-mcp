@@ -54,6 +54,8 @@ TOOL_CLASSES: dict[str, OperationClass] = {
     "autoset": OperationClass.RESTRICTED_WRITE,
     # 5. 測定・データ取得
     "measure": OperationClass.READ_ONLY,
+    # Resultビュー表示のみの変更で再測定により可逆(issue #16)
+    "clear_measurements": OperationClass.SAFE_WRITE,
     "capture_waveform": OperationClass.READ_ONLY,
     "analyze_waveform": OperationClass.READ_ONLY,
     "capture_screenshot": OperationClass.READ_ONLY,
