@@ -6,6 +6,8 @@ Pillowでの形式変換、保存先の許可ルート検証との連携を確�
 """
 
 import io
+import re
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,7 @@ from rigol_oscilloscope_mcp.driver.scope import ScopeDriver
 from rigol_oscilloscope_mcp.driver.session import ScpiSession
 from rigol_oscilloscope_mcp.errors import ErrorCode, ScopeError
 from rigol_oscilloscope_mcp.profiles import load_profile
+from rigol_oscilloscope_mcp.service import screenshot as screenshot_module
 from rigol_oscilloscope_mcp.service.screenshot import (
     SUPPORTED_FORMATS,
     capture_screenshot,
@@ -75,6 +78,41 @@ def test_default_name_uses_scope_prefix_and_extension(
     name = Path(result.saved_path).name
     assert name.startswith("scope_")
     assert name.endswith(".png")
+
+
+def test_default_name_includes_milliseconds(
+    driver: ScopeDriver, config: Config
+) -> None:
+    result = capture_screenshot(driver, config)
+
+    name = Path(result.saved_path).name
+    assert re.fullmatch(r"scope_\d{8}_\d{6}_\d{3}\.png", name), name
+
+
+def test_captures_in_the_same_second_do_not_overwrite(
+    driver: ScopeDriver, config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    times = iter(
+        [
+            datetime(2026, 8, 25, 14, 30, 0, 123_000),
+            datetime(2026, 8, 25, 14, 30, 0, 456_000),
+        ]
+    )
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # datetime.now と同じシグネチャ
+            return next(times)
+
+    monkeypatch.setattr(screenshot_module, "datetime", FrozenDatetime)
+
+    first = capture_screenshot(driver, config)
+    second = capture_screenshot(driver, config)
+
+    assert Path(first.saved_path).name == "scope_20260825_143000_123.png"
+    assert Path(second.saved_path).name == "scope_20260825_143000_456.png"
+    assert Path(first.saved_path).is_file()
+    assert Path(second.saved_path).is_file()
 
 
 def test_default_name_extension_follows_format(
@@ -164,15 +202,58 @@ def test_extension_case_is_ignored(
 # --------------------------------------------------------------------------
 
 
-def test_format_argument_overrides_path_extension(
+def test_format_conflicting_with_path_extension_is_rejected(
+    driver: ScopeDriver, config: Config, root: Path
+) -> None:
+    target = root / "shot.png"
+
+    with pytest.raises(ScopeError) as excinfo:
+        capture_screenshot(driver, config, path=str(target), format="jpg")
+
+    error = excinfo.value
+    assert error.code == ErrorCode.INVALID_PARAMETER
+    assert error.detail["format"] == "jpg"
+    assert error.detail["path_extension"] == "png"
+    assert error.detail["hint"]
+    assert not target.exists()  # 不一致ファイルを作らない
+
+
+def test_format_matching_path_extension_after_normalization_is_accepted(
     driver: ScopeDriver, config: Config, root: Path
 ) -> None:
     result = capture_screenshot(
-        driver, config, path=str(root / "capture.png"), format="jpg"
+        driver, config, path=str(root / "shot.jpeg"), format="jpg"
     )
 
     assert result.format == "jpeg"
+    assert result.saved_path == str(root / "shot.jpeg")
     assert Path(result.saved_path).read_bytes().startswith(JPEG_SOI)
+
+
+def test_format_with_directory_path_is_accepted(
+    driver: ScopeDriver, config: Config, root: Path
+) -> None:
+    result = capture_screenshot(driver, config, path=str(root) + "/", format="jpg")
+
+    assert result.format == "jpeg"
+    assert Path(result.saved_path).parent == root
+    assert Path(result.saved_path).suffix == ".jpg"
+
+
+def test_format_with_extensionless_path_is_accepted(
+    driver: ScopeDriver, config: Config, root: Path
+) -> None:
+    result = capture_screenshot(driver, config, path=str(root / "shot"), format="jpg")
+
+    assert result.saved_path == str(root / "shot.jpg")
+    assert result.format == "jpeg"
+
+
+def test_format_without_path_is_accepted(driver: ScopeDriver, config: Config) -> None:
+    result = capture_screenshot(driver, config, format="jpg")
+
+    assert result.format == "jpeg"
+    assert Path(result.saved_path).suffix == ".jpg"
 
 
 def test_unsupported_format_is_rejected(driver: ScopeDriver, config: Config) -> None:
