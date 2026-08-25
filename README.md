@@ -53,6 +53,17 @@ uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp rigol-osc
 }
 ```
 
+### Codex — プラグイン
+
+Codexプラグイン(`.codex-plugin/` + マーケットプレイス定義)も同梱しており、MCPサーバーと測定ワークフロースキルを一括導入できる。
+
+```bash
+codex plugin marketplace add zinntikumugai/rigol-oscilloscope-mcp
+codex plugin install rigol-oscilloscope
+```
+
+(プラグインを使わない場合、スキルだけなら `skills/measurement-workflows` を `~/.agents/skills/` へコピーしても認識される。MCPサーバーだけなら次の `config.toml` 設定で足りる)
+
 ### Codex(`~/.codex/config.toml`)
 
 ```toml

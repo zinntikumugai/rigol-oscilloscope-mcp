@@ -384,14 +384,18 @@ args = ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp",
 RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 ```
 
-### 10.3 Claudeプラグイン
+### 10.3 プラグイン(Claude / Codex)
 
-リポジトリルートをプラグインルートとするClaudeプラグインを同梱する(単一プラグインのリポジトリのため marketplace.json は置かない):
+リポジトリルートをプラグインルートとし、ClaudeとCodexの両プラグインを同梱する。スキル(`skills/`)とMCPサーバー起動定義(10.1の `uvx` 標準形)は両者で共有し、マニフェストのみホストごとに持つ:
 
-- `.claude-plugin/plugin.json` — マニフェスト。MCPサーバー起動定義(10.1の `uvx` 標準形)を含む
-- `skills/measurement-workflows/SKILL.md` — 測定ワークフロースキル(1本に統合)。信号種別→推奨設定の対応表、UART測定・未知信号探索のワークフロー、安全プロンプト(物理確認の促し、商用電源測定の拒否)、測定反復の上限ガイダンス(目安5回)を含む
+- `.claude-plugin/plugin.json` — Claude用マニフェスト(MCPサーバー定義をインラインで含む。`skills/` は自動発見)
+- `.codex-plugin/plugin.json` — Codex用マニフェスト(`skills` は `./skills/` を、`mcpServers` は `./.codex-plugin/mcp.json` を参照)
+- `.agents/plugins/marketplace.json` — Codexのマーケットプレイス定義(Codexはプラグイン導入がマーケットプレイス経由のため単一プラグインでも必要)
+- `skills/measurement-workflows/SKILL.md` — 測定ワークフロースキル(1本に統合、Agent Skillsオープン標準形式で両ホスト共通)。信号種別→推奨設定の対応表、UART測定・未知信号探索のワークフロー、安全プロンプト(物理確認の促し、商用電源測定の拒否)、測定反復の上限ガイダンス(目安5回)を含む
 
-スキルは実行時にLLMホストへ渡る文字列のため**英語**で記述する(実行時に外部へ出る文字列は英語、という言語方針に従う)。旧v0.1の操作例・`max_iterations` はサーバー要件ではなくこのスキルへ吸収した。整合は `tests/test_plugin.py` が検証する(マニフェストの妥当性、スキルが実在Tool名を参照していること)。
+スキルは実行時にLLMホストへ渡る文字列のため**英語**で記述する(実行時に外部へ出る文字列は英語、という言語方針に従う)。旧v0.1の操作例・`max_iterations` はサーバー要件ではなくこのスキルへ吸収した。整合は `tests/test_plugin.py` が検証する(各マニフェストの妥当性、両マニフェストとpyprojectのname/version/起動列の一致、スキルが実在Tool名を参照していること)。
+
+**Codex側の未検証事項**(公式ドキュメント準拠で作成したが実CLIでの動作確認は未実施): (1) `mcpServers` にプラグインルート直下以外の相対パス(`./.codex-plugin/mcp.json`)を指定できること、(2) マーケットプレイスのsource `path: "./"` でプラグインルート=リポジトリルートを表現できること。Codex CLIでの実確認は [roadmap.md](roadmap.md) 3章へ。
 
 ## 11. 開発フェーズと受入基準
 
@@ -448,6 +452,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 消化状況(2026-08-25)。Phase 3はサーバーコードに触れないため実機検証は不要(機器通信ゼロ)。
 
 - [x] プラグインマニフェスト(`.claude-plugin/plugin.json`)が有効なJSONで、10.1の標準形によるMCPサーバー起動定義を含む(tests/test_plugin.py::test_plugin_manifest_is_valid)
+- [x] Codexプラグイン(`.codex-plugin/` + `.agents/plugins/marketplace.json`)がClaude側とname/version/MCP起動列で一致し、同じ `skills/` を共有する(tests/test_plugin.py::test_codex_manifest_is_valid / ::test_manifests_agree / ::test_codex_marketplace_references_the_plugin)— **Codex CLIでの実動作確認は未実施**(10.3の未検証事項、[roadmap.md](roadmap.md) 3章)
 - [x] 同梱スキルに信号種別→推奨設定の対応表、UART・未知信号ワークフロー、安全プロンプト(物理確認・AC mains拒否)、反復上限ガイダンスを記載(tests/test_plugin.py::test_skill_frontmatter)
 - [x] スキルが参照するTool名がすべて実在する(tests/test_plugin.py::test_skill_references_real_tools、Tool改名時の乖離ガード)
 

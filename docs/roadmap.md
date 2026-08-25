@@ -44,11 +44,11 @@ MHO98は2ch・100 MHz・1 GSa/s のAFGを搭載する。
 - `capture_waveform` の生データ(または一時ファイル)を入力とする解析Tool群として設計する
 - NumPy/SciPy依存が増えるため、optional dependency(extras)化を検討する
 
-## 3. Claudeプラグイン化(完了・要件へ昇格)
+## 3. プラグイン化(完了・要件へ昇格)
 
-**完了**(2026-08-25)。`.claude-plugin/plugin.json` + `skills/measurement-workflows/SKILL.md` として実装し、[Requirements.md](Requirements.md) 10.3 へ昇格した。旧v0.1のスキル素材(UART測定・Unknown Signal探索・安全プロンプト・反復上限)はすべてスキル本文へ吸収済み。
+**完了**(2026-08-25)。Claude(`.claude-plugin/plugin.json`)・Codex(`.codex-plugin/plugin.json` + `.agents/plugins/marketplace.json`)の両プラグインとして実装し、[Requirements.md](Requirements.md) 10.3 へ昇格した。スキル(`skills/measurement-workflows/SKILL.md`、Agent Skillsオープン標準)とMCP起動定義は両ホストで共有。旧v0.1のスキル素材(UART測定・Unknown Signal探索・安全プロンプト・反復上限)はすべてスキル本文へ吸収済み。
 
-Codex対応はMCPサーバーの `config.toml` 設定([Requirements.md](Requirements.md) 10.2)で完結する。プロンプト相当を配る仕組みはCodex側の機能(AGENTS.md等)を踏まえて別途検討する。
+**残タスク: Codex CLIでの実動作確認**(公式ドキュメント準拠で作成、実CLI未確認)。確認対象は Requirements.md 10.3 の未検証事項2点(`mcpServers` の相対パス指定、マーケットプレイスsource `path: "./"`)と、`codex plugin marketplace add zinntikumugai/rigol-oscilloscope-mcp` → install → スキル発見・MCPサーバー起動の通し。なおCodexはMCPサーバー単体なら `config.toml`([Requirements.md](Requirements.md) 10.2)、スキル単体なら `~/.agents/skills/` へのコピーでもプラグインなしで利用できる。
 
 ## 4. 機種プロファイルの拡充
 

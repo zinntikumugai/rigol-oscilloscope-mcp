@@ -1,16 +1,21 @@
-"""Claudeプラグイン同梱物の整合テスト(Requirements.md 10.3 / roadmap Phase 3)。
+"""Claude / Codex プラグイン同梱物の整合テスト(Requirements.md 10.3 / roadmap Phase 3)。
 
-サーバーコードには触れない静的検証のみ: プラグインマニフェストが有効で、
+サーバーコードには触れない静的検証のみ: 各プラグインマニフェストが有効で、
+両マニフェストが同じ実体(name / version / MCP起動列 / skills)を指しており、
 同梱スキルが実在するToolを参照していること(スキルとサーバーの乖離ガード)。
 """
 
 import json
+import tomllib
 from pathlib import Path
 
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = REPO_ROOT / ".claude-plugin" / "plugin.json"
+CODEX_MANIFEST = REPO_ROOT / ".codex-plugin" / "plugin.json"
+CODEX_MCP = REPO_ROOT / ".codex-plugin" / "mcp.json"
+CODEX_MARKETPLACE = REPO_ROOT / ".agents" / "plugins" / "marketplace.json"
 SKILL = REPO_ROOT / "skills" / "measurement-workflows" / "SKILL.md"
 
 
@@ -21,6 +26,40 @@ def test_plugin_manifest_is_valid():
     assert server["command"] == "uvx"
     # 起動コマンドはRequirements.md 10.1の標準形と一致させる
     assert "rigol-oscilloscope-mcp" in server["args"][-1] or "rigol-oscilloscope-mcp" in server["args"]
+
+
+def test_codex_manifest_is_valid():
+    data = json.loads(CODEX_MANIFEST.read_text(encoding="utf-8"))
+    assert data["name"] == "rigol-oscilloscope"
+    # skills はClaudeプラグインと同じディレクトリを共有する
+    assert data["skills"] == "./skills/"
+    assert (REPO_ROOT / "skills" / "measurement-workflows" / "SKILL.md").is_file()
+    # mcpServers はプラグインルート内の相対パスを指す
+    mcp_path = REPO_ROOT / data["mcpServers"]
+    assert mcp_path.resolve().is_relative_to(REPO_ROOT)
+    assert mcp_path.is_file()
+
+
+def test_codex_marketplace_references_the_plugin():
+    data = json.loads(CODEX_MARKETPLACE.read_text(encoding="utf-8"))
+    entries = {p["name"] for p in data["plugins"]}
+    assert "rigol-oscilloscope" in entries
+
+
+def test_manifests_agree():
+    """Claude / Codex 両マニフェストと pyproject の二重管理ガード。"""
+    claude = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    codex = json.loads(CODEX_MANIFEST.read_text(encoding="utf-8"))
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert claude["name"] == codex["name"]
+    assert claude["version"] == codex["version"] == pyproject["project"]["version"]
+
+    claude_server = claude["mcpServers"]["rigol-oscilloscope"]
+    codex_servers = json.loads(CODEX_MCP.read_text(encoding="utf-8"))
+    codex_server = codex_servers["rigol-oscilloscope"]
+    assert codex_server["command"] == claude_server["command"]
+    assert codex_server["args"] == claude_server["args"]
 
 
 def test_skill_frontmatter():
