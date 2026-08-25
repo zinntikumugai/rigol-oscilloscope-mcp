@@ -44,8 +44,9 @@ Scaling rules (the instrument snaps values itself — trust the `applied` field 
    `configure_decode(protocol="uart", enabled=true, event_table=true, settings={"rx_source": "CH1", "baud_bps": 115200, "rx_threshold_v": <Vpp/2>})`,
    stop acquisition, then `get_decode_result` — it returns the decoded events
    (time, Tx/Rx, data byte, error). The same pattern works for i2c / spi / can /
-   lin / parallel; calling `configure_decode` with an unknown settings key
-   returns the valid keys for that protocol.
+   lin / parallel; if you pass an unknown settings key, `configure_decode`
+   rejects the call with an INVALID_PARAMETER error whose `detail.allowed`
+   lists the valid keys for that protocol.
 
 ## Serial decode notes
 

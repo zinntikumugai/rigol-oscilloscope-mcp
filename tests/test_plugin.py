@@ -81,6 +81,7 @@ def test_skill_references_real_tools():
         "configure_timebase",
         "configure_trigger",
         "run",
+        "stop",
         "single",
         "measure",
         "capture_waveform",
