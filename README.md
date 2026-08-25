@@ -92,7 +92,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 | `RIGOL_MCP_WAVEFORM_MAX_POINTS` | 波形取得の既定上限 | 100000 |
 | `RIGOL_MCP_RAW_SCPI` | `raw_scpi` Toolの有効化(予約: Tool自体が未実装) | false |
 | `RIGOL_MCP_LOG_LEVEL` | ログレベル(error / warn / info / debug) | info |
-| `RIGOL_MCP_AUDIT_LOG` | 監査ログの出力先 | 有効(既定パス) |
+| `RIGOL_MCP_AUDIT_LOG` | 監査ログの出力先 | 有効(`~/.local/state/rigol-oscilloscope-mcp/audit.jsonl`。`XDG_STATE_HOME` に従う)。`off` で無効 |
 | `RIGOL_MCP_CONFIG` | TOML設定ファイルのパス | なし |
 
 詳細は [docs/Requirements.md](docs/Requirements.md) 9章。

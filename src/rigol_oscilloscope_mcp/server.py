@@ -17,6 +17,7 @@ Tool実装の規約:
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import sys
@@ -29,8 +30,8 @@ from mcp.server.fastmcp import FastMCP, Image
 
 from . import service
 from .config import Config, load_config
-from .errors import ScopeError
-from .safety import AuditLogger, ConfirmTokenStore
+from .errors import ErrorCode, ScopeError
+from .safety import AuditLogger, ConfirmTokenStore, OperationClass, classify
 from .service import ConnectionManager, ConnectionStatus, ControlService
 from .service.connection import DISCONNECTED_MESSAGE
 
@@ -73,10 +74,9 @@ def _fake_transport_factory() -> Callable[[str, str, int, float], Any]:
     return factory
 
 
-def _build_manager(config: Config) -> ConnectionManager:
-    if _fake_enabled():
-        return ConnectionManager(config, transport_factory=_fake_transport_factory())
-    return ConnectionManager(config)
+def _build_manager(config: Config, audit: AuditLogger) -> ConnectionManager:
+    factory = _fake_transport_factory() if _fake_enabled() else None
+    return ConnectionManager(config, transport_factory=factory, audit=audit)
 
 
 # --------------------------------------------------------------------------
@@ -102,6 +102,31 @@ def _tool_result(fn: Callable[..., Any]) -> Callable[..., Any]:
             }
 
     return wrapper
+
+
+#: 承認(confirmトークン)を要求する操作クラス(Requirements.md 6.1 / 6.2)
+_CONFIRM_REQUIRED = (OperationClass.RESTRICTED_WRITE, OperationClass.DANGEROUS_WRITE)
+
+
+def _checked_tool(server: FastMCP) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """操作クラス表と整合するToolだけを登録するデコレータを返す。
+
+    表(safety/classes.py)を静的な飾りにせず、起動時の不変条件にする:
+    表に無いTool名は `classify` の fail-closed で、承認必須クラスなのに
+    `confirm_token` を受けないToolは SAFETY_POLICY_DENIED で起動を失敗させる。
+    """
+
+    def register(fn: Callable[..., Any]) -> Callable[..., Any]:
+        if classify(fn.__name__) in _CONFIRM_REQUIRED:
+            if "confirm_token" not in inspect.signature(fn).parameters:
+                raise ScopeError(
+                    ErrorCode.SAFETY_POLICY_DENIED,
+                    f"{fn.__name__} は承認必須の操作クラスですが confirm_token 引数がありません",
+                    {"tool": fn.__name__},
+                )
+        return server.tool()(fn)
+
+    return register
 
 
 def _profile_dict(name: str | None, confidence: str | None) -> dict | None:
@@ -141,17 +166,23 @@ def create_server(
     FakeScope へ接続する(実機なしでの手動確認用)。
     """
     resolved_config = load_config() if config is None else config
-    manager = _build_manager(resolved_config) if connection_manager is None else connection_manager
+    audit = AuditLogger(resolved_config.audit_log)
+    print(f"audit log: {audit.path or 'disabled'}", file=sys.stderr)
+    manager = (
+        _build_manager(resolved_config, audit)
+        if connection_manager is None
+        else connection_manager
+    )
     # confirmトークンはサーバー(=セッション)寿命で共有する。世代バインドは
     # 呼び出しごとに manager.generation を渡すことで効かせる(Requirements.md 6.2)
-    control = ControlService(ConfirmTokenStore(), AuditLogger(resolved_config.audit_log))
+    control = ControlService(ConfirmTokenStore(), audit)
 
     server = FastMCP(SERVER_NAME, instructions=INSTRUCTIONS)
-    tool = server.tool
+    _register = _checked_tool(server)
 
     # -- 接続管理 ---------------------------------------------------------
 
-    @tool()
+    @_register
     @_tool_result
     def connect(
         address: str | None = None,
@@ -168,7 +199,7 @@ def create_server(
         with manager.lock:
             return _status_dict(manager.connect(address=address, transport=transport, port=port))
 
-    @tool()
+    @_register
     @_tool_result
     def disconnect() -> dict:
         """現在の接続を閉じる(未接続でもエラーにならない)。"""
@@ -176,7 +207,7 @@ def create_server(
             manager.disconnect()
             return _status_dict(manager.status())
 
-    @tool()
+    @_register
     @_tool_result
     def scope_identify() -> dict:
         """接続状態と機器の識別情報(*IDN?・プロファイル)を返す。
@@ -186,7 +217,7 @@ def create_server(
         with manager.lock:
             return _status_dict(manager.status())
 
-    @tool()
+    @_register
     @_tool_result
     def get_capabilities() -> dict:
         """接続中の機器で利用できる機能(チャンネル数・対応機能)を返す。
@@ -204,7 +235,7 @@ def create_server(
 
     # -- 状態取得 ---------------------------------------------------------
 
-    @tool()
+    @_register
     @_tool_result
     def get_state(sections: list[str] | None = None) -> dict:
         """主要設定(channels / timebase / trigger / acquisition)を一括取得する。
@@ -215,28 +246,28 @@ def create_server(
         with manager.lock:
             return service.get_state(manager.require_scope(), sections)
 
-    @tool()
+    @_register
     @_tool_result
     def get_channel(channel: str) -> dict:
         """1チャンネルの状態("CH1"〜"CH4")を返す。"""
         with manager.lock:
             return service.get_channel_dict(manager.require_scope(), channel)
 
-    @tool()
+    @_register
     @_tool_result
     def get_timebase() -> dict:
         """水平軸(時間軸)の状態を返す。"""
         with manager.lock:
             return service.get_timebase_dict(manager.require_scope())
 
-    @tool()
+    @_register
     @_tool_result
     def get_trigger() -> dict:
         """トリガの設定と状態を返す。"""
         with manager.lock:
             return service.get_trigger_dict(manager.require_scope())
 
-    @tool()
+    @_register
     @_tool_result
     def get_acquisition_state() -> dict:
         """波形取り込みの状態(実行中かどうか・トリガ状態)を返す。"""
@@ -245,7 +276,7 @@ def create_server(
 
     # -- 測定・データ取得 -------------------------------------------------
 
-    @tool()
+    @_register
     @_tool_result
     def measure(channel: str, measurements: list[str]) -> dict:
         """指定チャンネルを測定する。
@@ -257,7 +288,7 @@ def create_server(
         with manager.lock:
             return service.measure(manager.require_scope(), channel, measurements)
 
-    @tool()
+    @_register
     @_tool_result
     def capture_waveform(channel: str, max_points: int | None = None) -> dict:
         """波形データを取得し、電圧(V)へ変換して返す。
@@ -271,7 +302,7 @@ def create_server(
                 manager.require_scope(), resolved_config, channel, max_points
             )
 
-    @tool()
+    @_register
     @_tool_result
     def capture_screenshot(
         path: str | None = None,
@@ -304,7 +335,7 @@ def create_server(
 
     # -- 設定変更(tools.md 3章)-------------------------------------------
 
-    @tool()
+    @_register
     @_tool_result
     def configure_channel(
         channel: str,
@@ -343,7 +374,7 @@ def create_server(
                 confirm_token=confirm_token,
             )
 
-    @tool()
+    @_register
     @_tool_result
     def configure_timebase(
         scale_s_per_div: float | None = None,
@@ -361,7 +392,7 @@ def create_server(
                 position_s=position_s,
             )
 
-    @tool()
+    @_register
     @_tool_result
     def configure_trigger(
         source: str | None = None,
@@ -385,28 +416,28 @@ def create_server(
 
     # -- Acquisition(tools.md 4章)-----------------------------------------
 
-    @tool()
+    @_register
     @_tool_result
     def run() -> dict:
         """波形取り込みを開始する(連続実行)。"""
         with manager.lock:
             return control.run(manager.require_scope())
 
-    @tool()
+    @_register
     @_tool_result
     def stop() -> dict:
         """波形取り込みを停止する(画面の波形を固定する)。"""
         with manager.lock:
             return control.stop(manager.require_scope())
 
-    @tool()
+    @_register
     @_tool_result
     def single() -> dict:
         """シングルショット取り込みを行う(1回トリガして停止する)。"""
         with manager.lock:
             return control.single(manager.require_scope())
 
-    @tool()
+    @_register
     @_tool_result
     def autoset(confirm_token: str | None = None) -> dict:
         """Auto Setup(オートスケール)を実行する。

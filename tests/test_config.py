@@ -27,7 +27,7 @@ def test_defaults_with_empty_env(tmp_path: Path) -> None:
     assert cfg.waveform_max_points == 100000
     assert cfg.raw_scpi is False
     assert cfg.log_level == "info"
-    assert cfg.audit_log is None
+    assert cfg.audit_log is not None  # 監査ログは既定で有効(Requirements 9章)
 
 
 def test_config_is_frozen() -> None:
@@ -167,6 +167,43 @@ def test_env_none_uses_os_environ(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RIGOL_MCP_ADDRESS", "198.51.100.7")
     monkeypatch.delenv("RIGOL_MCP_CONFIG", raising=False)
     assert load_config().address == "198.51.100.7"
+
+
+# --- 監査ログ(既定で有効 / off で無効)-------------------------------------
+
+
+def test_audit_log_defaults_to_xdg_state_path(tmp_path: Path) -> None:
+    cfg = load_config(env={"XDG_STATE_HOME": str(tmp_path)})
+    assert cfg.audit_log == tmp_path.resolve() / "rigol-oscilloscope-mcp" / "audit.jsonl"
+
+
+def test_audit_log_default_falls_back_to_local_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))  # expanduser の参照先を隔離する
+    cfg = load_config(env={})
+    assert cfg.audit_log == (
+        tmp_path.resolve() / ".local" / "state" / "rigol-oscilloscope-mcp" / "audit.jsonl"
+    )
+
+
+def test_audit_log_empty_string_uses_default(tmp_path: Path) -> None:
+    cfg = load_config(env={"RIGOL_MCP_AUDIT_LOG": "", "XDG_STATE_HOME": str(tmp_path)})
+    assert cfg.audit_log == tmp_path.resolve() / "rigol-oscilloscope-mcp" / "audit.jsonl"
+
+
+@pytest.mark.parametrize("raw", ["off", "OFF", "false", "0", "no"])
+def test_audit_log_falsy_value_disables(raw: str, tmp_path: Path) -> None:
+    cfg = load_config(env={"RIGOL_MCP_AUDIT_LOG": raw, "XDG_STATE_HOME": str(tmp_path)})
+    assert cfg.audit_log is None
+
+
+def test_audit_log_explicit_path_wins(tmp_path: Path) -> None:
+    explicit = tmp_path / "custom" / "trail.jsonl"
+    cfg = load_config(
+        env={"RIGOL_MCP_AUDIT_LOG": str(explicit), "XDG_STATE_HOME": str(tmp_path)}
+    )
+    assert cfg.audit_log == explicit.resolve()
 
 
 # --- TOMLファイル -----------------------------------------------------------

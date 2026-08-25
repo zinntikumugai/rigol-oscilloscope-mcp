@@ -20,7 +20,7 @@ from dataclasses import asdict
 
 from ..driver.scope import ScopeDriver
 from ..errors import ErrorCode, ScopeError
-from ..safety import AuditLogger, ConfirmTokenStore, token_digest
+from ..safety import AuditLogger, AuditScope, ConfirmTokenStore, token_digest
 from .state import get_channel_dict, get_state, get_timebase_dict, get_trigger_dict
 
 #: RESTRICTED_WRITE へ昇格させる入力インピーダンス(tools.md 3章)
@@ -321,42 +321,6 @@ class ControlService:
 
     # -- 監査(Requirements.md 7.6)---------------------------------------
 
-    def _audited(self, tool: str, requested: dict) -> _AuditScope:
+    def _audited(self, tool: str, requested: dict) -> AuditScope:
         """Before / Action / After を1行の監査記録にまとめるコンテキスト。"""
-        return _AuditScope(self._audit, tool, requested)
-
-
-class _AuditScope:
-    """1書き込み操作の監査記録。
-
-    成功なら result="success"、`ScopeError` なら result="error" を1行だけ書き、
-    例外は握りつぶさず伝播させる。before / after は取得できた分だけ残す。
-    """
-
-    def __init__(self, audit: AuditLogger, tool: str, requested: dict) -> None:
-        self._audit = audit
-        self._tool = tool
-        self._requested = requested
-        self._before: dict | None = None
-        self._after: dict | None = None
-
-    def before(self, state: dict) -> None:
-        self._before = state
-
-    def after(self, state: dict) -> None:
-        self._after = state
-
-    def __enter__(self) -> _AuditScope:
-        return self
-
-    def __exit__(self, exc_type, exc, traceback) -> bool:
-        if exc is None:
-            self._record("success", None)
-        elif isinstance(exc, ScopeError):
-            self._record("error", {"error": exc.to_dict()})
-        return False  # 例外は常に伝播させる
-
-    def _record(self, result: str, detail: dict | None) -> None:
-        self._audit.record(
-            self._tool, self._requested, self._before, self._after, result, detail
-        )
+        return AuditScope(self._audit, tool, requested)

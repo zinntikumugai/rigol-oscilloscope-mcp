@@ -3,6 +3,9 @@
 Tool名 → 基本操作クラスの静的表のみを扱う。引数に依存する昇格
 (例: `configure_channel` の impedance="50" は RESTRICTED_WRITE)は
 呼び出し側(control service)の責務とする。
+
+本表は静的分類に加え、server.py のTool登録時検証(表に無いTool名は登録拒否、
+承認必須クラスは `confirm_token` 引数必須)にも使う。
 """
 
 from __future__ import annotations

@@ -42,7 +42,7 @@ class Config:
     waveform_max_points: int = DEFAULT_WAVEFORM_MAX_POINTS
     raw_scpi: bool = False
     log_level: str = DEFAULT_LOG_LEVEL
-    audit_log: Path | None = None  # None は「既定パス未指定」の意
+    audit_log: Path | None = None  # None は「監査ログ無効」の意(load_configは既定で有効)
 
 
 def _invalid(key: str, value: Any, reason: str) -> ScopeError:
@@ -185,6 +185,21 @@ def _dedupe(paths: tuple[Path, ...]) -> tuple[Path, ...]:
     return tuple(seen)
 
 
+def _audit_log(src: _Source, env: Mapping[str, str]) -> Path | None:
+    """監査ログの出力先。既定は有効で、`off` 等の偽値でのみ無効化する(9章)。
+
+    未設定・空文字は XDG state 配下の既定パス。`0/false/no/off` は None(無効)。
+    それ以外はパスとして解釈する。
+    """
+    value = _as_str(src, "audit_log")
+    if value is None:
+        state_home = env.get("XDG_STATE_HOME") or "~/.local/state"
+        return _resolve_path(state_home) / "rigol-oscilloscope-mcp" / "audit.jsonl"
+    if value.lower() in _FALSE_VALUES:
+        return None
+    return _resolve_path(value)
+
+
 def _pwd_dir(env: Mapping[str, str]) -> Path | None:
     """PWD環境変数が指す実行ディレクトリ(使えなければ None)。
 
@@ -270,5 +285,5 @@ def load_config(
         ),
         raw_scpi=False if raw_scpi is None else raw_scpi,
         log_level=DEFAULT_LOG_LEVEL if log_level is None else log_level,
-        audit_log=_as_path(src, "audit_log"),
+        audit_log=_audit_log(src, env),
     )

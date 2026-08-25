@@ -4,7 +4,9 @@
 トランスポートはファクトリ注入で FakeTransport に差し替える。
 """
 
+import json
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -15,6 +17,7 @@ from rigol_oscilloscope_mcp.service.connection import (
     ConnectionManager,
     _default_transport_factory,
 )
+from rigol_oscilloscope_mcp.safety import AuditLogger
 from rigol_oscilloscope_mcp.testing import FakeScope, FakeTransport
 from rigol_oscilloscope_mcp.transport import UsbTransport
 
@@ -364,6 +367,116 @@ def test_lock_is_reentrant(manager: ConnectionManager) -> None:
     with manager.lock:
         with manager.lock:
             assert manager.status().connected is False
+
+
+# --------------------------------------------------------------------------
+# 監査ログ(Requirements.md 7.6)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def audit_path(tmp_path: Path) -> Path:
+    return tmp_path / "audit.jsonl"
+
+
+@pytest.fixture
+def audited(factory: RecordingFactory, audit_path: Path) -> ConnectionManager:
+    return ConnectionManager(
+        Config(), transport_factory=factory, audit=AuditLogger(audit_path)
+    )
+
+
+def read_audit(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_connect_is_audited(audited: ConnectionManager, audit_path: Path) -> None:
+    audited.connect(address="192.0.2.10")
+
+    entries = read_audit(audit_path)
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["tool"] == "connect"
+    assert entry["result"] == "success"
+    assert entry["requested"] == {
+        "address": "192.0.2.10",
+        "transport": "lan",
+        "port": 5555,
+    }
+    assert entry["after"]["profile_name"] == "mho98"
+    assert entry["after"]["profile_confidence"] == "verified"
+    assert entry["after"]["unsupported_vendor"] is False
+    assert entry["after"]["idn"]["model"] == "MHO98"
+    assert entry["detail"]["reconnect"] is False
+
+
+def test_failed_connect_is_audited_as_error(
+    audited: ConnectionManager, audit_path: Path
+) -> None:
+    audited.connect(address="192.0.2.10")
+
+    def failing(*args: object) -> FakeTransport:
+        raise ScopeError(ErrorCode.DEVICE_NOT_FOUND, "接続できません")
+
+    audited._transport_factory = failing  # type: ignore[attr-defined]
+
+    with pytest.raises(ScopeError):
+        audited.connect(address="192.0.2.99")
+
+    entries = read_audit(audit_path)
+    assert len(entries) == 2
+    assert entries[1]["tool"] == "connect"
+    assert entries[1]["result"] == "error"
+    assert entries[1]["detail"]["error"]["code"] == ErrorCode.DEVICE_NOT_FOUND
+    # F3: 失敗しても既存接続は保持される
+    assert audited.status().address == "192.0.2.10"
+
+
+def test_auto_reconnect_is_audited_with_reconnect_flag(
+    audited: ConnectionManager, factory: RecordingFactory, audit_path: Path
+) -> None:
+    audited.connect(address="192.0.2.10")
+    factory.transports[0].close()
+
+    audited.require_scope()
+
+    entries = read_audit(audit_path)
+    connects = [e for e in entries if e["tool"] == "connect"]
+    assert len(connects) == 2
+    assert connects[0]["detail"]["reconnect"] is False
+    assert connects[1]["detail"]["reconnect"] is True
+
+
+def test_disconnect_is_audited_only_when_a_link_is_closed(
+    audited: ConnectionManager, audit_path: Path
+) -> None:
+    audited.connect(address="192.0.2.10")
+
+    audited.disconnect()
+    audited.disconnect()  # 冪等呼び出しは記録しない
+
+    entries = [e for e in read_audit(audit_path) if e["tool"] == "disconnect"]
+    assert len(entries) == 1
+    assert entries[0]["result"] == "success"
+    assert entries[0]["requested"]["address"] == "192.0.2.10"
+
+
+def test_disconnect_before_connect_records_nothing(
+    audited: ConnectionManager, audit_path: Path
+) -> None:
+    audited.disconnect()
+
+    assert read_audit(audit_path) == []
+
+
+def test_audit_defaults_to_disabled_logger(manager: ConnectionManager) -> None:
+    """audit 未注入でも動作する(既定は no-op ロガー)。"""
+    manager.connect(address="192.0.2.10")
+    manager.disconnect()
+
+    assert manager.status().connected is False
 
 
 # --------------------------------------------------------------------------

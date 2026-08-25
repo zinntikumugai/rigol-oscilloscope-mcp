@@ -332,7 +332,7 @@ Tool引数(会話でのユーザー指示) > 環境変数 > 設定ファイル >
 | `RIGOL_MCP_WAVEFORM_MAX_POINTS` | 波形取得の既定上限 | 100000 |
 | `RIGOL_MCP_RAW_SCPI` | `raw_scpi` Toolの有効化 | false |
 | `RIGOL_MCP_LOG_LEVEL` | ログレベル | info |
-| `RIGOL_MCP_AUDIT_LOG` | 監査ログ出力先 | 有効(既定パス) |
+| `RIGOL_MCP_AUDIT_LOG` | 監査ログ出力先 | 有効(`$XDG_STATE_HOME`(既定 `~/.local/state`)`/rigol-oscilloscope-mcp/audit.jsonl`)。`off` / `false` / `0` / `no` で無効 |
 
 保存先パスの扱い:
 

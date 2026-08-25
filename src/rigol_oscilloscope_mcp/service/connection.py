@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from ..config import Config
 from ..driver.scope import ScopeDriver
@@ -20,6 +20,7 @@ from ..driver.session import ScpiSession
 from ..errors import ErrorCode, ScopeError
 from ..models import IdnInfo
 from ..profiles import Profile, resolve_profile
+from ..safety import AuditLogger, AuditScope
 from ..transport import LanTransport, Transport
 from ..transport.lan import DEFAULT_PORT
 
@@ -95,12 +96,17 @@ class ConnectionManager:
     """単一のアクティブ接続を保持し、その生成・破棄・再確立を担う。"""
 
     def __init__(
-        self, config: Config, transport_factory: TransportFactory | None = None
+        self,
+        config: Config,
+        transport_factory: TransportFactory | None = None,
+        audit: AuditLogger | None = None,
     ) -> None:
         self.config = config
         self._transport_factory = (
             transport_factory if transport_factory is not None else _default_transport_factory
         )
+        # 接続・切断も監査対象(Requirements.md 7.6)。未注入なら no-op ロガー。
+        self._audit = audit if audit is not None else AuditLogger(None)
         # server層が全Tool呼び出しを直列化するための公開ロック(Requirements 6.5)
         self.lock = threading.RLock()
         # confirmトークンを世代にバインドするための連番。connect成功ごとに+1
@@ -138,54 +144,78 @@ class ConnectionManager:
         )
         return self._establish(resolved_address, resolved_transport, resolved_port)
 
-    def _establish(self, address: str, transport: str, port: int) -> ConnectionStatus:
+    def _establish(
+        self, address: str, transport: str, port: int, reconnect: bool = False
+    ) -> ConnectionStatus:
         """open → drain → *IDN? → プロファイル解決(Requirements.md 4.4)。
 
         新接続を完全に確立できた場合にのみ既存接続と差し替える。失敗時は旧接続
         (と generation・status)を無傷のまま残し、開きかけた新接続だけ閉じる。
+        成否によらず1行を監査へ残す(`detail.reconnect` で自動再接続を区別する)。
         """
         timeout_s = self.config.timeout_s
-        link = self._transport_factory(transport, address, port, timeout_s)
-        link.open()
+        requested = {"address": address, "transport": transport, "port": port}
+        with AuditScope(
+            self._audit, "connect", requested, {"reconnect": reconnect}
+        ) as record:
+            link = self._transport_factory(transport, address, port, timeout_s)
+            link.open()
 
-        try:
-            session = ScpiSession(link, timeout_s)
-            session.drain_error_queue()
-            idn = ScopeDriver(session, _BOOTSTRAP_PROFILE).identify()
-            resolved = resolve_profile(idn)
-            scope = ScopeDriver(session, resolved.profile)
-        except Exception:
-            link.close()
-            raise
-
-        previous, self._transport = self._transport, link
-        if previous is not None:
             try:
-                previous.close()
-            except Exception:  # noqa: BLE001 - 旧接続の後始末失敗で新接続を捨てない
-                pass
-        self._scope = scope
-        self.generation += 1
-        self._status = ConnectionStatus(
-            connected=True,
-            address=address,
-            transport=transport,
-            port=port,
-            idn=idn,
-            profile_name=resolved.profile.name,
-            profile_confidence=resolved.profile.confidence,
-            unsupported_vendor=resolved.unsupported_vendor,
-        )
+                session = ScpiSession(link, timeout_s)
+                session.drain_error_queue()
+                idn = ScopeDriver(session, _BOOTSTRAP_PROFILE).identify()
+                resolved = resolve_profile(idn)
+                scope = ScopeDriver(session, resolved.profile)
+            except Exception:
+                link.close()
+                raise
+
+            previous, self._transport = self._transport, link
+            if previous is not None:
+                try:
+                    previous.close()
+                except Exception:  # noqa: BLE001 - 旧接続の後始末失敗で新接続を捨てない
+                    pass
+            self._scope = scope
+            self.generation += 1
+            self._status = ConnectionStatus(
+                connected=True,
+                address=address,
+                transport=transport,
+                port=port,
+                idn=idn,
+                profile_name=resolved.profile.name,
+                profile_confidence=resolved.profile.confidence,
+                unsupported_vendor=resolved.unsupported_vendor,
+            )
+            record.after(
+                {
+                    "profile_name": resolved.profile.name,
+                    "profile_confidence": resolved.profile.confidence,
+                    "unsupported_vendor": resolved.unsupported_vendor,
+                    "idn": asdict(idn),
+                }
+            )
         return self._status
 
     # -- 切断・状態 -------------------------------------------------------
 
     def disconnect(self) -> None:
-        """切断する(冪等)。"""
+        """切断する(冪等)。
+
+        監査に残すのは実際にリンクを閉じたときだけ(冪等呼び出しのノイズを避ける)。
+        """
         link, self._transport = self._transport, None
+        previous, self._status = self._status, DISCONNECTED_STATUS
         self._scope = None
-        self._status = DISCONNECTED_STATUS
-        if link is not None:
+        if link is None:
+            return
+        with AuditScope(
+            self._audit,
+            "disconnect",
+            {"address": previous.address, "transport": previous.transport},
+        ):
             link.close()
 
     def status(self) -> ConnectionStatus:
@@ -206,7 +236,10 @@ class ConnectionManager:
         previous = self._status
         try:
             self._establish(
-                str(previous.address), str(previous.transport), int(previous.port or DEFAULT_PORT)
+                str(previous.address),
+                str(previous.transport),
+                int(previous.port or DEFAULT_PORT),
+                reconnect=True,
             )
         except ScopeError as exc:
             self.disconnect()
