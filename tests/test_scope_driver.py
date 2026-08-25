@@ -613,3 +613,61 @@ def test_capture_screenshot_timeout_from_dialect(scope: FakeScope) -> None:
     driver.capture_screenshot_bytes()
 
     assert transport.binary_timeouts == [5.0]
+
+
+# --------------------------------------------------------------------------
+# トリガソース(非チャンネル)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        ("EXT", "EXT"),
+        ("ext", "EXT"),
+        ("EXT5", "EXT5"),
+        ("ACLINE", "ACLINE"),
+        ("ACLine", "ACLINE"),
+        ("ACL", "ACLINE"),
+        ("D0", "D0"),
+        ("d15", "D15"),
+        ("CHAN2", "CHANnel2"),
+    ],
+)
+def test_trigger_source_accepts_non_channel_sources(
+    driver: ScopeDriver, given: str, expected: str
+) -> None:
+    assert driver._trigger_source(given) == expected
+
+
+@pytest.mark.parametrize("given", ["D16", "FOO", "EXT2", ""])
+def test_trigger_source_rejects_unknown(driver: ScopeDriver, given: str) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver._trigger_source(given)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert excinfo.value.detail["source"] == given
+
+
+@pytest.mark.parametrize("raw", ["EXT", "ACL", "D3", "CHAN2"])
+def test_read_back_source_is_writable(driver: ScopeDriver, raw: str) -> None:
+    """読み取り正規化を通した値は、そのまま書き戻し先の検証を通る(往復成立)。"""
+    driver._trigger_source(driver._normalize_source(raw))
+
+
+def test_set_trigger_edge_roundtrips_channel_source(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """get_trigger が返した source をそのまま書き戻せる(FakeScopeはCH系のみ受理)。"""
+    state = driver.get_trigger()
+
+    assert driver.set_trigger_edge(source=state.source).source == state.source
+    assert ":TRIGger:EDGE:SOURce CHANnel1" in scope.command_log
+
+
+def test_set_trigger_edge_sends_ext_source(driver: ScopeDriver, scope: FakeScope) -> None:
+    """EXT はチャンネル数検証を通さず、正規化形のまま送る。"""
+    with pytest.raises(ScopeError):  # FakeScope は EXT 書き込みを受理しない
+        driver.set_trigger_edge(source="ext")
+
+    assert ":TRIGger:EDGE:SOURce EXT" in scope.command_log

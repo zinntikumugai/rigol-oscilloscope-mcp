@@ -67,6 +67,9 @@ DEFAULT_ANALOG_CHANNELS = 4
 PREAMBLE_FIELDS = 10
 
 _CHANNEL_RE = re.compile(r"^(?:CH|CHAN|CHANNEL)?\s*([0-9]+)$", re.IGNORECASE)
+# 非チャンネルのトリガソース。読み値をそのまま書き戻せるよう表記は1つに固定する
+# (`ACL` / `ACLine` はどちらも `ACLINE`)。
+_NON_CHANNEL_SOURCE_RE = re.compile(r"^(?:EXT5?|ACL(?:INE)?|D(?:[0-9]|1[0-5]))$")
 _NUMBER_RE = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
 
 
@@ -258,10 +261,30 @@ class ScopeDriver:
 
     @staticmethod
     def _normalize_source(text: str) -> str:
-        """`CHAN1` → `CH1`。チャンネル以外(EXT 等)は生値を大文字で返す。"""
+        """`CHAN1` → `CH1`、`ACL` → `ACLINE`。それ以外は生値を大文字で返す。"""
         token = text.strip().upper()
         match = _CHANNEL_RE.match(token)
-        return f"CH{int(match.group(1))}" if match else token
+        if match:
+            return f"CH{int(match.group(1))}"
+        return "ACLINE" if token in ("ACL", "ACLINE") else token
+
+    def _trigger_source(self, source: str) -> str:
+        """トリガソース → 送信トークン。CH系のみチャンネル数で範囲検証する。
+
+        `get_trigger` の返す正規化形(`CH1` / `EXT` / `ACLINE` / `D0`)をそのまま
+        受理し、往復(読んだ設定の書き戻し)が成立する。
+        """
+        if not isinstance(source, str):
+            raise _invalid(f"トリガソースが文字列ではありません: {source!r}", {"source": source})
+        token = self._normalize_source(source)
+        if _CHANNEL_RE.match(token):
+            return f"CHANnel{self._channel_number(token)}"
+        if _NON_CHANNEL_SOURCE_RE.match(token):
+            return token
+        raise _invalid(
+            f"トリガソースを解釈できません: {source!r}(例: 'CH1', 'EXT', 'ACLINE', 'D0')",
+            {"source": source},
+        )
 
     # -- 測定 -------------------------------------------------------------
 
@@ -439,8 +462,7 @@ class ScopeDriver:
         """
         commands: list[str] = [":TRIGger:MODE EDGE"]
         if source is not None:
-            number = self._channel_number(source)
-            commands.append(f":TRIGger:EDGE:SOURce CHANnel{number}")
+            commands.append(f":TRIGger:EDGE:SOURce {self._trigger_source(source)}")
         if level_v is not None:
             commands.append(f":TRIGger:EDGE:LEVel {format_number(level_v)}")
         if slope is not None:

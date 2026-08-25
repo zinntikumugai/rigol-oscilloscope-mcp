@@ -16,12 +16,17 @@ from ..errors import ErrorCode, ScopeError
 from ..transport import Transport
 
 ERROR_QUERY = ":SYSTem:ERRor?"
-NO_ERROR_CODE = "0"
 
 
 def _is_no_error(response: str) -> bool:
-    """`0,"No error"` を判定する(エラー番号のみを見る)。"""
-    return response.strip().split(",", 1)[0].strip() == NO_ERROR_CODE
+    """エラー番号が0か判定する(`+0,"No error"` と符号付きで返す機種がある)。
+
+    番号として解釈できない応答は、保守的に「エラーあり」として扱う。
+    """
+    try:
+        return int(response.split(",", 1)[0].strip()) == 0
+    except ValueError:
+        return False
 
 
 class ScpiSession:

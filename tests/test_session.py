@@ -172,3 +172,64 @@ def test_set_and_verify_raises_before_readback_on_error(
     assert excinfo.value.code == ErrorCode.SCPI_ERROR
     # エラー検出後に readback を送らない
     assert ":CHANnel1:COUPling?" not in scope.command_log
+
+
+# --------------------------------------------------------------------------
+# エラーコードの解析(符号付き `+0` を返す機種)
+# --------------------------------------------------------------------------
+
+
+class ErrorQueueStub:
+    """エラーキューの応答だけを固定するスタブ(FakeScopeは `0,"No error"` 固定)。"""
+
+    def __init__(self, error_response: str) -> None:
+        self.error_response = error_response
+        self.command_log: list[str] = []
+
+    def open(self) -> None: ...
+
+    def close(self) -> None: ...
+
+    def write(self, command: str) -> None:
+        self.command_log.append(command)
+
+    def query(self, command: str, timeout_s: float | None = None) -> str:
+        self.command_log.append(command)
+        return self.error_response if command == ERROR_QUERY else "1.000000E+0"
+
+    def query_binary(self, command: str, timeout_s: float | None = None) -> bytes:
+        return b""
+
+    @property
+    def is_open(self) -> bool:
+        return True
+
+
+@pytest.mark.parametrize("response", ['+0,"No error"', '0,"No error"', '00,"No error"'])
+def test_no_error_accepts_signed_zero(response: str) -> None:
+    session = ScpiSession(ErrorQueueStub(response))
+
+    assert session.query_checked(":CHANnel1:SCALe?") == "1.000000E+0"
+    session.write_checked(":CHANnel1:COUPling AC")
+    assert session.set_and_verify(":CHANnel1:SCALe 2.0", ":CHANnel1:SCALe?") == "1.000000E+0"
+    assert session.drain_error_queue() == []
+
+
+def test_negative_code_is_still_an_error() -> None:
+    session = ScpiSession(ErrorQueueStub('-100,"Command err"'))
+
+    with pytest.raises(ScopeError) as excinfo:
+        session.query_checked(":CHANnel1:SCALe?")
+
+    assert excinfo.value.code == ErrorCode.SCPI_ERROR
+    assert excinfo.value.detail["scpi_error"] == '-100,"Command err"'
+
+
+def test_unparsable_error_response_is_treated_as_error() -> None:
+    session = ScpiSession(ErrorQueueStub("garbage"))
+
+    with pytest.raises(ScopeError) as excinfo:
+        session.write_checked(":CHANnel1:COUPling AC")
+
+    assert excinfo.value.code == ErrorCode.SCPI_ERROR
+    assert excinfo.value.detail["scpi_error"] == "garbage"
