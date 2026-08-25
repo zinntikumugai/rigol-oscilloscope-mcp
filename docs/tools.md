@@ -318,7 +318,53 @@ FFTの実装:
 
 ---
 
-## 7. Measurement Assistant(Phase 3)
+## 7. 信号発生(AFG)(Phase 4)
+
+内蔵の任意波形/ファンクションジェネレータ(`:SOURce<n>`。MHO900は2ch)を扱う。実測根拠は [verification/mho98-afg.md](verification/mho98-afg.md)。
+
+**本章の2Toolは出力状態(`:SOURce<n>:OUTPut:STATe`)を変更しない**(`get_afg_state` は出力状態の**読み取りのみ**行う)。出力のON/OFF(`enable_afg` / `disable_afg`)は**次PR(PR-AFG2)予定**で、確認フロー付きの別Toolとして追加する。設定と出力制御を分けているのは、設定変更だけでは信号が外部の被測定回路へ出ないため(= SAFE_WRITE で足りるため)。
+
+### `configure_afg` — SAFE_WRITE / Phase 4
+
+引数(未指定項目は変更しない。1項目も指定しなければ `INVALID_PARAMETER`):
+
+| 名前 | 型 | 説明 |
+|---|---|---|
+| `channel` | int | 信号発生チャンネル。既定 1(MHO98は1〜2。**範囲外は送信前に拒否**) |
+| `waveform` | string | `sine` / `square` / `ramp` / `noise` / `dc` / `arb` / `exp_rise` / `exp_fall` / `ecg` / `gaussian` / `lorentz` / `haversine` / `sinc` |
+| `frequency_hz` | float | 周波数(Hz)。> 0 |
+| `amplitude_vpp` | float | 振幅(**Vpp = peak-to-peak**)。> 0 |
+| `offset_v` | float | DCオフセット(V) |
+| `phase_deg` | float | 位相(度)。0〜360 |
+| `duty_percent` | float | 方形波のデューティ比(%)。1〜99 |
+| `symmetry_percent` | float | ランプ波の対称性(%)。0〜100 |
+| `impedance` | `"highz"` \| `"50"` | **信号発生器側の出力インピーダンス設定**(振幅がどの負荷を前提とするか)。`configure_channel` のオシロ**入力**インピーダンスとは無関係 |
+
+返却: `channel` / `requested` / `applied`(read-back値)/ `changed`。
+
+動作・規範:
+
+- **送信順は固定**: `:FUNCtion` → `:IMPedance` → `:FREQuency` → `:VOLTage:AMPLitude` → `:VOLTage:OFFSet` → `:PHASe` → `:FUNCtion:SQUare:DUTY` → `:FUNCtion:RAMP:SYMMetry`。インピーダンスと周波数が振幅の、振幅がオフセットの許容範囲を決めるため、**範囲の広い側から順に**送る(ガイド3.25)。各項目は set → エラーキュー確認 → read-back(0.3節)
+- **検証は全て送信前**(1項目でも不正なら1コマンドも送らない)。特にチャンネル番号: 実機は `:SOURce3` の**1発でSCPIサーバー全体が沈黙する**(空行付き再接続で復旧)ため、`afg_channels` による範囲検証は必須
+- **範囲外の振幅はサイレントにクランプされる**(HighZ上限20 Vppに対し `50` を送ると `20` になり、**エラーキューには何も積まれない**)。実測で確認した唯一の検出手段が `applied` との突合であり、Tool descriptionでもLLMに `applied` を見るよう明示する
+- **周波数・振幅の上限はハードコードしない**(オプション AFG50/AFG100 と出力インピーダンスに依存する)。下限(> 0)のみ検証し、上限は機器のクランプに委ねて `applied` で見せる
+- 波形依存パラメータ(デューティ・対称性)は**現在の波形に関わらず**保存され、書き込みもエラーにならない(実測)。クライアント側での波形連動チェックは行わない
+- DC / NOISe 中の周波数書き込みは機器が `-200` で明示拒否する(沈黙しない)。クライアント側でゲートせず、set後のエラーキュー確認でそのまま拾う
+- 対応機種はプロファイルの `afg_prefix` / `afg_waveforms` / `afg_impedances` が持つ([device-profiles.md](device-profiles.md) 2.2)。**未宣言の機種は送信前に `UNSUPPORTED_FEATURE`** — DHO800/900の番号なし `:SOURce`(DGモジュール)は別方言なので意図的に宣言していない
+
+### `get_afg_state` — READ_ONLY / Phase 4
+
+信号発生の現在設定と**出力状態**を返す。読むだけで出力状態は変えない。
+
+引数: `channel`(int、任意)。省略時は全チャンネル。
+
+返却: `channel` 指定時は1チャンネル分をフラットに返す(`channel`, `output`, `waveform`, `impedance`, `frequency_hz`, `amplitude_vpp`, `offset_v`, `phase_deg`, `duty_percent`, `symmetry_percent`)。省略時は `{"channels": {"1": {...}, "2": {...}}}`(キーはチャンネル番号の文字列)。
+
+`output` は現在出力がONかどうかの bool。1チャンネルあたり9クエリ。
+
+---
+
+## 8. Measurement Assistant(Phase 3)
 
 Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定目的→推奨設定の対応表(信号種別10種)、UART・未知信号のワークフロー、安全プロンプト、反復上限ガイダンスは [`skills/measurement-workflows/SKILL.md`](../skills/measurement-workflows/SKILL.md) に記載し、Claudeプラグイン([Requirements.md](Requirements.md) 10.3)として配布する。
 
@@ -330,7 +376,7 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 
 ---
 
-## 8. Raw SCPI(デフォルト無効)
+## 9. Raw SCPI(デフォルト無効)
 
 ### `raw_scpi` — DANGEROUS_WRITE / 開発用
 
@@ -338,7 +384,7 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 
 ---
 
-## 9. Tool一覧(サマリ)
+## 10. Tool一覧(サマリ)
 
 | Tool | クラス | Phase |
 |---|---|---|
@@ -363,8 +409,10 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `recommend_setup`(未実装・スキルで代替) | READ_ONLY | 3 |
 | `configure_decode` | SAFE_WRITE | 4 |
 | `get_decode_result` | READ_ONLY | 4 |
+| `configure_afg` | SAFE_WRITE | 4 |
+| `get_afg_state` | READ_ONLY | 4 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は22(Phase 1: 12 + Phase 2: 7 + Phase 4: 3。`recommend_setup` / `raw_scpi` は未登録)。
+登録Tool数は24(Phase 1: 12 + Phase 2: 7 + Phase 4: 5。`recommend_setup` / `raw_scpi` は未登録)。
 
-将来(Phase 4の残り): Logic Analyzer、AFG(出力ONはDANGEROUS_WRITE)。
+将来(Phase 4の残り): **AFGの出力制御(`enable_afg` / `disable_afg`)は次PR(PR-AFG2)**。さらにAFGの変調・ARB波形ロード、Logic Analyzer。

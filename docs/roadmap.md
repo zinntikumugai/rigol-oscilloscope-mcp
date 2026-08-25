@@ -11,7 +11,7 @@ MVP(Phase 1 + 2 = Read Only + Basic Control)完了後に対応する機能と、
 
 **同梱スキルで実現し完了**(2026-08-25)。信号種別10種の推奨設定表・ワークフロー・安全プロンプトは `skills/measurement-workflows/SKILL.md`、プラグイン構成は [Requirements.md](Requirements.md) 10.3、受入基準は同 11.3 を参照。
 
-- サーバー側Tool `recommend_setup`([tools.md](tools.md) 7章)は**実装せず据え置き**。スキルで精度不足が実証された場合のフォールバックとして仕様のみ残す
+- サーバー側Tool `recommend_setup`([tools.md](tools.md) 8章)は**実装せず据え置き**。スキルで精度不足が実証された場合のフォールバックとして仕様のみ残す
 
 ## 2. Phase 4 — 機器の高度機能
 
@@ -32,13 +32,14 @@ MVP(Phase 1 + 2 = Read Only + Basic Control)完了後に対応する機能と、
 - D0〜D15のON/OFF、Threshold設定、Logic Capture、プロトコルデコード連携
 - ロジックプローブの物理接続はMCPから確認できないため、`requires_physical_confirmation` の対象とする
 
-### 2.3 Function / Arbitrary Waveform Generator (AFG)
+### 2.3 Function / Arbitrary Waveform Generator (AFG)(設定・状態取得は完了)
 
-MHO98は2ch・100 MHz・1 GSa/s のAFGを搭載する。
+MHO98は2ch・100 MHz・1 GSa/s のAFGを搭載する。実測根拠は [verification/mho98-afg.md](verification/mho98-afg.md)。
 
-- Tool案: `configure_afg` / `get_afg_state` / `enable_afg` / `disable_afg`
-- **出力ONは DANGEROUS_WRITE**(confirmトークン必須)。DUTへ信号を注入する操作であり、物理確認の促しも必須
-- capabilitiesの `afg_channels` で機種差を表現する
+- **設定 `configure_afg` と状態取得 `get_afg_state` は実装済み**([tools.md](tools.md) 7章)。**出力状態には一切触れない**ため SAFE_WRITE / READ_ONLY。方言は機種プロファイルの `afg_prefix` / `afg_waveforms` / `afg_impedances` が持つ
+- **出力制御 `enable_afg` / `disable_afg` は次PR(PR-AFG2)**。**出力ONは DANGEROUS_WRITE**(confirmトークン必須)。DUTへ信号を注入する操作であり、物理確認の促しも必須。実機検証は `RIGOL_TEST_ALLOW_AFG_OUTPUT=1` ゲートのもと、AFG出力に何も接続しない状態で行う
+- 見送り(必要性が出るまで着手しない): 変調(AM/FM/PM ほか)、ARB波形のロード、`PERiod` / `VOLTage:HIGH`・`LOW` の別表現(周波数・振幅で表せる)、2ch間の位相同期
+- capabilitiesの `afg_channels` で機種差を表現する(**範囲外の `:SOURce3` は実機のSCPIサーバーを沈黙させる**ため、番号検証は送信前に必須)
 
 ### 2.4 ホスト側高度解析
 
@@ -61,7 +62,7 @@ MHO98は2ch・100 MHz・1 GSa/s のAFGを搭載する。
 - **表示OFFチャンネルへの書き込みが無視される件への対策検討**([verification/mho98-mvp.md](verification/mho98-mvp.md) 3.3): 表示OFFのCHへ `:SCALe` / `:OFFSet` を送るとエラーなく無視される。`configure_channel` で自動的に `enabled=True` にするか、requested/applied の不一致を警告として返すに留めるか、要検討(暗黙に表示をONにするのは利用者の画面を勝手に変える副作用でもある)
 - MHO98以外の対応機種の追加(DHO800/900系などを候補に、実機が用意でき次第)
 - ファミリプロファイルの括り出し(同系2機種以上の検証が揃った段階で)
-- **`raw_scpi` Tool は未実装**(configの `RIGOL_MCP_RAW_SCPI` は将来用の予約。[tools.md](tools.md) 8章の仕様で実装する際に使用する)
+- **`raw_scpi` Tool は未実装**(configの `RIGOL_MCP_RAW_SCPI` は将来用の予約。[tools.md](tools.md) 9章の仕様で実装する際に使用する)
 
 ## 5. 検討事項(方針未定)
 

@@ -71,6 +71,15 @@ DECODE_BAUD_BPS = 115200
 #: 標準搭載プロトコル(オプション必須のものはプロファイルに無い)
 DECODE_PROTOCOLS = ("uart", "i2c", "spi", "can", "lin", "parallel")
 
+#: 信号発生(AFG)の検証チャンネルと値。**出力は一切ONにしない**
+#: (出力ONの実機検証は PR-AFG2 で別ゲートのもと行う。mho98-afg.md 3章)
+AFG_CHANNEL = 1
+AFG_FREQUENCY_HZ = 2000.0
+AFG_AMPLITUDE_VPP = 1.0
+AFG_DUTY_PERCENT = 60.0
+#: 周波数を持たない波形(実機は書き込みを -200 で拒否する)
+AFG_NO_FREQUENCY = ("dc", "noise")
+
 #: `:SINGle` 直後に許容するトリガ状態(実測: WAIT。すぐトリガすると TD を経て STOP)
 SINGLE_STATUSES = ("WAIT", "TD")
 
@@ -711,7 +720,103 @@ def test_configure_decode_uart_set_and_readback(
     assert readback["settings"]["baud_bps"] == DECODE_BAUD_BPS
 
 
-# -- 10. 監査ログ(最後に実行し、それまでの全操作を検証)--------------------
+# -- 10. 信号発生(出力は一切ONにしない)-------------------------------------
+
+
+@pytest.fixture
+def afg_before(request: pytest.FixtureRequest, driver: ScopeDriver) -> Iterator[dict]:
+    """AFG ch1 の現在設定を控え、teardownで必ず書き戻す。
+
+    出力がONの状態では検証しない(本スイートは出力に触れないため、ONのまま
+    設定を動かすと外部の被測定回路へ出る信号が変わってしまう)。
+    """
+    before = driver.get_afg_config(AFG_CHANNEL)
+    tag = request.node.name
+    _report(f"[before:{tag}] afg{AFG_CHANNEL}={before}")
+    if before["output"]:
+        pytest.skip("AFG出力がONです(出力ON状態では検証しない)")
+    try:
+        yield before
+    finally:
+        restore = {
+            key: before[key]
+            for key in (
+                "waveform",
+                "impedance",
+                "amplitude_vpp",
+                "offset_v",
+                "phase_deg",
+                "duty_percent",
+                "symmetry_percent",
+            )
+        }
+        if before["waveform"] not in AFG_NO_FREQUENCY:
+            restore["frequency_hz"] = before["frequency_hz"]
+
+        failure: Exception | None = None
+        try:
+            driver.configure_afg(AFG_CHANNEL, **restore)
+        except Exception as exc:  # 復元は最後まで試みる
+            failure = exc
+
+        after = driver.get_afg_config(AFG_CHANNEL)
+        drift = _diff(before, after)
+        _report(f"[restore:{tag}] afg{AFG_CHANNEL} 復元後={after}")
+        if drift:
+            _report(f"[restore:{tag}] **復元漏れ**: {drift}")
+        if failure is not None:
+            _report(f"[restore:{tag}] **復元コマンド失敗**: {failure!r}")
+        assert after["output"] is False, "AFG出力が変化しています"
+        assert failure is None, f"AFG ch{AFG_CHANNEL} の復元に失敗: {failure!r}"
+        assert not drift, f"AFG ch{AFG_CHANNEL} が復元されていません: {drift}"
+
+
+def test_configure_afg_set_and_readback(
+    control: ControlService,
+    driver: ScopeDriver,
+    afg_before: dict,
+) -> None:
+    """波形・周波数・振幅・デューティを設定し read-back で確認する。
+
+    範囲外値は**エラーキューに何も積まずクランプされる**(mho98-afg.md 2章)ため、
+    applied(read-back値)との突合が唯一の検出手段になる。復元はfixtureが行う。
+    """
+    started = time.perf_counter()
+    result = control.configure_afg(
+        driver,
+        AFG_CHANNEL,
+        waveform="square",
+        frequency_hz=AFG_FREQUENCY_HZ,
+        amplitude_vpp=AFG_AMPLITUDE_VPP,
+        duty_percent=AFG_DUTY_PERCENT,
+    )
+    elapsed = time.perf_counter() - started
+
+    applied = result["applied"]
+    _report(
+        f"[afg] ch{AFG_CHANNEL} applied={applied} "
+        f"changed={result['changed']} 所要 {elapsed:.3f}s"
+    )
+
+    assert applied["waveform"] == "square"
+    assert applied["frequency_hz"] == pytest.approx(AFG_FREQUENCY_HZ, rel=REL_TOLERANCE)
+    assert applied["amplitude_vpp"] == pytest.approx(
+        AFG_AMPLITUDE_VPP, rel=REL_TOLERANCE
+    )
+    assert applied["duty_percent"] == pytest.approx(
+        AFG_DUTY_PERCENT, rel=REL_TOLERANCE
+    )
+
+    readback = driver.get_afg_config(AFG_CHANNEL)
+    assert readback["waveform"] == "square"
+    assert readback["frequency_hz"] == pytest.approx(
+        AFG_FREQUENCY_HZ, rel=REL_TOLERANCE
+    )
+    # 設定Toolは出力状態に触れない(検証中ずっとOFFのまま)
+    assert readback["output"] is False
+
+
+# -- 11. 監査ログ(最後に実行し、それまでの全操作を検証)--------------------
 
 
 def test_audit_log_records_every_write(audit_path: Path) -> None:
@@ -743,5 +848,6 @@ def test_audit_log_records_every_write(audit_path: Path) -> None:
         "configure_timebase",
         "configure_trigger",
         "configure_decode",
+        "configure_afg",
     } <= set(tools)
     assert {"run", "stop", "single"} <= set(tools)

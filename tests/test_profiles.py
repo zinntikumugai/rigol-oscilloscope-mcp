@@ -147,6 +147,31 @@ def test_generic_does_not_declare_decode() -> None:
     assert p.supports("protocol_decode") is False
 
 
+def test_mho98_declares_afg_dialect() -> None:
+    """信号発生(`:SOURce<n>`)。実機検証: docs/verification/mho98-afg.md。"""
+    p = load_profile("mho98")
+
+    assert p.capabilities["afg_channels"] == 2
+    assert p.dialect["afg_prefix"] == ":SOURce{n}"
+    waveforms = p.dialect["afg_waveforms"]
+    assert len(waveforms) == 13
+    assert waveforms["sine"] == "SINusoid"
+    assert waveforms["exp_rise"] == "EXPRise"
+    # 実機に PULSe は存在しない(送ると -222。mho98-afg.md 2章)
+    assert "pulse" not in waveforms
+    assert p.dialect["afg_impedances"] == {"highz": "OMEG", "50": "FIFTy"}
+
+
+def test_generic_does_not_declare_afg() -> None:
+    """DHO800/900は番号なし `:SOURce`(DGモジュール)で別方言。不在がゲート。"""
+    p = load_profile(GENERIC)
+
+    assert "afg_prefix" not in p.dialect
+    assert "afg_waveforms" not in p.dialect
+    assert "afg_impedances" not in p.dialect
+    assert "afg_channels" not in p.capabilities
+
+
 def test_mho98_inherits_generic_and_overrides() -> None:
     generic = load_profile(GENERIC)
     mho98 = load_profile("mho98")

@@ -434,3 +434,44 @@ def test_get_decode_result_bus1(driver: ScopeDriver) -> None:
     # 表が空(ヘッダごと無い)ことはあり得るが、列があれば先頭は時刻列
     assert result["columns"][:1] in ([], ["time_s"])
     assert all(isinstance(e["time_s"], float) for e in result["events"])
+
+
+# -- 10. 信号発生(read-only。出力状態は読むだけで変えない)------------------
+
+
+def test_afg_state_answers(driver: ScopeDriver) -> None:
+    """`:SOURce1` の設定一式が読めること(書き込みは一切行わない)。
+
+    値そのものは利用者の設定次第なので、型と項目の揃いだけを検証する
+    (実測値はレポートに残す)。
+    """
+    config = driver.get_afg_config(1)
+    _report(f"[afg] ch1={config}")
+
+    assert set(config) == {
+        "channel",
+        "output",
+        "waveform",
+        "impedance",
+        "frequency_hz",
+        "amplitude_vpp",
+        "offset_v",
+        "phase_deg",
+        "duty_percent",
+        "symmetry_percent",
+    }
+    assert config["channel"] == 1
+    assert isinstance(config["output"], bool)
+    assert isinstance(config["waveform"], str)
+    assert config["impedance"] in ("highz", "50")
+    assert all(
+        isinstance(config[key], float)
+        for key in (
+            "frequency_hz",
+            "amplitude_vpp",
+            "offset_v",
+            "phase_deg",
+            "duty_percent",
+            "symmetry_percent",
+        )
+    )

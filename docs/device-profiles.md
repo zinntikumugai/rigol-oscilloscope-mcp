@@ -37,7 +37,7 @@
 |---|---|---|
 | `analog_channels` | 4 | channel引数の検証 |
 | `digital_channels` | 16 | 将来のLA対応 |
-| `afg_channels` | 2 | 将来のAFG対応 |
+| `afg_channels` | 2 | 信号発生チャンネル数(`channel` 引数の検証。**範囲外の `:SOURce3` は実機を沈黙させる**) |
 | `bandwidth_hz` | 実機依存 | 参考情報 |
 | `protocol_decode` | true | デコード対応(`configure_decode` / `get_decode_result` の可否) |
 | `decode_buses` | 4 | デコードバス本数(`bus` 引数の検証。未宣言ならデコード自体を行わない) |
@@ -66,10 +66,15 @@
 | `option_types` | 意味的なオプション名 → `<type>` トークン対応表。ここに載るトークンだけを送る | `bundle: BND` / `afg_50mhz: AFG50` / `memory_500mpts: RLU-05` ほか計11個 |
 | `decode_protocols` | 意味的プロトコル名 → `:BUS<n>:MODE` の値。**未宣言なら `configure_decode` 自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) | `uart: RS232` / `i2c: IIC` / `spi: SPI` / `can: CAN` / `lin: LIN` / `parallel: PARallel` の6種 |
 | `decode_formats` | デコード表示形式の対応表(`:BUS<n>:FORMat`) | `hex: HEX` / `ascii: ASCii` / `dec: DEC` / `bin: BIN` |
+| `afg_prefix` | 信号発生のコマンド接頭辞(`{n}` がチャンネル番号)。**未宣言なら `configure_afg` / `get_afg_state` 自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) | `:SOURce{n}`(MHO900は2ch・番号付き) |
+| `afg_waveforms` | 意味的な波形名 → `:SOURce<n>:FUNCtion` の値。ここに載るトークンだけを送る | `sine: SINusoid` / `square: SQUare` / `ramp: RAMP` / `noise: NOISe` / `dc: DC` / `arb: ARB` / `exp_rise: EXPRise` ほか計13種(**`PULSe` は実機に存在しない** — 送ると `-222`) |
+| `afg_impedances` | 信号発生器の出力インピーダンス対応表(`:SOURce<n>:IMPedance`) | `highz: OMEG` / `50: FIFTy`(問い合わせの返却は `OMEG` / `FIFTy`) |
 
 `:SYSTem:OPTion:*` は**MHO900専用**でDHO800/900のガイドには存在しない。したがって `option_query` / `option_types` は `mho98.yaml` にのみ宣言し、`rigol-generic.yaml` には置かない — **キーの不在がそのままゲート**である(4.2の原則の適用例)。`*OPT?` はRigolオシロ全シリーズで未定義ヘッダのため使わない。`<type>` リスト外のトークン(実測: `AUTOA`)でもSCPIサーバーが沈黙するので、`option_types` に載っていないトークンを送ってはならない。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md)(未ライセンス状態でも `AFG50` / `RLU-05` は `1` を返す)。
 
 `decode_protocols` に載せるのは**標準搭載の6種のみ**。I2S(`IIS`)/ FlexRay / MIL-STD-1553(`M1553`)/ CAN-FD(`:BUS<n>:CAN:FDBaud`)はライセンスオプション必須のため意図的に載せず、**不在がそのままゲート**になる(未宣言のプロトコルは送信前に `UNSUPPORTED_FEATURE`)。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 3章(未ライセンス状態でも RS232/IIC/SPI/CAN/LIN/PAR は全て正常応答)。
+
+**AFGの機種差(`afg_*` を MHO98 にしか宣言しない理由):** MHO900シリーズの信号発生は**番号付きの `:SOURce<n>`**(n=1,2)だが、DHO800/900の内蔵ジェネレータは**番号なしの `:SOURce`** で、しかも別売のDGモジュール前提(有無は `:SYSTem:DGSTatus?` で照会する)という**別物の方言**である。共通化せず、検証済み機種のプロファイルにだけ宣言する(不在=非対応のゲート)。実測根拠は [verification/mho98-afg.md](verification/mho98-afg.md)。
 
 なお `:BUS` のコア(`:MODE` / `:DISPlay` / `:FORMat` / `:THReshold` と主要プロトコル配下)は、プログラミングガイドを比較する限り **DHO800/900 とMHO900で共通**である。ただし現時点で実機検証済みなのはMHO98だけなので `mho98.yaml` にのみ宣言する。DHO系の実機が1台でも検証できたら、共通部分をファミリプロファイルへ引き上げる(1章の3層解決)。
 

@@ -1,4 +1,4 @@
-"""server.py のテスト(Phase 4: シリアルデコード / tools.md 6章)。
+"""server.py のテスト(Phase 4: シリアルデコード / 信号発生 / tools.md 6章・7章)。
 
 MCP SDK の in-memory 接続で往復させ、クライアントから見えるJSONを固定する。
 値変換そのものの退行ガードは tests/test_scope_driver.py と
@@ -24,7 +24,12 @@ from rigol_oscilloscope_mcp.testing import FakeScope, FakeTransport
 
 ADDRESS = "192.0.2.10"  # TEST-NET-1(実接続は FakeTransport が肩代わりする)
 
-PHASE4_TOOLS = {"configure_decode", "get_decode_result"}
+PHASE4_TOOLS = {
+    "configure_decode",
+    "get_decode_result",
+    "configure_afg",
+    "get_afg_state",
+}
 
 
 # --------------------------------------------------------------------------
@@ -217,6 +222,108 @@ def test_get_decode_result_rejects_max_events_zero(server) -> None:
 
 def test_get_decode_result_while_disconnected(server) -> None:
     result = data(server, "get_decode_result", {})
+
+    assert result["error"] is True
+    assert result["code"] == ErrorCode.DEVICE_DISCONNECTED
+
+
+# --------------------------------------------------------------------------
+# 信号発生(configure_afg / get_afg_state)
+# --------------------------------------------------------------------------
+
+
+def descriptions(server) -> dict[str, str]:
+    async def main() -> dict[str, str]:
+        async with create_connected_server_and_client_session(server) as client:
+            return {t.name: t.description or "" for t in (await client.list_tools()).tools}
+
+    return anyio.run(main)
+
+
+def test_configure_afg_description_states_the_output_is_untouched(server) -> None:
+    """LLMが「設定=出力ON」と誤解しないことが最重要(出力制御は別Tool)。"""
+    description = descriptions(server)["configure_afg"].lower()
+
+    assert "output" in description
+    assert "peak-to-peak" in description
+    for waveform in ("sine", "square", "ramp", "noise", "dc"):
+        assert waveform in description
+
+
+def test_configure_afg_end_to_end(server) -> None:
+    connected(server)
+
+    result = data(
+        server,
+        "configure_afg",
+        {
+            "channel": 1,
+            "waveform": "square",
+            "frequency_hz": 2000.0,
+            "amplitude_vpp": 1.0,
+            "duty_percent": 60.0,
+        },
+    )
+
+    assert result["channel"] == 1
+    assert result["applied"] == {
+        "channel": 1,
+        "waveform": "square",
+        "frequency_hz": 2000.0,
+        "amplitude_vpp": 1.0,
+        "duty_percent": 60.0,
+    }
+    assert result["changed"] is True
+
+
+def test_configure_afg_leaves_the_output_off(server, scope: FakeScope) -> None:
+    connected(server)
+
+    data(server, "configure_afg", {"waveform": "square", "amplitude_vpp": 1.0})
+
+    assert data(server, "get_afg_state", {"channel": 1})["output"] is False
+    assert [c for c in scope.command_log if "OUTP" in c.upper() and "?" not in c] == []
+
+
+def test_get_afg_state_single_channel(server) -> None:
+    connected(server)
+
+    state = data(server, "get_afg_state", {"channel": 2})
+
+    assert state["channel"] == 2
+    assert state["output"] is False
+    assert state["waveform"] == "sine"
+
+
+def test_get_afg_state_all_channels(server) -> None:
+    connected(server)
+
+    state = data(server, "get_afg_state")
+
+    # チャンネル番号は文字列キー(JSONオブジェクトのキーは文字列)
+    assert set(state["channels"]) == {"1", "2"}
+    assert state["channels"]["2"]["channel"] == 2
+    assert state["channels"]["1"]["waveform"] == "sine"
+
+
+def test_configure_afg_unknown_waveform_returns_error_dict(server) -> None:
+    connected(server)
+
+    result = data(server, "configure_afg", {"waveform": "pulse"})
+
+    assert result["error"] is True
+    assert result["code"] == ErrorCode.INVALID_PARAMETER
+
+
+def test_configure_afg_while_disconnected(server) -> None:
+    result = data(server, "configure_afg", {"waveform": "sine"})
+
+    assert result["error"] is True
+    assert result["code"] == ErrorCode.DEVICE_DISCONNECTED
+
+
+def test_get_afg_state_while_disconnected(server) -> None:
+    result = data(server, "get_afg_state", {})
 
     assert result["error"] is True
     assert result["code"] == ErrorCode.DEVICE_DISCONNECTED

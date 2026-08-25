@@ -1109,6 +1109,94 @@ def test_configure_decode_invalid_setting_writes_nothing(
 
 
 # ==========================================================================
+# configure_afg(tools.md 7章 / Phase 4)
+# ==========================================================================
+
+
+def test_configure_afg_returns_requested_and_applied(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    result = service.configure_afg(
+        driver, 1, waveform="square", frequency_hz=2000.0, duty_percent=60.0
+    )
+
+    assert result["channel"] == 1
+    assert result["requested"] == {
+        "waveform": "square",
+        "frequency_hz": 2000.0,
+        "duty_percent": 60.0,
+    }
+    assert result["applied"] == {
+        "channel": 1,
+        "waveform": "square",
+        "frequency_hz": 2000.0,
+        "duty_percent": 60.0,
+    }
+    assert result["changed"] is True
+
+
+def test_configure_afg_reports_changed(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    assert service.configure_afg(driver, 1, waveform="square")["changed"] is True
+    # 同じ設定の再適用は変化なし
+    assert service.configure_afg(driver, 1, waveform="square")["changed"] is False
+
+
+def test_configure_afg_is_audited(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    service.configure_afg(driver, 2, amplitude_vpp=1.0)
+    row = operations(audit_path)[0]
+
+    assert row["tool"] == "configure_afg"
+    assert row["result"] == "success"
+    assert row["requested"]["channel"] == 2
+    assert row["before"]["amplitude_vpp"] == 5.0  # FakeScopeの既定(実機のガイド既定値)
+    assert row["after"]["amplitude_vpp"] == 1.0
+
+
+def test_configure_afg_needs_no_confirmation(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    """出力状態に触れない設定変更なので承認は要求しない(SAFE_WRITE)。"""
+    service.configure_afg(driver, 1, waveform="square")
+
+    assert confirms(audit_path) == []
+
+
+def test_configure_afg_never_touches_the_output(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """信号は外へ出ない。出力のON/OFFは別Tool(承認フロー付き)の責務。"""
+    service.configure_afg(driver, 1, waveform="square", amplitude_vpp=1.0)
+
+    assert writes(scope, ":OUTP") == []
+    assert scope.afg[1]["output"] is False
+
+
+def test_configure_afg_without_items_sends_nothing(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        service.configure_afg(driver, 1)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_afg_error_is_audited(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    with pytest.raises(ScopeError):
+        service.configure_afg(driver, 1, waveform="pulse")
+
+    row = operations(audit_path)[0]
+    assert row["result"] == "error"
+    assert row["detail"]["error"]["code"] == ErrorCode.INVALID_PARAMETER
+
+
+# ==========================================================================
 # パッケージ公開
 # ==========================================================================
 

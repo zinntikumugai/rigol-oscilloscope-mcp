@@ -1403,3 +1403,197 @@ def test_get_decode_events_unsupported_profile_sends_nothing(
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# 信号発生(docs/verification/mho98-afg.md)
+# --------------------------------------------------------------------------
+
+
+def afg_writes(scope: FakeScope) -> list[str]:
+    """`:SOURce` への書き込みのみ(問い合わせ・エラーキュー確認を除く)。"""
+    return [
+        c for c in scope.command_log if "?" not in c and c.upper().startswith(":SOUR")
+    ]
+
+
+def test_configure_afg_sends_items_in_the_fixed_order(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """順序: 波形 → インピーダンス → 周波数 → 振幅 → オフセット → 位相 → デューティ → 対称性。
+
+    インピーダンスと周波数が振幅の、振幅がオフセットの許容範囲を決めるため、
+    範囲の広い側から順に送る(ガイド3.25)。
+    """
+    driver.configure_afg(
+        1,
+        waveform="square",
+        frequency_hz=2000.0,
+        amplitude_vpp=1.0,
+        offset_v=0.5,
+        phase_deg=90.0,
+        duty_percent=60.0,
+        symmetry_percent=40.0,
+        impedance="50",
+    )
+
+    assert afg_writes(scope) == [
+        ":SOURce1:FUNCtion SQUare",
+        ":SOURce1:IMPedance FIFTy",
+        ":SOURce1:FREQuency 2000.0",
+        ":SOURce1:VOLTage:AMPLitude 1.0",
+        ":SOURce1:VOLTage:OFFSet 0.5",
+        ":SOURce1:PHASe 90.0",
+        ":SOURce1:FUNCtion:SQUare:DUTY 60.0",
+        ":SOURce1:FUNCtion:RAMP:SYMMetry 40.0",
+    ]
+
+
+def test_configure_afg_never_touches_the_output(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """設定は出力状態に一切触れない(有効化は別Toolの責務)。"""
+    driver.configure_afg(1, waveform="sine", amplitude_vpp=1.0, frequency_hz=1000.0)
+
+    assert [c for c in scope.command_log if "OUTP" in c.upper()] == []
+
+
+def test_configure_afg_omits_unspecified_items(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """未指定の項目にはコマンドを1件も送らない。"""
+    applied = driver.configure_afg(2, frequency_hz=2500.0)
+
+    assert afg_writes(scope) == [":SOURce2:FREQuency 2500.0"]
+    assert applied == {"channel": 2, "frequency_hz": pytest.approx(2500.0)}
+
+
+def test_configure_afg_returns_applied_readback(driver: ScopeDriver) -> None:
+    """応答は短形(`SQU`)と長形(`FIFTy`)が混在する。両方を意味的な値へ戻す。"""
+    applied = driver.configure_afg(
+        2, waveform="square", frequency_hz=2000.0, impedance="50"
+    )
+
+    assert applied == {
+        "channel": 2,
+        "waveform": "square",
+        "impedance": "50",
+        "frequency_hz": pytest.approx(2000.0),
+    }
+
+
+def test_configure_afg_accepts_every_declared_waveform(driver: ScopeDriver) -> None:
+    """プロファイルが宣言する13種すべてを送信・解釈できること。"""
+    waveforms = load_profile("mho98").dialect["afg_waveforms"]
+
+    for name in waveforms:
+        assert driver.configure_afg(1, waveform=name)["waveform"] == name
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"channel": 0, "waveform": "sine"},
+        {"channel": 3, "waveform": "sine"},  # :SOURce3 は実機を沈黙させる
+        {"channel": True, "waveform": "sine"},
+        {"channel": 1, "waveform": "pulse"},  # 実機に存在しない波形
+        {"channel": 1, "impedance": "1M"},  # オシロ入力側の値は使えない
+        {"channel": 1, "phase_deg": 361.0},
+        {"channel": 1, "phase_deg": -1.0},
+        {"channel": 1, "duty_percent": 0.0},
+        {"channel": 1, "duty_percent": 100.0},
+        {"channel": 1, "symmetry_percent": -1.0},
+        {"channel": 1, "symmetry_percent": 101.0},
+        {"channel": 1, "frequency_hz": 0.0},
+        {"channel": 1, "amplitude_vpp": 0.0},
+        {"channel": 1, "amplitude_vpp": "1"},
+        {"channel": 1},  # 変更する項目が1件も無い
+    ],
+)
+def test_configure_afg_rejects_before_sending(
+    driver: ScopeDriver, scope: FakeScope, kwargs: dict
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_afg(kwargs.pop("channel"), **kwargs)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_afg_validates_every_item_before_sending(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """1項目でも不正なら、正しい項目も含めて1コマンドも送らない。"""
+    with pytest.raises(ScopeError):
+        driver.configure_afg(1, waveform="sine", duty_percent=0.0)
+
+    assert scope.command_log == []
+
+
+def test_configure_afg_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`afg_prefix` 未宣言(=非対応)。宣言の不在がそのままゲート。"""
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.configure_afg(1, waveform="sine")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_get_afg_config_round_trip(driver: ScopeDriver, scope: FakeScope) -> None:
+    driver.configure_afg(1, waveform="ramp", frequency_hz=2500.0, symmetry_percent=40.0)
+    scope.command_log.clear()
+
+    config = driver.get_afg_config(1)
+
+    assert config == {
+        "channel": 1,
+        "output": False,
+        "waveform": "ramp",
+        "impedance": "highz",
+        "frequency_hz": pytest.approx(2500.0),
+        "amplitude_vpp": pytest.approx(5.0),
+        "offset_v": pytest.approx(0.0),
+        "phase_deg": pytest.approx(0.0),
+        "duty_percent": pytest.approx(50.0),
+        "symmetry_percent": pytest.approx(40.0),
+    }
+    # 問い合わせ9件のみ(書き込みは1件も無い)
+    assert len(scope.command_log) == 9
+    assert [c for c in scope.command_log if "?" not in c] == []
+
+
+def test_get_afg_config_reads_the_output_state(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """出力状態は**読むだけ**(書き込みは別Toolの責務)。"""
+    scope.afg[1]["output"] = True
+
+    config = driver.get_afg_config(1)
+
+    assert config["output"] is True
+    assert [c for c in scope.command_log if "OUTP" in c.upper()] == [
+        ":SOURce1:OUTPut:STATe?"
+    ]
+
+
+@pytest.mark.parametrize("channel", [0, 3])
+def test_get_afg_config_channel_out_of_range_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope, channel: int
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_afg_config(channel)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_get_afg_config_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.get_afg_config(1)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []

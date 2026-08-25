@@ -1,4 +1,4 @@
-"""MCPサーバー(Phase 1: Read Only / Phase 2: 書き込み系 / Phase 4: デコード / tools.md 9章)。
+"""MCPサーバー(Phase 1: Read Only / Phase 2: 書き込み系 / Phase 4: デコード・信号発生 / tools.md 10章)。
 
 MCP SDK(FastMCP)への依存は本モジュールに閉じ込め、下位層(service / driver)
 はSDKを知らないまま保つ。
@@ -540,6 +540,89 @@ def create_server(
         total number of events on the device before truncation.
         """
         return service.get_decode_result(manager.require_scope(), bus, max_events)
+
+    # -- 信号発生(tools.md 7章)-------------------------------------------
+
+    @_register
+    def configure_afg(
+        channel: int = 1,
+        waveform: str | None = None,
+        frequency_hz: float | None = None,
+        amplitude_vpp: float | None = None,
+        offset_v: float | None = None,
+        phase_deg: float | None = None,
+        duty_percent: float | None = None,
+        symmetry_percent: float | None = None,
+        impedance: str | None = None,
+    ) -> dict:
+        """Configure the built-in function generator (AFG). Omitted items are left unchanged.
+
+        This never turns the generator output on or off. The output state is not
+        touched at all, so nothing new reaches the wiring: a configured
+        generator only emits a signal once its output is enabled with the
+        separate, confirmation-gated tool (enable_afg / disable_afg, shipping in
+        a later release). Read the current output state with get_afg_state.
+
+        channel is the generator channel (1 or 2 on MHO98; see get_capabilities
+        afg_channels). Specify at least one item to change.
+
+        waveform is sine / square / ramp / noise / dc / arb / exp_rise /
+        exp_fall / ecg / gaussian / lorentz / haversine / sinc.
+        amplitude_vpp is the peak-to-peak amplitude in volts (not the peak and
+        not RMS), offset_v the DC offset in volts, frequency_hz the frequency in
+        hertz, phase_deg the phase in degrees (0-360), duty_percent the duty
+        cycle of the square wave (1-99) and symmetry_percent the symmetry of the
+        ramp (0-100). Duty and symmetry are stored independently of the current
+        waveform, so they can be set at any time.
+
+        impedance is "highz" or "50" and is the GENERATOR's own output impedance
+        setting, i.e. the load the amplitude is calibrated for. It has nothing to
+        do with the oscilloscope input impedance of configure_channel.
+
+        The frequency and amplitude limits depend on the installed options and
+        on impedance, and the instrument clamps an out-of-range value silently
+        (no error is reported): always compare applied (the read-back value)
+        against requested. Writing a frequency while the waveform is dc or noise
+        is rejected by the instrument.
+        """
+        return control.configure_afg(
+            manager.require_scope(),
+            channel,
+            waveform=waveform,
+            frequency_hz=frequency_hz,
+            amplitude_vpp=amplitude_vpp,
+            offset_v=offset_v,
+            phase_deg=phase_deg,
+            duty_percent=duty_percent,
+            symmetry_percent=symmetry_percent,
+            impedance=impedance,
+        )
+
+    @_register
+    def get_afg_state(channel: int | None = None) -> dict:
+        """Return the function generator settings, including whether the output is on.
+
+        With channel given, the settings of that channel are returned flat
+        (channel, output, waveform, impedance, frequency_hz, amplitude_vpp,
+        offset_v, phase_deg, duty_percent, symmetry_percent). With channel
+        omitted, every generator channel is returned under channels, keyed by
+        the channel number as a string: {"channels": {"1": {...}, "2": {...}}}.
+
+        output tells whether the generator is currently driving its connector.
+        Reading never changes it. This is read-only: it costs about 9 queries
+        per channel.
+        """
+        driver = manager.require_scope()
+        if channel is not None:
+            return driver.get_afg_config(channel)
+        # 非対応機では afg_channels が 0。1本だけ問い合わせて
+        # UNSUPPORTED_FEATURE を返させる(空dictを「正常」に見せない)
+        count = driver.afg_channels or 1
+        return {
+            "channels": {
+                str(n): driver.get_afg_config(n) for n in range(1, count + 1)
+            }
+        }
 
     # -- Acquisition(tools.md 4章)-----------------------------------------
 

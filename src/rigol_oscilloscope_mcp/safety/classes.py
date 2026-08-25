@@ -1,4 +1,4 @@
-"""操作クラス分類(Requirements.md 6.1 / tools.md 9章)。
+"""操作クラス分類(Requirements.md 6.1 / tools.md 10章)。
 
 Tool名 → 基本操作クラスの静的表のみを扱う。引数に依存する昇格
 (例: `configure_channel` の impedance="50" は RESTRICTED_WRITE)は
@@ -30,7 +30,7 @@ class OperationClass(StrEnum):
     DANGEROUS_WRITE = "DANGEROUS_WRITE"
 
 
-#: Tool名 → 基本操作クラス(tools.md 9章のサマリ表)
+#: Tool名 → 基本操作クラス(tools.md 10章のサマリ表)
 TOOL_CLASSES: dict[str, OperationClass] = {
     # 1. 接続管理
     "connect": OperationClass.SAFE_WRITE,
@@ -62,7 +62,12 @@ TOOL_CLASSES: dict[str, OperationClass] = {
     # configure_channel より侵襲性が低いため SAFE_WRITE。
     "configure_decode": OperationClass.SAFE_WRITE,
     "get_decode_result": OperationClass.READ_ONLY,
-    # 8. Raw SCPI(開発用・デフォルト無効)
+    # 7. 信号発生(tools.md、Phase 4)
+    # 設定のみで**出力状態には触れない**(信号は外へ出ない)ため SAFE_WRITE。
+    # 出力のON/OFF(enable_afg / disable_afg)は別Tool・別クラスで追加する。
+    "configure_afg": OperationClass.SAFE_WRITE,
+    "get_afg_state": OperationClass.READ_ONLY,
+    # 9. Raw SCPI(開発用・デフォルト無効)
     "raw_scpi": OperationClass.DANGEROUS_WRITE,
 }
 
