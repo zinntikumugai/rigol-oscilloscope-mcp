@@ -192,14 +192,14 @@ Auto Setupは利用者の設定を大きく上書きするため、confirmトー
 
 | 名前 | 型 | 必須 | 説明 |
 |---|---|---|---|
-| `path` | string | – | 保存先。ディレクトリまたはファイルパス。省略時は設定のデフォルトディレクトリ + タイムスタンプ名(`scope_YYYYmmdd_HHMMSS.png`)。デフォルトディレクトリの既定はサーバーを起動した実行ディレクトリ(`PWD` 環境変数。無効時はプロセスのカレントディレクトリ)で、`RIGOL_MCP_SCREENSHOT_DIR` で明示指定できる |
+| `path` | string | – | 保存先。ディレクトリまたはファイルパス。省略時は設定のデフォルトディレクトリ + タイムスタンプ名(`scope_YYYYmmdd_HHMMSS.png`)。**相対パスはデフォルトディレクトリを基準**に解決する(プロセスのカレントディレクトリ基準ではない)。デフォルトディレクトリの既定はサーバーを起動した実行ディレクトリ(`PWD` 環境変数。無効時はプロセスのカレントディレクトリ)で、`RIGOL_MCP_SCREENSHOT_DIR` で明示指定できる |
 | `format` | `"png"` \| `"jpg"` \| `"jpeg"` \| `"bmp"` \| `"webp"` | – | 省略時は `path` の拡張子から推定。拡張子も無ければ png |
 | `return_image` | bool | – | 既定 true。MCP image content として画像も返す(LLM Visionでの波形確認用)。トークン節約時は false |
 
 動作:
 
 1. プロファイルのスクリーンショットコマンド(MHO98: `:DISPlay:DATA?` → PNG 約97KB)で画像取得
-2. `path` を `~` 展開・正規化し、許可ルート([Requirements.md](Requirements.md) 9章)内であることを検証。外なら `INVALID_PARAMETER`
+2. `path` を `~` 展開・(相対ならデフォルトディレクトリ基準で)正規化し、許可ルート([Requirements.md](Requirements.md) 9章 = 明示指定 + デフォルト保存先 + 一時ディレクトリ)内であることを検証。外なら `INVALID_PARAMETER`(`detail.hint` で `RIGOL_MCP_ALLOWED_DIRS` を案内)
 3. 指定形式へ変換(Pillow)して保存。機器返却形式と同一ならそのまま保存
 4. 返却: 保存した絶対パス、形式、サイズ、(`return_image=true` なら)画像本体
 

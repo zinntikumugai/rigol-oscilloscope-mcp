@@ -74,6 +74,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 - `command` は、GUIホスト(デスクトップアプリ)のPATHに `uv` が無い場合に絶対パスで書く。パスは `which uv`(mise管理なら `mise which uv`)で確認する
 - `PYTHONDONTWRITEBYTECODE=1` は明示する。プロジェクト外から起動すると `mise.toml` の `[env]` が効かないため、`__pycache__` がclone内に書かれるのを防ぐ
 - スクリーンショットのデフォルト保存先は、`--directory` で移動した先ではなく**サーバーを起動した実行ディレクトリ**になる。固定したい場合は `RIGOL_MCP_SCREENSHOT_DIR` を指定する
+- `path` に相対パスを渡した場合もこのデフォルト保存先が基準になる。デフォルト保存先・`RIGOL_MCP_ALLOWED_DIRS`・一時ディレクトリの外へは保存できない(拒否される)
 
 ## 設定(環境変数)
 
@@ -87,7 +88,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 | `RIGOL_MCP_PORT` | LAN SCPIポート | プロファイル既定(5555) |
 | `RIGOL_MCP_TIMEOUT_S` | 単一クエリのタイムアウト(秒) | 5 |
 | `RIGOL_MCP_SCREENSHOT_DIR` | スクリーンショットの既定保存先 | 実行ディレクトリ(`PWD`。無効時はカレントディレクトリ) |
-| `RIGOL_MCP_ALLOWED_DIRS` | 書き込み許可ルート(パス区切りで複数) | 既定保存先 + カレント |
+| `RIGOL_MCP_ALLOWED_DIRS` | 書き込み許可ルート(パス区切りで複数) | 既定保存先 + 一時ディレクトリ |
 | `RIGOL_MCP_WAVEFORM_MAX_POINTS` | 波形取得の既定上限 | 100000 |
 | `RIGOL_MCP_RAW_SCPI` | `raw_scpi` Toolの有効化(予約: Tool自体が未実装) | false |
 | `RIGOL_MCP_LOG_LEVEL` | ログレベル(error / warn / info / debug) | info |

@@ -217,7 +217,9 @@ def load_config(
 
     screenshot_dir だけは
     RIGOL_MCP_SCREENSHOT_DIR(env/TOML) > PWD環境変数 > Path.cwd()
-    の順で解決する(9章)。
+    の順で解決する(9章)。allowed_dirs には明示指定に加えて screenshot_dir を
+    必ず含める。プロセスのカレントディレクトリは自動追加しない(uv run
+    --directory 起動ではサーバー自身のプロジェクトを指すため)。
     """
     env = os.environ if env is None else env
 
@@ -249,12 +251,10 @@ def load_config(
 
     raw_scpi = _as_bool(src, "raw_scpi")
 
-    cwd = Path.cwd().resolve()
-    screenshot_dir = _as_path(src, "screenshot_dir") or _pwd_dir(env) or cwd
-    # 許可ルートには保存先とカレントを必ず含める(Requirements 9章)
-    allowed_dirs = _dedupe(
-        _as_path_list(src, "allowed_dirs") + (screenshot_dir, cwd)
-    )
+    screenshot_dir = _as_path(src, "screenshot_dir") or _pwd_dir(env) or Path.cwd().resolve()
+    # 許可ルートには保存先を必ず含める(Requirements 9章)。プロセスのカレントは
+    # --directory 起動でサーバーのプロジェクトになりうるため自動追加しない。
+    allowed_dirs = _dedupe(_as_path_list(src, "allowed_dirs") + (screenshot_dir,))
 
     return Config(
         address=address,

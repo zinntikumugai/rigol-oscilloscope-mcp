@@ -41,9 +41,15 @@ def test_default_screenshot_dir_is_cwd() -> None:
     assert cfg.screenshot_dir == Path.cwd().resolve()
 
 
-def test_default_allowed_dirs_contains_cwd() -> None:
+def test_default_allowed_dirs_is_screenshot_dir_only() -> None:
     cfg = load_config(env={})
-    assert Path.cwd().resolve() in cfg.allowed_dirs
+    assert cfg.allowed_dirs == (cfg.screenshot_dir,)
+
+
+def test_cwd_is_not_added_to_allowed_dirs(tmp_path: Path) -> None:
+    """--directory 起動で cwd がサーバープロジェクトになっても許可しない。"""
+    cfg = load_config(env={"PWD": str(tmp_path)})
+    assert Path.cwd().resolve() not in cfg.allowed_dirs
 
 
 def test_config_dataclass_constructible_without_args() -> None:
@@ -120,7 +126,7 @@ def test_env_allowed_dirs_pathsep_separated(tmp_path: Path) -> None:
     assert b.resolve() in cfg.allowed_dirs
 
 
-def test_allowed_dirs_always_include_screenshot_dir_and_cwd(tmp_path: Path) -> None:
+def test_allowed_dirs_always_include_screenshot_dir(tmp_path: Path) -> None:
     shots = tmp_path / "shots"
     other = tmp_path / "other"
     cfg = load_config(
@@ -129,9 +135,8 @@ def test_allowed_dirs_always_include_screenshot_dir_and_cwd(tmp_path: Path) -> N
             "RIGOL_MCP_ALLOWED_DIRS": str(other),
         }
     )
-    assert shots.resolve() in cfg.allowed_dirs
-    assert Path.cwd().resolve() in cfg.allowed_dirs
-    assert other.resolve() in cfg.allowed_dirs
+    assert cfg.allowed_dirs == (other.resolve(), shots.resolve())
+    assert Path.cwd().resolve() not in cfg.allowed_dirs
 
 
 def test_allowed_dirs_deduplicated(tmp_path: Path) -> None:

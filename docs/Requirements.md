@@ -328,11 +328,17 @@ Tool引数(会話でのユーザー指示) > 環境変数 > 設定ファイル >
 | `RIGOL_MCP_PORT` | LAN SCPIポート | プロファイル既定(5555) |
 | `RIGOL_MCP_TIMEOUT_S` | 単一クエリタイムアウト | 5 |
 | `RIGOL_MCP_SCREENSHOT_DIR` | スクリーンショットのデフォルト保存先 | 実行ディレクトリ(`PWD`。無効時はカレントディレクトリ) |
-| `RIGOL_MCP_ALLOWED_DIRS` | 書き込み許可ルート(パス区切りで複数) | デフォルト保存先 + カレント |
+| `RIGOL_MCP_ALLOWED_DIRS` | 書き込み許可ルート(パス区切りで複数) | デフォルト保存先 + 一時ディレクトリ |
 | `RIGOL_MCP_WAVEFORM_MAX_POINTS` | 波形取得の既定上限 | 100000 |
 | `RIGOL_MCP_RAW_SCPI` | `raw_scpi` Toolの有効化 | false |
 | `RIGOL_MCP_LOG_LEVEL` | ログレベル | info |
 | `RIGOL_MCP_AUDIT_LOG` | 監査ログ出力先 | 有効(既定パス) |
+
+保存先パスの扱い:
+
+- `path` 引数の**相対パスはデフォルト保存先を基準**に解決する。プロセスのカレントディレクトリは基準にしない(`uv run --directory` 起動ではサーバー自身のプロジェクトを指してしまうため)
+- 書き込み許可ルートは「`RIGOL_MCP_ALLOWED_DIRS` の明示指定 + デフォルト保存先 + 一時ディレクトリ(`tempfile.gettempdir()`、POSIXでは `/tmp` の実体)」。プロセスのカレントディレクトリは**含めない**
+- 許可ルート外への保存は `INVALID_PARAMETER` で拒否し、エラーの `detail.hint` で `RIGOL_MCP_ALLOWED_DIRS` による追加方法を案内する
 
 デバイスをコンフィグに固定する運用(旧v0.1の `devices.mho98.host` 直書き)は廃止し、上記デフォルト+会話指示の組み合わせに置き換える。
 

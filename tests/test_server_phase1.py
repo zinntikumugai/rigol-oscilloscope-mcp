@@ -301,8 +301,8 @@ def test_capture_screenshot_can_skip_the_image(server) -> None:
 def test_capture_screenshot_rejects_path_outside_allowed_roots(server, tmp_path: Path) -> None:
     connected(server)
 
-    outside = tmp_path.parent / "outside_root" / "shot.png"
-    data = payload(call(server, "capture_screenshot", {"path": str(outside)}))
+    # 一時ディレクトリ配下は常時許可なので、その外(/etc)で確かめる
+    data = payload(call(server, "capture_screenshot", {"path": "/etc/rigol-shot.png"}))
 
     assert data["error"] is True
     assert data["code"] == ErrorCode.INVALID_PARAMETER
