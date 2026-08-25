@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 import os
 import sys
 from collections.abc import Callable, Mapping
@@ -55,6 +56,33 @@ _TRUTHY = frozenset({"1", "true", "yes", "on"})
 # --------------------------------------------------------------------------
 # 組み立て
 # --------------------------------------------------------------------------
+
+
+#: config.log_level(9章)→ logging のレベル定数
+_LOG_LEVELS = {
+    "error": logging.ERROR,
+    "warn": logging.WARNING,
+    "info": logging.INFO,
+    "debug": logging.DEBUG,
+}
+
+PACKAGE_LOGGER = __name__.rsplit(".", 1)[0]
+
+
+def _configure_logging(level: str) -> None:
+    """パッケージロガーだけを設定する(Requirements.md 8.3)。
+
+    MCPは**stdoutをプロトコルに使う**ため、出力先は必ずstderr。ルートロガーを
+    汚さないよう basicConfig は使わず、伝播も切る。多重呼び出しで
+    ハンドラが積み重ならないよう、未設定のときだけ1つ付ける。
+    """
+    logger = logging.getLogger(PACKAGE_LOGGER)
+    logger.setLevel(_LOG_LEVELS.get(level, logging.INFO))
+    logger.propagate = False
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(handler)
 
 
 def _fake_enabled(env: Mapping[str, str] | None = None) -> bool:
@@ -166,6 +194,7 @@ def create_server(
     FakeScope へ接続する(実機なしでの手動確認用)。
     """
     resolved_config = load_config() if config is None else config
+    _configure_logging(resolved_config.log_level)
     audit = AuditLogger(resolved_config.audit_log)
     print(f"audit log: {audit.path or 'disabled'}", file=sys.stderr)
     manager = (

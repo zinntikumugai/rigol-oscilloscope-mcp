@@ -5,6 +5,8 @@
 FakeScope が再現しているため、本テストは全てフェイク機器で完結する。
 """
 
+import logging
+
 import pytest
 
 from rigol_oscilloscope_mcp.driver.session import ScpiSession
@@ -233,3 +235,58 @@ def test_unparsable_error_response_is_treated_as_error() -> None:
 
     assert excinfo.value.code == ErrorCode.SCPI_ERROR
     assert excinfo.value.detail["scpi_error"] == "garbage"
+
+
+# --------------------------------------------------------------------------
+# DEBUGログ(Requirements.md 8.3)
+# --------------------------------------------------------------------------
+
+#: パッケージロガー。create_server() が propagate=False にするが、caplog は
+#: 非伝播ロガーへも自前のハンドラを差し込むため、そのまま捕捉できる。
+PACKAGE_LOGGER = "rigol_oscilloscope_mcp"
+
+
+def test_query_logs_command_and_response_at_debug(
+    session: ScpiSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger=PACKAGE_LOGGER)
+
+    session.query("*IDN?")
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("*IDN?" in message for message in messages)
+    assert any("RIGOL TECHNOLOGIES,MHO98" in message for message in messages)
+
+
+def test_query_logs_nothing_at_info(
+    session: ScpiSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger=PACKAGE_LOGGER)
+
+    session.query("*IDN?")
+
+    assert caplog.records == []
+
+
+def test_write_is_logged_at_debug(
+    session: ScpiSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger=PACKAGE_LOGGER)
+
+    session.write_checked(":CHANnel1:COUPling AC")
+
+    assert any(":CHANnel1:COUPling AC" in r.getMessage() for r in caplog.records)
+
+
+def test_query_binary_logs_length_not_payload(
+    session: ScpiSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger=PACKAGE_LOGGER)
+
+    payload = session.query_binary(":DISPlay:DATA?")
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(":DISPlay:DATA?" in message for message in messages)
+    assert any(f"<binary {len(payload)} bytes>" in message for message in messages)
+    # バイナリ本体はログに載せない(PNGのシグネチャが漏れていないこと)
+    assert not any("PNG" in message for message in messages)

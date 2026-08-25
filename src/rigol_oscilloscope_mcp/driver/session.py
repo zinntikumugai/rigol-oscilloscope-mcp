@@ -12,10 +12,16 @@ Requirements.md 7.1 の2規範をここに閉じ込める:
 
 from __future__ import annotations
 
+import logging
+
 from ..errors import ErrorCode, ScopeError
 from ..transport import Transport
 
 ERROR_QUERY = ":SYSTem:ERRor?"
+
+# SCPI送受信のDEBUGログ(Requirements.md 8.3)。ここが唯一の送受信経路なので、
+# 上位のドライバ・サービス層にログ呼び出しをばらまかずに済む。
+logger = logging.getLogger(__name__)
 
 
 def _is_no_error(response: str) -> bool:
@@ -38,15 +44,27 @@ class ScpiSession:
 
     # -- 素通し -----------------------------------------------------------
 
+    def write(self, command: str) -> None:
+        """書き込む(エラーキューは確認しない)。"""
+        logger.debug("-> %s", command)
+        self.transport.write(command)
+
     def query(self, command: str) -> str:
         """問い合わせて応答文字列を返す(エラーキューは確認しない)。"""
-        return self.transport.query(command, self.timeout_s)
+        logger.debug("-> %s", command)
+        response = self.transport.query(command, self.timeout_s)
+        logger.debug("<- %s", response.strip())
+        return response
 
     def query_binary(self, command: str, timeout_s: float | None = None) -> bytes:
         """バイナリブロック応答を返す。スクリーンショット等は長めの猶予を渡す。"""
-        return self.transport.query_binary(
+        logger.debug("-> %s", command)
+        payload = self.transport.query_binary(
             command, self.timeout_s if timeout_s is None else timeout_s
         )
+        # 波形・画面キャプチャは数十KB〜。ログには載せず長さだけ残す。
+        logger.debug("<- <binary %d bytes>", len(payload))
+        return payload
 
     # -- エラーキュー -----------------------------------------------------
 
@@ -93,7 +111,7 @@ class ScpiSession:
         実機は不正な書き込みに無応答で応じる(タイムアウトしない)ため、
         受理されたかどうかはエラーキューでしか分からない。
         """
-        self.transport.write(command)
+        self.write(command)
         self.check_error(command)
 
     def set_and_verify(self, set_cmd: str, readback_query: str) -> str:

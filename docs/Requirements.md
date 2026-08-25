@@ -307,7 +307,7 @@ SCPI通信断時は (1) エラー返却 → (2) 次回Tool呼び出し時に自�
 
 ### 8.3 可観測性
 
-ログレベルは ERROR / WARN / INFO / DEBUG の4段階(旧TRACEはDEBUGに統合)。DEBUGでSCPI送受信を記録できるが、デフォルトでは抑制する。監査ログ(7.6)は通常ログと分離して保存する。
+ログレベルは ERROR / WARN / INFO / DEBUG の4段階(旧TRACEはDEBUGに統合)。DEBUGでSCPI送受信を記録できるが、デフォルトでは抑制する。通常ログの出力先は**stderr**(stdioのstdoutはMCPプロトコル専用)。監査ログ(7.6)は通常ログと分離して保存する。
 
 ### 8.4 セキュリティ
 

@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -23,6 +24,8 @@ from ..profiles import Profile, resolve_profile
 from ..safety import AuditLogger, AuditScope
 from ..transport import LanTransport, Transport
 from ..transport.lan import DEFAULT_PORT
+
+logger = logging.getLogger(__name__)
 
 TransportFactory = Callable[[str, str, int, float], Transport]
 
@@ -189,6 +192,12 @@ class ConnectionManager:
                 profile_confidence=resolved.profile.confidence,
                 unsupported_vendor=resolved.unsupported_vendor,
             )
+            logger.info(
+                "接続しました: %s (profile=%s/%s)",
+                idn.model,
+                resolved.profile.name,
+                resolved.profile.confidence,
+            )
             record.after(
                 {
                     "profile_name": resolved.profile.name,
@@ -217,6 +226,7 @@ class ConnectionManager:
             {"address": previous.address, "transport": previous.transport},
         ):
             link.close()
+        logger.info("切断しました (%s)", previous.transport)
 
     def status(self) -> ConnectionStatus:
         """接続状態を返す。未接続はエラーではなく connected=False。"""

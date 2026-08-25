@@ -5,6 +5,7 @@
 """
 
 import json
+import logging
 import threading
 from pathlib import Path
 
@@ -499,3 +500,34 @@ def test_default_factory_rejects_unknown_transport() -> None:
         _default_transport_factory("serial", "COM3", 5555, 5.0)
 
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+
+
+# --------------------------------------------------------------------------
+# ログ(Requirements.md 8.3)
+# --------------------------------------------------------------------------
+
+PACKAGE_LOGGER = "rigol_oscilloscope_mcp"
+
+
+def test_connect_logs_model_and_profile_at_info(
+    manager: ConnectionManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger=PACKAGE_LOGGER)
+
+    manager.connect(address="192.0.2.10")
+
+    infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert any("MHO98" in message for message in infos)
+    assert any("mho98" in message for message in infos)
+
+
+def test_disconnect_logs_at_info(
+    manager: ConnectionManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    manager.connect(address="192.0.2.10")
+    caplog.set_level(logging.INFO, logger=PACKAGE_LOGGER)
+    caplog.clear()
+
+    manager.disconnect()
+
+    assert [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
