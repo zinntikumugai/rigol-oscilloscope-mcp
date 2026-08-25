@@ -32,14 +32,15 @@ MVP(Phase 1 + 2 = Read Only + Basic Control)完了後に対応する機能と、
 - D0〜D15のON/OFF、Threshold設定、Logic Capture、プロトコルデコード連携
 - ロジックプローブの物理接続はMCPから確認できないため、`requires_physical_confirmation` の対象とする
 
-### 2.3 Function / Arbitrary Waveform Generator (AFG)(設定・状態取得は完了)
+### 2.3 Function / Arbitrary Waveform Generator (AFG)(完了)
 
 MHO98は2ch・100 MHz・1 GSa/s のAFGを搭載する。実測根拠は [verification/mho98-afg.md](verification/mho98-afg.md)。
 
 - **設定 `configure_afg` と状態取得 `get_afg_state` は実装済み**([tools.md](tools.md) 7章)。**出力状態には一切触れない**ため SAFE_WRITE / READ_ONLY。方言は機種プロファイルの `afg_prefix` / `afg_waveforms` / `afg_impedances` が持つ
-- **出力制御 `enable_afg` / `disable_afg` は次PR(PR-AFG2)**。**出力ONは DANGEROUS_WRITE**(confirmトークン必須)。DUTへ信号を注入する操作であり、物理確認の促しも必須。実機検証は `RIGOL_TEST_ALLOW_AFG_OUTPUT=1` ゲートのもと、AFG出力に何も接続しない状態で行う
-- 見送り(必要性が出るまで着手しない): 変調(AM/FM/PM ほか)、ARB波形のロード、`PERiod` / `VOLTage:HIGH`・`LOW` の別表現(周波数・振幅で表せる)、2ch間の位相同期
+- **出力制御 `enable_afg` / `disable_afg` も実装済み**(PR-AFG2)。**出力ONのみ DANGEROUS_WRITE**(confirmトークン必須。トークンはチャンネル単位)で、DUTへ信号を注入する操作であるため物理確認の促しをリスク文言とTool descriptionの双方に置く。**出力OFFは承認を要求しない**(緊急停止をブロックしないため SAFE_WRITE)
 - capabilitiesの `afg_channels` で機種差を表現する(**範囲外の `:SOURce3` は実機のSCPIサーバーを沈黙させる**ため、番号検証は送信前に必須)
+- 残件: 変調(AM/FM/PM ほか)、`:LOAD:ARBitrary`(ARB波形のロード)、`:PERiod` / `:VOLTage:HIGH`・`:LOW`(周波数・振幅で表せる別表現)、`:PHASe:SYNChronize`(2ch間の位相同期)、DHO800/900ファミリの番号なし `:SOURce`(DGモジュール。別方言のため未宣言)。必要性が出るまで着手しない
+- 残件(実機検証): **ループバックFFT検証はBNCケーブル待ちで未実施**(`RIGOL_TEST_AFG_LOOPBACK=1` ゲート。テスト `test_afg_loopback_fft` は実装済み)。詳細は [verification/mho98-afg.md](verification/mho98-afg.md) 4章
 
 ### 2.4 ホスト側高度解析
 

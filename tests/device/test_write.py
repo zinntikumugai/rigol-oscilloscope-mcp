@@ -36,10 +36,12 @@ import pytest
 
 from rigol_oscilloscope_mcp.config import Config
 from rigol_oscilloscope_mcp.driver.scope import ScopeDriver
+from rigol_oscilloscope_mcp.errors import ErrorCode, ScopeError
 from rigol_oscilloscope_mcp.safety import AuditLogger, ConfirmTokenStore
 from rigol_oscilloscope_mcp.service import (
     ConnectionManager,
     ControlService,
+    analyze_waveform,
     get_acquisition_dict,
     get_channel_dict,
     get_timebase_dict,
@@ -71,14 +73,45 @@ DECODE_BAUD_BPS = 115200
 #: 標準搭載プロトコル(オプション必須のものはプロファイルに無い)
 DECODE_PROTOCOLS = ("uart", "i2c", "spi", "can", "lin", "parallel")
 
-#: 信号発生(AFG)の検証チャンネルと値。**出力は一切ONにしない**
-#: (出力ONの実機検証は PR-AFG2 で別ゲートのもと行う。mho98-afg.md 3章)
+#: 信号発生(AFG)の検証チャンネルと値。**設定系のテストは出力に触れない**
 AFG_CHANNEL = 1
 AFG_FREQUENCY_HZ = 2000.0
 AFG_AMPLITUDE_VPP = 1.0
 AFG_DUTY_PERCENT = 60.0
 #: 周波数を持たない波形(実機は書き込みを -200 で拒否する)
 AFG_NO_FREQUENCY = ("dc", "noise")
+
+#: 出力ON検証(PR-AFG2)の**追加ゲート**。device_write の2重ゲートに加えて必要で、
+#: 「AFG出力に何も接続していない」ことを人が確認したうえでのみ渡す
+AFG_OUTPUT_ENV = "RIGOL_TEST_ALLOW_AFG_OUTPUT"
+#: ループバック(AFG出力 → CH1 をBNCケーブルで接続)検証の**さらに追加のゲート**
+AFG_LOOPBACK_ENV = "RIGOL_TEST_AFG_LOOPBACK"
+
+#: 出力ONで出す信号(開放でもループバックでも同じ: 1 kHz / 1 Vpp / オフセット0)
+AFG_OUTPUT_WAVEFORM = "sine"
+AFG_OUTPUT_FREQUENCY_HZ = 1000.0
+AFG_OUTPUT_AMPLITUDE_VPP = 1.0
+
+#: ループバック時の観測条件(CH1で受ける)
+LOOPBACK_CHANNEL = "CH1"
+LOOPBACK_SCALE_V_PER_DIV = 0.5
+#: 画面レコード長 = 10 div × 5 ms = 50 ms → FFT分解能 ≈ 20 Hz = 1 kHzの2%。
+#: `:WAVeform:MODE NORMal`(画面データ)なので分解能はレコード長だけで決まり、
+#: これより速いタイムベース(例 500 µs/div → 200 Hz刻み)では±2%判定が原理的に
+#: できない。テスト側でも frequency_resolution_hz を assert して取り違えを防ぐ
+LOOPBACK_TIMEBASE_S_PER_DIV = 5e-3
+LOOPBACK_TOLERANCE = 0.02
+#: 出力ON後に波形が安定するまでの待ち(取り込みは run → 待ち → stop)
+LOOPBACK_SETTLE_S = 1.0
+
+requires_afg_output = pytest.mark.skipif(
+    os.environ.get(AFG_OUTPUT_ENV) != "1",
+    reason=f"{AFG_OUTPUT_ENV}=1 が未設定(AFG出力ONは明示ゲートの下でのみ行う)",
+)
+requires_afg_loopback = pytest.mark.skipif(
+    os.environ.get(AFG_LOOPBACK_ENV) != "1",
+    reason=f"{AFG_LOOPBACK_ENV}=1 が未設定(AFG出力→CH1のBNC接続が必要)",
+)
 
 #: `:SINGle` 直後に許容するトリガ状態(実測: WAIT。すぐトリガすると TD を経て STOP)
 SINGLE_STATUSES = ("WAIT", "TD")
@@ -204,8 +237,9 @@ def _restore_channel(
     generation: int,
     before: dict,
     tag: str,
+    channel: str = TEST_CHANNEL,
 ) -> None:
-    """CH2の可変項目を元の値へ戻す。
+    """チャンネル(既定はCH2)の可変項目を元の値へ戻す。
 
     順序に意味がある:
 
@@ -229,19 +263,19 @@ def _restore_channel(
     ]
     for step in steps:
         try:
-            control.configure_channel(driver, generation, TEST_CHANNEL, **step)
+            control.configure_channel(driver, generation, channel, **step)
         except Exception as exc:  # 復元は最後まで試みる
             failures.append(f"{step} -> {exc!r}")
 
-    after = get_channel_dict(driver, TEST_CHANNEL)
+    after = get_channel_dict(driver, channel)
     drift = _diff(before, after)
-    _report(f"[restore:{tag}] {TEST_CHANNEL} 復元後={after}")
+    _report(f"[restore:{tag}] {channel} 復元後={after}")
     if drift:
         _report(f"[restore:{tag}] **復元漏れ**: {drift}")
     if failures:
         _report(f"[restore:{tag}] **復元コマンド失敗**: {failures}")
-    assert not failures, f"{TEST_CHANNEL} の復元に失敗: {failures}"
-    assert not drift, f"{TEST_CHANNEL} が復元されていません: {drift}"
+    assert not failures, f"{channel} の復元に失敗: {failures}"
+    assert not drift, f"{channel} が復元されていません: {drift}"
 
 
 @pytest.fixture
@@ -814,6 +848,162 @@ def test_configure_afg_set_and_readback(
     )
     # 設定Toolは出力状態に触れない(検証中ずっとOFFのまま)
     assert readback["output"] is False
+
+
+# -- 10b. 信号発生の出力制御(追加ゲート必須)--------------------------------
+
+
+def _enable_afg_confirmed(
+    control: ControlService,
+    driver: ScopeDriver,
+    generation: int,
+    channel: int = AFG_CHANNEL,
+) -> dict:
+    """確認フローを2段階とも実機で通し、出力をONにする。
+
+    1段目(トークン無し)は**機器へ1コマンドも送らずに** USER_CONFIRMATION_REQUIRED
+    で中断すること自体を検証する。2段目でそのトークンを渡して初めて出力が出る。
+    """
+    with pytest.raises(ScopeError) as excinfo:
+        control.enable_afg(driver, generation, channel)
+
+    assert excinfo.value.code == ErrorCode.USER_CONFIRMATION_REQUIRED
+    token = excinfo.value.detail["confirm_token"]
+    assert driver.get_afg_config(channel)["output"] is False, "承認前に出力がONになった"
+
+    return control.enable_afg(driver, generation, channel, confirm_token=token)
+
+
+@pytest.fixture
+def loopback_channel_before(
+    request: pytest.FixtureRequest,
+    control: ControlService,
+    driver: ScopeDriver,
+    generation: int,
+) -> Iterator[dict]:
+    """ループバック受信に使うCH1の現在値を控え、teardownで必ず復元する。"""
+    before = get_channel_dict(driver, LOOPBACK_CHANNEL)
+    tag = request.node.name
+    _report(f"[before:{tag}] {LOOPBACK_CHANNEL}={before}")
+    try:
+        yield before
+    finally:
+        _restore_channel(
+            control, driver, generation, before, tag, channel=LOOPBACK_CHANNEL
+        )
+
+
+@requires_afg_output
+def test_enable_afg_output_open_circuit(
+    control: ControlService,
+    driver: ScopeDriver,
+    generation: int,
+    afg_before: dict,
+) -> None:
+    """**AFG出力に何も接続していない状態**で 出力ON → 確認 → OFF を1往復する。
+
+    出力ONは DANGEROUS_WRITE なので、実機でも確認フローを2段階とも通す。
+    finally で必ず出力をOFFへ戻し、設定の復元は afg_before fixture が行う。
+    """
+    assert afg_before["output"] is False
+
+    configured = control.configure_afg(
+        driver,
+        AFG_CHANNEL,
+        waveform=AFG_OUTPUT_WAVEFORM,
+        frequency_hz=AFG_OUTPUT_FREQUENCY_HZ,
+        amplitude_vpp=AFG_OUTPUT_AMPLITUDE_VPP,
+        offset_v=0.0,
+    )
+    _report(f"[afg-output] 出力ON前の設定 applied={configured['applied']}")
+
+    try:
+        started = time.perf_counter()
+        result = _enable_afg_confirmed(control, driver, generation)
+        elapsed = time.perf_counter() - started
+
+        _report(f"[afg-output] ON state={result['state']} 所要 {elapsed:.3f}s")
+        assert result["result"] == "ok"
+        assert result["state"]["output"] is True
+        assert driver.get_afg_config(AFG_CHANNEL)["output"] is True
+    finally:
+        off = control.disable_afg(driver, AFG_CHANNEL)
+        _report(f"[afg-output] OFF state={off['state']}")
+
+    assert off["state"]["output"] is False
+    assert driver.get_afg_config(AFG_CHANNEL)["output"] is False
+
+
+@requires_afg_output
+@requires_afg_loopback
+def test_afg_loopback_fft(
+    control: ControlService,
+    driver: ScopeDriver,
+    device_config: Config,
+    generation: int,
+    afg_before: dict,
+    loopback_channel_before: dict,
+    timebase_before: dict,
+    trigger_before: dict,
+) -> None:
+    """AFG出力→CH1のBNCループバックで、出した周波数をFFTで取り戻せることを見る。
+
+    要ケーブル(2重ゲートに加えて `RIGOL_TEST_AFG_LOOPBACK=1`)。取り込みは
+    single ではなく run → 待ち → stop で行う: トリガ源は変更しない方針のため、
+    未トリガでも画面が更新されるよう sweep を auto にして掃引を保証する
+    (FFTは位相に依らないので、トリガの有無は周波数の判定に影響しない)。
+    """
+    assert afg_before["output"] is False
+
+    control.configure_afg(
+        driver,
+        AFG_CHANNEL,
+        waveform=AFG_OUTPUT_WAVEFORM,
+        frequency_hz=AFG_OUTPUT_FREQUENCY_HZ,
+        amplitude_vpp=AFG_OUTPUT_AMPLITUDE_VPP,
+        offset_v=0.0,
+    )
+    control.configure_channel(
+        driver,
+        generation,
+        LOOPBACK_CHANNEL,
+        enabled=True,
+        scale_v_per_div=LOOPBACK_SCALE_V_PER_DIV,
+        coupling="DC",
+    )
+    control.configure_timebase(driver, scale_s_per_div=LOOPBACK_TIMEBASE_S_PER_DIV)
+    control.configure_trigger(driver, sweep_mode="auto")
+
+    try:
+        result = _enable_afg_confirmed(control, driver, generation)
+        assert result["state"]["output"] is True
+
+        control.run(driver)
+        time.sleep(LOOPBACK_SETTLE_S)
+        control.stop(driver)
+
+        analysis = analyze_waveform(
+            driver, device_config, LOOPBACK_CHANNEL, analyses=["fft"]
+        )
+    finally:
+        off = control.disable_afg(driver, AFG_CHANNEL)
+        _report(f"[afg-loopback] OFF state={off['state']}")
+
+    fft = analysis["fft"]
+    dominant = fft["dominant_frequency_hz"]
+    _report(
+        f"[afg-loopback] points={analysis['points']} "
+        f"分解能={fft['frequency_resolution_hz']:.1f}Hz "
+        f"dominant={dominant}Hz peaks={fft['peaks'][:3]}"
+    )
+
+    # 判定条件そのものの妥当性を先に検証する(レコード長が短いと±2%は原理的に
+    # 判定できず、失敗しても機器のせいではない)
+    assert fft["frequency_resolution_hz"] <= LOOPBACK_TOLERANCE * AFG_OUTPUT_FREQUENCY_HZ
+    assert dominant == pytest.approx(
+        AFG_OUTPUT_FREQUENCY_HZ, rel=LOOPBACK_TOLERANCE
+    )
+    assert off["state"]["output"] is False
 
 
 # -- 11. 監査ログ(最後に実行し、それまでの全操作を検証)--------------------

@@ -1197,6 +1197,191 @@ def test_configure_afg_error_is_audited(
 
 
 # ==========================================================================
+# enable_afg(DANGEROUS_WRITE)/ disable_afg(SAFE_WRITE)
+# ==========================================================================
+
+
+def request_enable_afg(
+    service: ControlService,
+    driver: ScopeDriver,
+    channel: int = 1,
+    generation: int = 0,
+) -> ScopeError:
+    """承認要求(トークン未指定)を1回起こし、その ScopeError を返す。"""
+    with pytest.raises(ScopeError) as excinfo:
+        service.enable_afg(driver, generation, channel)
+    return excinfo.value
+
+
+def test_enable_afg_requires_confirmation(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    error = request_enable_afg(service, driver)
+
+    assert error.code == ErrorCode.USER_CONFIRMATION_REQUIRED
+    assert isinstance(error.detail["confirm_token"], str)
+    assert "human" in error.detail["instruction"]
+
+
+def test_enable_afg_risk_asks_about_the_physical_setup(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    """リスク文言の要点: 実信号が出ること・接続先の物理確認・設定値の提示。"""
+    detail = request_enable_afg(service, driver, channel=2).detail
+
+    assert "channel 2" in detail["description"]
+    risk = detail["risk"]
+    assert "connected" in risk
+    assert "confirm" in risk
+    assert "get_afg_state" in risk
+
+
+def test_enable_afg_without_token_sends_nothing(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """承認前に機器へは1コマンドも送らない(出力もOFFのまま)。"""
+    scope.command_log.clear()
+
+    request_enable_afg(service, driver)
+
+    assert scope.command_log == []
+    assert scope.afg[1]["output"] is False
+
+
+def test_enable_afg_issue_is_audited(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    error = request_enable_afg(service, driver)
+    row = confirms(audit_path)[0]
+
+    assert row["event"] == "issued"
+    assert row["tool"] == "enable_afg"
+    assert row["token_digest"] == token_digest(error.detail["confirm_token"])
+
+
+def test_enable_afg_with_token_turns_the_output_on(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    token = request_enable_afg(service, driver).detail["confirm_token"]
+
+    result = service.enable_afg(driver, 0, 1, confirm_token=token)
+
+    assert result["result"] == "ok"
+    assert result["channel"] == 1
+    assert result["state"]["output"] is True
+    assert result["state"]["waveform"] == "sine"
+    assert scope.afg[1]["output"] is True
+    assert json.loads(json.dumps(result))["result"] == "ok"
+
+
+def test_enable_afg_is_audited(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    token = request_enable_afg(service, driver).detail["confirm_token"]
+
+    service.enable_afg(driver, 0, 1, confirm_token=token)
+    row = operations(audit_path)[0]
+
+    assert row["tool"] == "enable_afg"
+    assert row["result"] == "success"
+    assert row["requested"] == {"channel": 1}
+    assert row["before"]["output"] is False
+    assert row["after"]["output"] is True
+    assert [r["event"] for r in confirms(audit_path)] == ["issued", "consumed"]
+
+
+def test_enable_afg_token_is_single_use(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    token = request_enable_afg(service, driver).detail["confirm_token"]
+    service.enable_afg(driver, 0, 1, confirm_token=token)
+
+    with pytest.raises(ScopeError) as excinfo:
+        service.enable_afg(driver, 0, 1, confirm_token=token)
+
+    assert excinfo.value.detail["reason"] == "unknown_token"
+
+
+def test_enable_afg_token_is_bound_to_the_channel(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """ch1の承認でch2を出力ONにはできない(承認はチャンネル単位)。"""
+    token = request_enable_afg(service, driver, channel=1).detail["confirm_token"]
+
+    with pytest.raises(ScopeError) as excinfo:
+        service.enable_afg(driver, 0, 2, confirm_token=token)
+
+    assert excinfo.value.detail["reason"] == "args_mismatch"
+    assert scope.afg[2]["output"] is False
+
+
+def test_enable_afg_rejects_other_generation(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """再接続後(世代交代後)のトークンは無効。"""
+    token = request_enable_afg(service, driver).detail["confirm_token"]
+
+    with pytest.raises(ScopeError) as excinfo:
+        service.enable_afg(driver, 3, 1, confirm_token=token)
+
+    assert excinfo.value.detail["reason"] == "generation_mismatch"
+    assert scope.afg[1]["output"] is False
+
+
+def test_disable_afg_needs_no_confirmation(
+    service: ControlService,
+    driver: ScopeDriver,
+    scope: FakeScope,
+    audit_path: Path,
+) -> None:
+    """緊急OFFを承認でブロックしない(出力停止は常に1呼び出しで通す)。"""
+    scope.afg[1]["output"] = True
+
+    result = service.disable_afg(driver, 1)
+
+    assert result["result"] == "ok"
+    assert result["channel"] == 1
+    assert result["state"]["output"] is False
+    assert scope.afg[1]["output"] is False
+    assert confirms(audit_path) == []
+
+
+def test_disable_afg_is_audited(
+    service: ControlService,
+    driver: ScopeDriver,
+    scope: FakeScope,
+    audit_path: Path,
+) -> None:
+    scope.afg[2]["output"] = True
+
+    service.disable_afg(driver, 2)
+    row = operations(audit_path)[0]
+
+    assert row["tool"] == "disable_afg"
+    assert row["result"] == "success"
+    assert row["requested"] == {"channel": 2}
+    assert row["before"]["output"] is True
+    assert row["after"]["output"] is False
+
+
+def test_disable_afg_of_an_already_off_channel_is_not_an_error(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    assert service.disable_afg(driver, 1)["state"]["output"] is False
+
+
+def test_afg_output_error_is_audited(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    with pytest.raises(ScopeError):
+        service.disable_afg(driver, 3)  # :SOURce3 は存在しない
+
+    row = operations(audit_path)[0]
+    assert row["result"] == "error"
+    assert row["detail"]["error"]["code"] == ErrorCode.INVALID_PARAMETER
+
+
+# ==========================================================================
 # パッケージ公開
 # ==========================================================================
 

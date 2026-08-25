@@ -102,11 +102,11 @@ LLMに `:CHAN1:SCAL 1` のようなSCPI文字列を直接生成・送信させ�
 - Measurement: frequency, period, vpp, vmax, vmin, vavg, rms, duty, rise_time, fall_time
 - データ取得: 波形サンプル、スクリーンショット(ファイル保存 + 画像返却)、状態一括取得
 - シリアルプロトコルデコード(Phase 4で昇格): 標準搭載6種(UART/RS232、I²C、SPI、CAN、LIN、パラレル)のバス設定・表示・イベントテーブル(`configure_decode`)と、デコード結果(イベントテーブル)の取得(`get_decode_result`)。ライセンスオプション必須のプロトコル(I2S、FlexRay、MIL-STD-1553、CAN-FD)は非対象
-- 信号発生(AFG。Phase 4で昇格): 内蔵ジェネレータ(`:SOURce<n>`)の設定(`configure_afg`: 波形13種・周波数・振幅Vpp・オフセット・位相・デューティ・対称性・出力インピーダンス)と状態取得(`get_afg_state`)。**出力のON/OFFは含まない**(3.3のとおり別Toolで追加する)
+- 信号発生(AFG。Phase 4で昇格): 内蔵ジェネレータ(`:SOURce<n>`)の設定(`configure_afg`: 波形13種・周波数・振幅Vpp・オフセット・位相・デューティ・対称性・出力インピーダンス)、状態取得(`get_afg_state`)、**出力制御**(`enable_afg` / `disable_afg`)。設定と出力制御は別Toolで、**実際に信号を外へ出す `enable_afg` のみ DANGEROUS_WRITE**(確認フロー必須)。出力OFFは緊急停止をブロックしないため SAFE_WRITE
 
 ### 3.3 将来対応(Phase 4以降)
 
-Logic Analyzer(D0–D15)、**AFGの出力制御**(`enable_afg` / `disable_afg`。出力ONはDANGEROUS_WRITE。設定・状態取得は3.2で実装済み)、AFGの変調・ARB波形ロード、ホスト側高度解析(FFT等)。予定の詳細は [roadmap.md](roadmap.md) に記録し、着手時に要件へ昇格させる。
+Logic Analyzer(D0–D15)、AFGの変調・ARB波形ロード、ホスト側高度解析(FFT等)。予定の詳細は [roadmap.md](roadmap.md) に記録し、着手時に要件へ昇格させる。
 
 ### 3.4 非対象
 
@@ -171,6 +171,7 @@ Transport(LAN raw socket / USB USBTMC)
 | 取込 | `run` / `stop` / `single` | SAFE_WRITE | 2 |
 | 取込 | `autoset` | RESTRICTED_WRITE | 2 |
 | 信号発生 | `configure_afg` / `get_afg_state` | SAFE_WRITE / READ_ONLY | 4 |
+| 信号発生 | `enable_afg` / `disable_afg` | DANGEROUS_WRITE / SAFE_WRITE | 4 |
 | 支援 | `recommend_setup` | READ_ONLY | 3 |
 | 開発 | `raw_scpi`(デフォルト無効) | DANGEROUS_WRITE | – |
 
@@ -221,7 +222,7 @@ capture_screenshot(path="~/captures")
 | READ_ONLY | 自動実行可 | 各種取得、measure、screenshot、waveform |
 | SAFE_WRITE | 原則自動実行可(パラメータ範囲検証必須) | scale / offset / timebase / trigger level / CH ON-OFF / run / stop / single / connect |
 | RESTRICTED_WRITE | ユーザー承認(confirmトークン)必須 | 50Ω入力インピーダンス、Auto Setup、Factory Default |
-| DANGEROUS_WRITE | ユーザーの明示確認なしで実行禁止 | AFG出力ON(将来)、raw_scpi、安全ポリシー無効化 |
+| DANGEROUS_WRITE | ユーザーの明示確認なしで実行禁止 | AFG出力ON(`enable_afg`)、raw_scpi、安全ポリシー無効化 |
 
 ### 6.2 確認フロー(confirmトークン方式)
 
@@ -409,7 +410,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 - **Phase 1 — Read Only MCP: 完了。** `connect` / `disconnect` / `scope_identify` / `get_capabilities` / `get_state` / `get_*` / `measure` / `capture_waveform` / `capture_screenshot`。機器を変更できない状態でMCP連携とプロファイル機構を検証
 - **Phase 2 — Basic Control: 完了。** `configure_*` / `run` / `stop` / `single` / `autoset`。Safety Layer(操作クラス・confirmトークン)導入。MVPの実機検証結果は [verification/mho98-mvp.md](verification/mho98-mvp.md)
 - **Phase 3 — Measurement Assistant: 完了。** 同梱スキル(`skills/measurement-workflows/`)による測定目的→設定の実用化とClaudeプラグイン化(10.3)。サーバー側Tool `recommend_setup` は実装せず、スキルで精度不足が実証された場合のフォールバックとして据え置き([tools.md](tools.md) 8章)
-- **Phase 4 — Advanced: 進行中。** シリアルデコード(標準6種の設定 `configure_decode` と結果取得 `get_decode_result`)、AFGの設定・状態取得(`configure_afg` / `get_afg_state`)、導入済みオプション照会(`get_capabilities` の `options`)を実装。以降 AFGの出力制御(PR-AFG2)、Logic Analyzer、高度解析
+- **Phase 4 — Advanced: 進行中。** シリアルデコード(標準6種の設定 `configure_decode` と結果取得 `get_decode_result`)、AFGの設定・状態取得・出力制御(`configure_afg` / `get_afg_state` / `enable_afg` / `disable_afg`)、導入済みオプション照会(`get_capabilities` の `options`)を実装。以降 AFGの変調・ARB波形ロード、Logic Analyzer、高度解析
 
 ### 11.2 受入基準(MVP = Phase 1 + 2)
 

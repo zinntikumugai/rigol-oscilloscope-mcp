@@ -29,6 +29,8 @@ PHASE4_TOOLS = {
     "get_decode_result",
     "configure_afg",
     "get_afg_state",
+    "enable_afg",
+    "disable_afg",
 }
 
 
@@ -327,3 +329,76 @@ def test_get_afg_state_while_disconnected(server) -> None:
 
     assert result["error"] is True
     assert result["code"] == ErrorCode.DEVICE_DISCONNECTED
+
+
+# --------------------------------------------------------------------------
+# 出力制御(enable_afg / disable_afg)
+# --------------------------------------------------------------------------
+
+
+def test_enable_afg_description_demands_the_confirmation_flow(server) -> None:
+    """LLMが承認なしに出力ONへ踏み込まないことが最重要。"""
+    description = descriptions(server)["enable_afg"].lower()
+
+    assert "confirm_token" in description
+    assert "get_afg_state" in description
+    assert "human" in description
+
+
+def test_disable_afg_description_states_no_confirmation_is_needed(server) -> None:
+    description = descriptions(server)["disable_afg"].lower()
+
+    assert "off" in description
+    assert "no confirmation" in description
+
+
+def test_enable_afg_requires_confirmation_then_turns_the_output_on(
+    server, scope: FakeScope
+) -> None:
+    connected(server)
+
+    first = data(server, "enable_afg", {"channel": 1})
+
+    assert first["error"] is True
+    assert first["code"] == ErrorCode.USER_CONFIRMATION_REQUIRED
+    token = first["detail"]["confirm_token"]
+    assert token
+    assert "human" in first["detail"]["instruction"]
+    # 承認前に出力へ書き込んでいないこと
+    assert scope.afg[1]["output"] is False
+    assert [c for c in scope.command_log if "OUTP" in c.upper() and "?" not in c] == []
+
+    second = data(server, "enable_afg", {"channel": 1, "confirm_token": token})
+
+    assert second.get("error") is None
+    assert second["result"] == "ok"
+    assert second["state"]["output"] is True
+    assert scope.afg[1]["output"] is True
+
+
+def test_disable_afg_turns_the_output_off_in_one_call(server, scope: FakeScope) -> None:
+    """緊急OFFは承認でブロックしない(1呼び出しで通る)。"""
+    connected(server)
+    scope.afg[1]["output"] = True
+
+    result = data(server, "disable_afg", {"channel": 1})
+
+    assert result["result"] == "ok"
+    assert result["state"]["output"] is False
+    assert scope.afg[1]["output"] is False
+
+
+def test_enable_afg_unknown_channel_returns_error_dict(server) -> None:
+    connected(server)
+
+    issued = data(server, "enable_afg", {"channel": 3})
+    result = data(
+        server, "enable_afg", {"channel": 3, "confirm_token": issued["detail"]["confirm_token"]}
+    )
+
+    assert result["error"] is True
+    assert result["code"] == ErrorCode.INVALID_PARAMETER
+
+
+def test_afg_output_tools_while_disconnected(server) -> None:
+    assert data(server, "disable_afg", {})["code"] == ErrorCode.DEVICE_DISCONNECTED

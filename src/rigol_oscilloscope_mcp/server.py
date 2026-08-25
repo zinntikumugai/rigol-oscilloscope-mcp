@@ -560,8 +560,8 @@ def create_server(
         This never turns the generator output on or off. The output state is not
         touched at all, so nothing new reaches the wiring: a configured
         generator only emits a signal once its output is enabled with the
-        separate, confirmation-gated tool (enable_afg / disable_afg, shipping in
-        a later release). Read the current output state with get_afg_state.
+        separate, confirmation-gated tool enable_afg (and disable_afg turns it
+        off again). Read the current output state with get_afg_state.
 
         channel is the generator channel (1 or 2 on MHO98; see get_capabilities
         afg_channels). Specify at least one item to change.
@@ -623,6 +623,44 @@ def create_server(
                 str(n): driver.get_afg_config(n) for n in range(1, count + 1)
             }
         }
+
+    @_register
+    def enable_afg(channel: int = 1, confirm_token: str | None = None) -> dict:
+        """DANGEROUS: turn the function generator output on (a real signal starts coming out).
+
+        This is the only tool that makes the instrument drive a signal into
+        whatever is wired to the generator output, so it needs the confirmation
+        flow: the first call does not execute and returns a confirm_token, and
+        only a second call carrying that confirm_token turns the output on.
+        The token is bound to this channel, is single use, and expires.
+
+        Before asking for confirmation, read the settings back with
+        get_afg_state and show the human user what is about to be driven
+        (waveform, frequency_hz, amplitude_vpp, offset_v) - those values take
+        effect the instant the output turns on. Then ask the human user what is
+        connected to the generator output and whether it is safe to drive it.
+        Never confirm on your own, and never drive a live or powered circuit.
+
+        Returns the settings of the channel in state, with output true.
+        Turn the output off again with disable_afg.
+        """
+        return control.enable_afg(
+            manager.require_scope(), manager.generation, channel, confirm_token
+        )
+
+    @_register
+    def disable_afg(channel: int = 1) -> dict:
+        """Turn the function generator output off immediately (no signal comes out any more).
+
+        No confirmation is needed by design: stopping the output is always the
+        safe direction, so it must never be blocked by the confirmation flow.
+        Use it as soon as the measurement is done, and whenever the user asks
+        for the signal to stop. The waveform settings are kept, so enable_afg
+        drives the same signal again.
+
+        Returns the settings of the channel in state, with output false.
+        """
+        return control.disable_afg(manager.require_scope(), channel)
 
     # -- Acquisition(tools.md 4章)-----------------------------------------
 
