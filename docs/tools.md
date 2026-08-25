@@ -322,7 +322,7 @@ FFTの実装:
 
 内蔵の任意波形/ファンクションジェネレータ(`:SOURce<n>`。MHO900は2ch)を扱う。実測根拠は [verification/mho98-afg.md](verification/mho98-afg.md)。
 
-**設定(`configure_afg`)と出力制御(`enable_afg` / `disable_afg`)は別Toolに分けている。** `configure_afg` / `get_afg_state` は出力状態(`:SOURce<n>:OUTPut:STATe`)に一切触れず、設定変更だけでは信号が外部の被測定回路へ出ない(= SAFE_WRITE で足りる)。**実際に信号を外へ出すのは `enable_afg` だけ**で、これのみ DANGEROUS_WRITE(confirmトークン必須)。
+**設定(`configure_afg`)と出力制御(`enable_afg` / `disable_afg`)は別Toolに分けている。** `configure_afg` / `get_afg_state` は出力状態(`:SOURce<n>:OUTPut:STATe`)を**変更しない**(`get_afg_state` は読み取りのみ行う)。設定変更だけでは信号が外部の被測定回路へ出ない(= SAFE_WRITE で足りる)。**実際に信号を外へ出すのは `enable_afg` だけ**で、これのみ DANGEROUS_WRITE(confirmトークン必須)。
 
 ### `configure_afg` — SAFE_WRITE / Phase 4
 

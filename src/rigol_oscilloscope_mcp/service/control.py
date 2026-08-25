@@ -54,10 +54,11 @@ _AFG_OUTPUT_RISK = (
     "Turning the generator output on drives a real signal into whatever is "
     "physically connected to the AFG output right now. Ask the human user to "
     "confirm the physical setup first: what is connected to the generator "
-    "output, and is it safe to drive? Never drive a live or powered circuit "
-    "unaware. The configured waveform, frequency, amplitude and offset are "
-    "applied the moment the output turns on — read them back with "
-    "get_afg_state and show them to the user before asking for confirmation."
+    "output, and is it safe to drive? Do not enable the output into a live or "
+    "powered circuit unless the user has explicitly confirmed it is safe. The "
+    "configured waveform, frequency, amplitude and offset are applied the "
+    "moment the output turns on — read them back with get_afg_state and show "
+    "them to the user before asking for confirmation."
 )
 
 
