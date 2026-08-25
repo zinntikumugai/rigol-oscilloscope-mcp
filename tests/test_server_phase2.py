@@ -49,6 +49,10 @@ PHASE2_TOOLS = {
     "autoset",
 }
 
+PHASE4_TOOLS = {
+    "analyze_waveform",
+}
+
 
 # --------------------------------------------------------------------------
 # ハーネス
@@ -125,7 +129,7 @@ def audit_lines(path: Path) -> list[dict]:
 # --------------------------------------------------------------------------
 
 
-def test_list_tools_exposes_phase1_and_phase2(server) -> None:
+def test_list_tools_exposes_every_phase(server) -> None:
     async def main() -> list[str]:
         async with create_connected_server_and_client_session(server) as client:
             return [tool.name for tool in (await client.list_tools()).tools]
@@ -133,7 +137,7 @@ def test_list_tools_exposes_phase1_and_phase2(server) -> None:
     names = anyio.run(main)
 
     # 総数は tests/test_server_startup.py が持つ(フェーズ追加のたびに触らない)
-    assert PHASE1_TOOLS | PHASE2_TOOLS <= set(names)
+    assert PHASE1_TOOLS | PHASE2_TOOLS | PHASE4_TOOLS <= set(names)
 
 
 def test_write_tool_descriptions_warn_about_confirmation(server) -> None:

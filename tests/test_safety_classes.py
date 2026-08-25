@@ -22,6 +22,7 @@ EXPECTED = {
     "get_acquisition_state": "READ_ONLY",
     "measure": "READ_ONLY",
     "capture_waveform": "READ_ONLY",
+    "analyze_waveform": "READ_ONLY",
     "capture_screenshot": "READ_ONLY",
     "configure_channel": "SAFE_WRITE",
     "configure_timebase": "SAFE_WRITE",

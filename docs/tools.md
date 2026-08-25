@@ -195,6 +195,36 @@ Auto Setupは利用者の設定を大きく上書きするため、confirmトー
 
 注: 画面表示データは間引きされている(実測: 表示500 kSa/s vs 実サンプルレート5 MSa/s)。返却メタデータに実効サンプルレートを含める。
 
+### `analyze_waveform` — READ_ONLY / Phase 4
+
+波形を取得し、**ホスト側(サーバー側)で**解析して要約数値だけを返す。機器の解析機能は使わない(未確認SCPIを送らない方針のため)。
+
+引数:
+
+| 名前 | 型 | 必須 | 説明 |
+|---|---|---|---|
+| `channel` | string | – | 既定 `"CH1"` |
+| `analyses` | string[] | – | `"stats"` / `"fft"` の部分集合。省略時は全解析。未知の名前は `INVALID_PARAMETER`(`detail.valid` に有効名) |
+| `max_points` | int | – | `capture_waveform` と同一の意味(既定/上限は設定値。超過は丸めて `max_points_clamped: true`) |
+
+返却:
+
+| キー | 説明 |
+|---|---|
+| `channel` / `points` / `sample_interval_s` / `effective_sample_rate_sa_per_s` / `note` | `capture_waveform` と同じメタデータ |
+| `stats` | `min_v`, `max_v`, `mean_v`, `rms_v`, `std_v`(母標準偏差), `vpp_v` |
+| `fft` | `dominant_frequency_hz`(ピーク無しなら `null`), `frequency_resolution_hz`, `window`(`"hann"`), `peaks`(最大5本。`frequency_hz` / `amplitude_v` を振幅降順) |
+
+**サンプル配列は返さない。** 生データが必要なときは `capture_waveform` を使う(解析結果に巨大配列を混ぜてトークンを浪費しないための分業)。
+
+FFTの実装:
+
+- Hann窓 → 2の冪へゼロパディング → radix-2 FFT(stdlibのみ。追加依存なし)
+- 振幅はコヒーレントゲイン(0.5)補正と単側スペクトルの×2を適用済み
+- 直流はピーク探索から除外し、窓掛け前に平均を引く(1レコードに数周期しか無い波形で直流の窓漏れが信号ビンを覆うのを防ぐ)
+
+注(周波数確度): ゼロパディングでビン間隔は細かくなるが、**真の分解能は `frequency_resolution_hz` = 1 /(点数 × `sample_interval_s`)が上限**。返り値の桁をそれ以上に信用しない。画面データが間引きされている場合は `sample_interval_s` 自体が実サンプルレートより粗い。周波数・周期の高確度な値が要るときは機器のカウンタを使う `measure` を優先する。
+
 ### `capture_screenshot` — READ_ONLY / Phase 1
 
 現在の画面を画像として取得し、ファイル保存と画像返却を行う。
@@ -323,6 +353,7 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `get_acquisition_state` | READ_ONLY | 1 |
 | `measure` | READ_ONLY | 1 |
 | `capture_waveform` | READ_ONLY | 1 |
+| `analyze_waveform` | READ_ONLY | 4 |
 | `capture_screenshot` | READ_ONLY | 1 |
 | `configure_channel` | SAFE_WRITE(50ΩはRESTRICTED) | 2 |
 | `configure_timebase` | SAFE_WRITE | 2 |
@@ -334,6 +365,6 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `get_decode_result` | READ_ONLY | 4 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は21(Phase 1: 12 + Phase 2: 7 + Phase 4: 2。`recommend_setup` / `raw_scpi` は未登録)。
+登録Tool数は22(Phase 1: 12 + Phase 2: 7 + Phase 4: 3。`recommend_setup` / `raw_scpi` は未登録)。
 
-将来(Phase 4の残り): Logic Analyzer、AFG(出力ONはDANGEROUS_WRITE)、高度解析。
+将来(Phase 4の残り): Logic Analyzer、AFG(出力ONはDANGEROUS_WRITE)。

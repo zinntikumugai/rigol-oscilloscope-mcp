@@ -44,9 +44,9 @@ MHO98は2ch・100 MHz・1 GSa/s のAFGを搭載する。
 
 オシロ本体でなくMCPホスト側(Python)で波形データを解析する構成。
 
-- 候補: FFT、Jitter、Overshoot / Undershoot、Ringing、Noise、Signal Integrity、統計測定
-- `capture_waveform` の生データ(または一時ファイル)を入力とする解析Tool群として設計する
-- NumPy/SciPy依存が増えるため、optional dependency(extras)化を検討する
+- **統計(`stats`)とFFT(`fft`)は `analyze_waveform` として実装済み**([tools.md](tools.md) 5章)。生データを返さず要約数値だけを返す方針で、入力は `capture_waveform` と同じ波形取得経路(`service/waveform.py` の `read_samples`)を共有する
+- 未実装の候補: THD、Jitter、Overshoot / Undershoot、Ringing、Noise、Signal Integrity。実測で必要性が出た時点で `analyses` の値を増やす形で追加する(Tool追加ではなく引数追加で済ませる)
+- NumPy/SciPy: stdlibのみのradix-2 FFTで実装済み(131k点で約0.15秒、既定上限10万点なら0.1秒台)。解析が重くなったらoptional extras化を再検討する
 
 ## 3. プラグイン化(完了・要件へ昇格)
 

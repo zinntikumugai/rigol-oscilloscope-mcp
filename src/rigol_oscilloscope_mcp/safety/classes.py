@@ -55,6 +55,7 @@ TOOL_CLASSES: dict[str, OperationClass] = {
     # 5. 測定・データ取得
     "measure": OperationClass.READ_ONLY,
     "capture_waveform": OperationClass.READ_ONLY,
+    "analyze_waveform": OperationClass.READ_ONLY,
     "capture_screenshot": OperationClass.READ_ONLY,
     # 6. プロトコルデコード(tools.md、Phase 4)
     # 表示・解析層のみを変える(取り込み設定も出力も変えない)完全に可逆な操作で、
