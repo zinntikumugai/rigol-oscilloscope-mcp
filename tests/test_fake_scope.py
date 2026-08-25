@@ -519,3 +519,153 @@ def test_transport_query_binary_timeout(transport: FakeTransport) -> None:
     with pytest.raises(ScopeError) as excinfo:
         transport.query_binary(":FOO:BAR?")
     assert excinfo.value.code == ErrorCode.TIMEOUT
+
+
+# --------------------------------------------------------------------------
+# シリアルデコード(:BUS<n> / docs/verification/mho98-unlicensed.md 3章)
+# --------------------------------------------------------------------------
+
+
+def test_bus_defaults_match_the_guide(scope: FakeScope) -> None:
+    """ガイド既定: MODE=PARallel、表示OFF、FORMat=HEX、EVENt=OFF。"""
+    assert scope.handle(":BUS1:MODE?") == b"PAR"
+    assert scope.handle(":BUS1:DISPlay?") == b"0"
+    assert scope.handle(":BUS1:FORMat?") == b"HEX"
+    assert scope.handle(":BUS1:EVENt?") == b"0"
+
+
+def test_bus_mode_round_trip(scope: FakeScope) -> None:
+    scope.handle(":BUS1:MODE RS232")
+    assert scope.handle(":BUS1:MODE?") == b"RS232"
+
+
+def test_bus_mode_keeps_per_protocol_settings(scope: FakeScope) -> None:
+    """モード切替は各プロトコルの設定を消さない(実機の観測どおり)。"""
+    scope.handle(":BUS1:RS232:BAUD 115200")
+    scope.handle(":BUS1:MODE SPI")
+    scope.handle(":BUS1:MODE RS232")
+
+    assert scope.handle(":BUS1:RS232:BAUD?") == b"115200"
+
+
+def test_bus_rs232_baud_default(scope: FakeScope) -> None:
+    """実機プローブの実測値(:BUS1:RS232:BAUD? → 9600)。"""
+    assert scope.handle(":BUS1:RS232:BAUD?") == b"9600"
+
+
+def test_bus_protocol_defaults_match_the_probe(scope: FakeScope) -> None:
+    assert scope.handle(":BUS1:IIC:ADDBits?") == b"7"
+    assert scope.handle(":BUS1:SPI:MODE?") == b"CS"
+    assert scope.handle(":BUS1:CAN:BAUD?") == b"1000000"
+    assert scope.handle(":BUS1:LIN:BAUD?") == b"9600"
+
+
+def test_bus_threshold_round_trip(scope: FakeScope) -> None:
+    """実機実測: `:BUS1:THReshold? TX` → `0.000000`(小数6桁)。"""
+    assert scope.handle(":BUS1:THReshold? TX") == b"0.000000"
+
+    scope.handle(":BUS1:THReshold 1.65,TX")
+
+    assert scope.handle(":BUS1:THReshold? TX") == b"1.650000"
+    assert scope.handle(":BUS1:THReshold? RX") == b"0.000000"
+
+
+def test_bus_unknown_threshold_type_is_silent(scope: FakeScope) -> None:
+    with pytest.raises(SilentTimeout):
+        scope.handle(":BUS1:THReshold? IIS")
+
+
+def test_bus_source_is_normalized(scope: FakeScope) -> None:
+    scope.handle(":BUS1:RS232:TX CHANnel2")
+    assert scope.handle(":BUS1:RS232:TX?") == b"CHAN2"
+
+    scope.handle(":BUS1:RS232:TX D15")
+    assert scope.handle(":BUS1:RS232:TX?") == b"D15"
+
+    scope.handle(":BUS1:RS232:TX OFF")
+    assert scope.handle(":BUS1:RS232:TX?") == b"OFF"
+
+
+def test_bus_event_requires_display(scope: FakeScope) -> None:
+    """ガイド: `:EVENt ON` の前にバスを表示ONにしておく必要がある。"""
+    with pytest.raises(SilentTimeout):
+        scope.handle(":BUS1:EVENt ON")
+    assert scope.handle(":SYSTem:ERRor?") == OUT_OF_RANGE.encode()
+
+    scope.handle(":BUS1:DISPlay ON")
+    scope.handle(":BUS1:EVENt ON")
+
+    assert scope.handle(":BUS1:EVENt?") == b"1"
+
+
+def test_bus5_is_silent(scope: FakeScope) -> None:
+    """デコードバスは4本(実機実測: :BUS4:MODE? まで応答)。"""
+    with pytest.raises(SilentTimeout):
+        scope.handle(":BUS5:MODE?")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ":BUS1:IIS:SCLK:SOURce?",
+        ":BUS1:FLEXray:BAUD?",
+        ":BUS1:M1553:SOURce?",
+        ":BUS1:CAN:FDBaud?",
+    ],
+)
+def test_option_gated_decode_subtrees_are_not_modeled(
+    scope: FakeScope, command: str
+) -> None:
+    """オプション必須プロトコルは実装しない(送れば沈黙する)。"""
+    with pytest.raises(SilentTimeout):
+        scope.handle(command)
+
+
+def _enable_event_table(scope: FakeScope, bus: int = 1) -> None:
+    scope.handle(f":BUS{bus}:DISPlay ON")
+    scope.handle(f":BUS{bus}:EVENt ON")
+
+
+def test_bus_data_returns_a_tmc_block(scope: FakeScope) -> None:
+    """`:BUS<n>:DATA?` は definite-length block(`#9...`)で返る。"""
+    _enable_event_table(scope)
+
+    response = scope.handle(":BUS1:DATA?")
+
+    assert response.startswith(b"#9")
+    payload = response[11:-1]  # `#9` + 9桁長 ... 末尾改行
+    assert len(payload) == int(response[2:11])
+    # 既定モードは PAR(実機プローブの :BUS4:MODE? と同じ短形式)
+    assert payload.decode("ascii").splitlines()[0] == "PARALLEL"
+
+
+def test_bus_data_header_matches_the_device(scope: FakeScope) -> None:
+    """実機実測(MHO98, MODE=RS232): 先頭2行は `RS232` と `Time,Tx/Rx,Data,Error,`。"""
+    _enable_event_table(scope)
+    scope.handle(":BUS1:MODE RS232")
+
+    payload = scope.handle(":BUS1:DATA?")[11:-1].decode("ascii")
+
+    assert payload.splitlines()[:2] == ["RS232", "Time,Tx/Rx,Data,Error,"]
+
+
+def test_bus_data_tracks_the_mode(scope: FakeScope) -> None:
+    _enable_event_table(scope)
+
+    lines = scope.handle(":BUS1:DATA?")[11:-1].decode("ascii").splitlines()
+
+    assert lines[0] == "PARALLEL"
+    assert lines[1] == "Time,Data,"
+    # プログラミングガイドの例そのまま
+    assert lines[2:4] == ["-2.47us,0,", "-2.444us,1,"]
+
+    scope.handle(":BUS1:MODE CAN")
+    assert scope.handle(":BUS1:DATA?")[11:-1].decode("ascii").splitlines()[0] == "CAN"
+
+
+def test_bus_data_is_empty_while_the_event_table_is_off(scope: FakeScope) -> None:
+    """イベントテーブル無効時は空ペイロード(要実機検証)。"""
+    scope.handle(":BUS1:DISPlay ON")
+
+    assert scope.handle(":BUS1:EVENt?") == b"0"
+    assert scope.handle(":BUS1:DATA?") == b"#9000000000\n"

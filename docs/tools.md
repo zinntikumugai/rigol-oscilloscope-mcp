@@ -248,7 +248,77 @@ FFTの実装:
 
 ---
 
-## 6. Measurement Assistant(Phase 3)
+## 6. プロトコルデコード(Phase 4)
+
+### `configure_decode` — SAFE_WRITE / Phase 4
+
+シリアルプロトコルデコードのバス(`:BUS1`〜`:BUS4`)を設定する。**表示・解析層のみを変える**操作で、取り込み設定(垂直軸・水平軸・トリガ)にも出力にも触れず完全に可逆なため、`configure_channel` より侵襲性が低い SAFE_WRITE とする(confirmトークン不要)。
+
+引数(未指定項目は変更しない):
+
+| 名前 | 型 | 説明 |
+|---|---|---|
+| `protocol` | string | 必須。`uart` / `i2c` / `spi` / `can` / `lin` / `parallel` |
+| `bus` | int | デコードバス番号。既定 1(MHO98は1〜4) |
+| `enabled` | bool | バス表示のON/OFF(`:BUS<n>:DISPlay`) |
+| `event_table` | bool | イベントテーブル表示(`:BUS<n>:EVENt`)。**有効化にはバス表示ONが先に必要**なため、`enabled=true` と同時に指定する |
+| `data_format` | string | `hex` / `ascii` / `dec` / `bin` |
+| `settings` | object | プロトコル別の設定(下表)。ソース値は `"CH1"`〜`"CH4"` / `"D0"`〜`"D15"` / `"off"` |
+
+`settings` のキー(全て任意。単位付きキーはSI基本単位):
+
+| プロトコル | キー |
+|---|---|
+| `uart` | `tx_source`, `rx_source`, `baud_bps`(1〜20000000), `data_bits`(5/6/7/8/9), `parity`(none/odd/even), `stop_bits`(1/1.5/2), `endian`(msb/lsb), `polarity`(positive/negative), `tx_threshold_v`, `rx_threshold_v` |
+| `i2c` | `scl_source`, `sda_source`, `swap_sda_scl`, `address_bits`(7/8/10), `scl_threshold_v`, `sda_threshold_v` |
+| `spi` | `clk_source`, `clk_slope`(rising/falling), `mosi_source`, `miso_source`, `cs_source`, `cs_polarity`(high/low), `frame_mode`(cs/timeout), `timeout_s`(8e-9〜10), `data_bits`(4〜32), `endian`, `polarity`(high/low), `clk_threshold_v`, `mosi_threshold_v`, `miso_threshold_v`, `cs_threshold_v` |
+| `can` | `source`, `signal_type`(tx/rx/canh/canl/differential), `baud_bps`(10000〜5000000), `sample_point_percent`(10〜90), `threshold_v` |
+| `lin` | `source`, `baud_bps`(2400〜20000000), `parity_enabled`, `standard`(v1x/v2x/mixed), `threshold_v` |
+| `parallel` | `clk_source`, `clk_slope`, `bus_width`, `endian`, `polarity` |
+
+動作・規範:
+
+- **送信順は固定**: `:MODE` → `:FORMat` → プロトコル別設定 → `:DISPlay` → `:EVENt`。各項目は set → エラーキュー確認 → read-back(0.3節)
+- **検証は全て送信前**に行う(不正な列挙値・範囲外は1コマンドも送らずに `INVALID_PARAMETER`。実機は不正トークン1発でSCPIサーバーが沈黙するため)。他プロトコルのキーを混ぜた場合は `detail.allowed` にそのプロトコルの許容キーを返す
+- `uart` の `tx_source`/`rx_source`、`spi` の `mosi_source`/`miso_source` を**両方 `off` にはできない**(デコード対象が無くなる)
+- 対応プロトコルは機種プロファイルの `decode_protocols` が持つ([device-profiles.md](device-profiles.md) 2.2)。**未宣言のプロトコル(I2S / FlexRay / MIL-STD-1553 / CAN-FD)は送信前に `UNSUPPORTED_FEATURE`** — これらはライセンスオプション必須で、標準搭載6種のみを扱う
+- 返却: `bus` / `requested` / `applied`(read-back値)/ `changed`
+
+### `get_decode_result` — READ_ONLY / Phase 4
+
+デコード結果(イベントテーブル)を `:BUS<n>:DATA?` から読む。**書き込みを一切行わない**(取り込みの停止もしない)。
+
+引数:
+
+| 名前 | 型 | 説明 |
+|---|---|---|
+| `bus` | int | デコードバス番号。既定 1 |
+| `max_events` | int | 返すイベント数の上限(ホスト側で切り詰め)。未指定なら全件 |
+
+返却:
+
+| キー | 説明 |
+|---|---|
+| `bus` | バス番号 |
+| `protocol` | `:BUS<n>:MODE?` 由来の意味的プロトコル名(未対応プロトコルは生の名前を小文字化) |
+| `columns` | 列名。**プロトコル・機種依存**(実機MHO98のRS232は `["time_s", "tx_rx", "data", "error"]`) |
+| `events` | 行(列名 → 値)。`time_s` のみ秒のfloat、他は文字列(表記は `data_format` に従う) |
+| `event_count` | 切り詰め**前**の総件数 |
+| `truncated` | `max_events` で切り詰めたか |
+| `warnings` | 自然文の警告(下記) |
+
+動作・規範:
+
+- **前提は `configure_decode(enabled=true, event_table=true)`**。どちらかがOFFのバスでは `:DATA?` を**送らず**、`configure_decode(bus=N, ...)` を促す警告付きで空の結果を返す(OFF時の `:DATA?` の実機挙動が未確認のため送らない)
+- **取り込み中は警告を出すだけで停止しない**(read-onlyを崩さない)。安定した表が要るなら先に `stop` を呼ぶ。ガイドが停止を要求するのは `:BUS<n>:EEXPort` で、`:DATA?` については記載がない
+- 応答はTMCブロックで、中身は「デコード種別トークン / ヘッダ行 / 行...」の改行区切りCSV。**列構成はガイドに記載が無く**、実装はヘッダ行が与える列をそのまま採用する(スキーマを持たない)。列名は小文字snake_case化のみ行い(`Tx/Rx` → `tx_rx`)、`Time` だけ `time_s` として秒へ変換する(`-2.47us` のような工学表記)
+- 行が0件(信号なし)でも正常に `events: []` を返す(実機実測)
+- クエリ後にエラーキューを確認する(値が返ってもエラーが積まれる実機挙動、[verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 4章)
+- 列構成の実機観測は [verification/mho98-phase4.md](verification/mho98-phase4.md) に記録する(RS232のヘッダは実測済み。他プロトコルは未観測)
+
+---
+
+## 7. Measurement Assistant(Phase 3)
 
 Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定目的→推奨設定の対応表(信号種別10種)、UART・未知信号のワークフロー、安全プロンプト、反復上限ガイダンスは [`skills/measurement-workflows/SKILL.md`](../skills/measurement-workflows/SKILL.md) に記載し、Claudeプラグイン([Requirements.md](Requirements.md) 10.3)として配布する。
 
@@ -260,7 +330,7 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 
 ---
 
-## 7. Raw SCPI(デフォルト無効)
+## 8. Raw SCPI(デフォルト無効)
 
 ### `raw_scpi` — DANGEROUS_WRITE / 開発用
 
@@ -268,7 +338,7 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 
 ---
 
-## 8. Tool一覧(サマリ)
+## 9. Tool一覧(サマリ)
 
 | Tool | クラス | Phase |
 |---|---|---|
@@ -291,6 +361,10 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `run` / `stop` / `single` | SAFE_WRITE | 2 |
 | `autoset` | RESTRICTED_WRITE | 2 |
 | `recommend_setup`(未実装・スキルで代替) | READ_ONLY | 3 |
+| `configure_decode` | SAFE_WRITE | 4 |
+| `get_decode_result` | READ_ONLY | 4 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-将来(Phase 4): プロトコルデコード、Logic Analyzer、AFG(出力ONはDANGEROUS_WRITE)。
+登録Tool数は22(Phase 1: 12 + Phase 2: 7 + Phase 4: 3。`recommend_setup` / `raw_scpi` は未登録)。
+
+将来(Phase 4の残り): Logic Analyzer、AFG(出力ONはDANGEROUS_WRITE)。

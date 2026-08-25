@@ -223,6 +223,53 @@ class ControlService:
             "trigger": after,
         }
 
+    def configure_decode(
+        self,
+        driver: ScopeDriver,
+        bus: int,
+        protocol: str,
+        *,
+        enabled: bool | None = None,
+        event_table: bool | None = None,
+        data_format: str | None = None,
+        settings: dict | None = None,
+    ) -> dict:
+        """シリアルデコードを設定する(SAFE_WRITE)。未指定の項目は変更しない。
+
+        表示・解析層のみを変える完全に可逆な操作なので承認は要求しない。
+        引数依存の昇格も無い(デコード設定は取り込み設定も出力も変えない)。
+        """
+        requested = _specified(
+            {
+                "enabled": enabled,
+                "event_table": event_table,
+                "data_format": data_format,
+                "settings": settings,
+            }
+        )
+        args = {"bus": bus, "protocol": protocol, **requested}
+
+        with self._audited("configure_decode", args) as record:
+            before = driver.get_decode_config(bus)
+            record.before(before)
+            applied = driver.configure_decode(
+                bus,
+                protocol,
+                enabled=enabled,
+                event_table=event_table,
+                data_format=data_format,
+                settings=settings,
+            )
+            after = driver.get_decode_config(bus)
+            record.after(after)
+
+        return {
+            "bus": after["bus"],
+            "requested": requested,
+            "applied": applied,
+            "changed": before != after,
+        }
+
     # -- Acquisition ------------------------------------------------------
 
     def run(self, driver: ScopeDriver) -> dict:

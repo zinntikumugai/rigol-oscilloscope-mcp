@@ -11,17 +11,21 @@ MVP(Phase 1 + 2 = Read Only + Basic Control)完了後に対応する機能と、
 
 **同梱スキルで実現し完了**(2026-08-25)。信号種別10種の推奨設定表・ワークフロー・安全プロンプトは `skills/measurement-workflows/SKILL.md`、プラグイン構成は [Requirements.md](Requirements.md) 10.3、受入基準は同 11.3 を参照。
 
-- サーバー側Tool `recommend_setup`([tools.md](tools.md) 6章)は**実装せず据え置き**。スキルで精度不足が実証された場合のフォールバックとして仕様のみ残す
+- サーバー側Tool `recommend_setup`([tools.md](tools.md) 7章)は**実装せず据え置き**。スキルで精度不足が実証された場合のフォールバックとして仕様のみ残す
 
 ## 2. Phase 4 — 機器の高度機能
 
-### 2.1 シリアルプロトコルデコード
+### 2.1 シリアルプロトコルデコード(設定・結果取得とも完了・要件へ昇格)
 
-MHO98は標準で複数のシリアルデコードを搭載する。対象候補: UART/RS232、I²C、SPI、CAN、CAN-FD、LIN。
+**標準搭載6種(UART/RS232、I²C、SPI、CAN、LIN、パラレル)の設定Tool `configure_decode` と結果取得Tool `get_decode_result` を実装済み**([tools.md](tools.md) 6章、要件は [Requirements.md](Requirements.md) 3.2)。プロトコル別引数は `settings` オブジェクトで受け、対応表は機種プロファイルの `decode_protocols` と `driver/decode.py` が持つ。
 
-- Tool案: `configure_decode` / `get_decode_result`(プロトコル別引数はスキーマで分岐)
-- デコード結果の取得SCPIとイベントテーブル形式は実機検証が必要
-- capabilitiesの `protocol_decode` で機種ごとの対応プロトコルを表現する
+残件:
+
+- **イベントテーブルの列構成は観測しながら固めていく**: `:BUS<n>:DATA?` の列はプロトコル依存でガイドに記載が無く、実装はヘッダ行をそのまま採用する(スキーマを持たない)。実機で観測できた列構成は [verification/mho98-phase4.md](verification/mho98-phase4.md) に追記していく(RS232の `Time,Tx/Rx,Data,Error,` は実測済み)
+- **バス無効時の `:DATA?` 挙動は未確認**: 現状は送信前に早期returnしているため実害はないが、観測できたら記録する
+- **オプション必須プロトコルは延期**: I2S、FlexRay、MIL-STD-1553、CAN-FD。未ライセンス機では検証できないため、ライセンス適用後に着手する
+- **将来ゲートは送信前に不要**: オプション必須ニモニックは沈黙せず「値を返しつつエラーキューに `-222` を積む」と実測済みのため、既存の「set → エラーキュー確認 → read-back」で機器自身のエラーを検出できる(実測根拠: [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 4章)。ただしquery系でもエラーキュー確認を省略しないこと
+- `:BUS` コアはDHO/MHO共通と見られる(ガイド比較)。DHO実機を検証できたらファミリプロファイルへ引き上げる([device-profiles.md](device-profiles.md) 2.2)
 
 ### 2.2 Logic Analyzer
 
@@ -57,7 +61,7 @@ MHO98は2ch・100 MHz・1 GSa/s のAFGを搭載する。
 - **表示OFFチャンネルへの書き込みが無視される件への対策検討**([verification/mho98-mvp.md](verification/mho98-mvp.md) 3.3): 表示OFFのCHへ `:SCALe` / `:OFFSet` を送るとエラーなく無視される。`configure_channel` で自動的に `enabled=True` にするか、requested/applied の不一致を警告として返すに留めるか、要検討(暗黙に表示をONにするのは利用者の画面を勝手に変える副作用でもある)
 - MHO98以外の対応機種の追加(DHO800/900系などを候補に、実機が用意でき次第)
 - ファミリプロファイルの括り出し(同系2機種以上の検証が揃った段階で)
-- **`raw_scpi` Tool は未実装**(configの `RIGOL_MCP_RAW_SCPI` は将来用の予約。[tools.md](tools.md) 7章の仕様で実装する際に使用する)
+- **`raw_scpi` Tool は未実装**(configの `RIGOL_MCP_RAW_SCPI` は将来用の予約。[tools.md](tools.md) 8章の仕様で実装する際に使用する)
 
 ## 5. 検討事項(方針未定)
 

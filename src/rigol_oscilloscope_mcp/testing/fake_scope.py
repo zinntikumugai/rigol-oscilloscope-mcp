@@ -204,6 +204,94 @@ _CHANNEL_PROPS: tuple[tuple[str, str], ...] = (
 
 _TRIGGER_STATUS = {"RUN": "TD", "STOP": "STOP", "SINGLE": "WAIT"}
 
+# ---------------------------------------------------------------------------
+# シリアルデコード(:BUS<n> / docs/verification/mho98-unlicensed.md 3章)
+# ---------------------------------------------------------------------------
+
+BUS_COUNT = 4
+
+_BUS_MODES = ("PARallel", "RS232", "SPI", "IIC", "LIN", "CAN")
+_BUS_FORMATS = ("HEX", "ASCii", "DEC", "BIN")
+
+#: 閾値の `<type>`(ライセンス必須プロトコルの種別は意図的に載せない)
+_THRESHOLD_TYPES = (
+    "TX", "RX", "SCL", "SDA", "CLK", "MISO", "MOSI", "CS", "CAN", "LIN", "PAL", "PALCLK",
+)
+
+#: `:BUS<n>:DATA?` ペイロード先頭のデコード種別トークン(モード短形式 → トークン)。
+#: RS232 は実機実測(docs/verification/mho98-phase4.md)、PARALLEL はガイドの例。
+#: それ以外は 要実機検証(ここではモード名をそのまま返す)。
+_BUS_DATA_TOKENS = {"PAR": "PARALLEL", "IIC": "I2C"}
+
+#: プロトコル別のイベントテーブル(ヘッダ行, 行...)。
+#: RS232 のヘッダは実機実測。行の中身と他プロトコルの列構成は 要実機検証。
+_BUS_DATA_TABLES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "RS232": ("Time,Tx/Rx,Data,Error,", ("-2.47us,Tx,0x55,,", "-2.444us,Tx,0xAA,,")),
+    "PAR": ("Time,Data,", ("-2.47us,0,", "-2.444us,1,")),
+}
+#: 列構成が未確認のプロトコル用のフォールバック(要実機検証)
+_BUS_DATA_DEFAULT = _BUS_DATA_TABLES["PAR"]
+
+_SOURCES = (
+    tuple(f"CHANnel{n}" for n in range(1, 5))
+    + tuple(f"D{n}" for n in range(16))
+    + ("OFF",)
+)
+
+#: プロトコル別プロパティ: (内部キー, ニモニック仕様, 型, 既定値)。
+#: 型: "bool" / "int" / "float" / "src" / 列挙のタプル。
+#: 既定値はMHO900プログラミングガイド 3.4 の初期値(BAUD 9600 等は実機実測とも一致)。
+_BUS_PROTOCOL_PROPS: dict[str, tuple[tuple[str, str, object, object], ...]] = {
+    "RS232": (
+        ("tx", "TX", "src", "CHAN1"),
+        ("rx", "RX", "src", "OFF"),
+        ("polarity", "POLarity", ("POSitive", "NEGative"), "POS"),
+        ("parity", "PARity", ("NONE", "ODD", "EVEN"), "NONE"),
+        ("endian", "ENDian", ("MSB", "LSB"), "LSB"),
+        ("baud", "BAUD", "int", 9600),
+        ("dbits", "DBITs", ("5", "6", "7", "8", "9"), "8"),
+        ("sbits", "SBITs", ("1", "1.5", "2"), "1"),
+    ),
+    "IIC": (
+        ("scl", "SCLK:SOURce", "src", "CHAN1"),
+        ("sda", "SDA:SOURce", "src", "CHAN2"),
+        ("exchange", "EXCHange", "bool", False),
+        ("addbits", "ADDBits", ("7", "8", "10"), "7"),
+    ),
+    "SPI": (
+        ("sclk", "SCLK:SOURce", "src", "CHAN1"),
+        ("slope", "SCLK:SLOPe", ("POSitive", "NEGative"), "POS"),
+        ("miso", "MISO:SOURce", "src", "OFF"),
+        ("mosi", "MOSI:SOURce", "src", "CHAN2"),
+        ("polarity", "POLarity", ("HIGH", "LOW"), "LOW"),
+        ("dbits", "DBITs", "int", 8),
+        ("endian", "ENDian", ("MSB", "LSB"), "MSB"),
+        ("mode", "MODE", ("CS", "TIMeout"), "CS"),
+        ("timeout", "TIMeout:TIME", "float", 1.0e-6),
+        ("ss", "SS:SOURce", "src", "CHAN1"),
+        ("ss_polarity", "SS:POLarity", ("HIGH", "LOW"), "LOW"),
+    ),
+    "CAN": (
+        ("source", "SOURce", "src", "CHAN1"),
+        ("stype", "STYPe", ("TX", "RX", "CANH", "CANL", "DIFFerential"), "TX"),
+        ("baud", "BAUD", "int", 1000000),
+        ("spoint", "SPOint", "int", 50),
+    ),
+    "LIN": (
+        ("source", "SOURce", "src", "CHAN1"),
+        ("parity", "PARity", "bool", False),
+        ("standard", "STANdard", ("V1X", "V2X", "MIXed"), "V2X"),
+        ("baud", "BAUD", "int", 9600),
+    ),
+    "PARallel": (
+        ("clk", "CLK", "src", "OFF"),
+        ("slope", "SLOPe", ("POSitive", "NEGative"), "POS"),
+        ("width", "WIDTh", "int", 8),
+        ("endian", "ENDian", ("MSB", "LSB"), "MSB"),
+        ("polarity", "POLarity", ("POSitive", "NEGative"), "POS"),
+    ),
+}
+
 
 class FakeScope:
     """MHO98方言のフェイク機器(SCPIコマンド1件単位で応答する)。"""
@@ -239,6 +327,24 @@ class FakeScope:
                 "impedance": "OMEG",
             }
             for n in range(1, 5)
+        }
+        # デコードバス(4本)。モード切替では各プロトコルの設定を消さない
+        # (実機でも設定は保持される)。
+        self.buses: dict[int, dict] = {
+            n: {
+                "mode": "PAR",
+                "display": False,
+                "format": "HEX",
+                "event": False,
+                "label": True,
+                "position": 0,
+                "thresholds": dict.fromkeys(_THRESHOLD_TYPES, 0.0),
+                **{
+                    protocol: {key: default for key, _, _, default in props}
+                    for protocol, props in _BUS_PROTOCOL_PROPS.items()
+                },
+            }
+            for n in range(1, BUS_COUNT + 1)
         }
         self.timebase: dict[str, float] = {"scale": 2.0e-4, "offset": 0.0}
         self.trigger: dict[str, object] = {
@@ -470,10 +576,86 @@ class FakeScope:
                 lambda m: _block(self._screenshot_png),
             ),
         ]
+        entries += self._bus_entries()
         return tuple(
             (re.compile(pattern, re.IGNORECASE), handler)
             for pattern, handler in entries
         )
+
+    def _bus_entries(self) -> list[tuple[str, Callable]]:
+        """デコードバスのディスパッチ表。
+
+        `:BUS5` や未実装のプロトコル配下(IIS / FLEXray / M1553 / CAN:FDBaud)は
+        どのパターンにも一致せず、実機同様に沈黙する。
+        """
+        bus = rf":?{_mn('BUS')}([1-{BUS_COUNT}])"
+        entries: list[tuple[str, Callable]] = [
+            (rf"{bus}:{_mn('MODE')}\?", lambda m: self._bus(m)["mode"].encode("ascii")),
+            (
+                rf"{bus}:{_mn('MODE')}\s+{_VALUE}",
+                lambda m: self._bus_set(m, "mode", self._enum(m.group(2), _BUS_MODES)),
+            ),
+            (
+                rf"{bus}:{_mn('FORMat')}\?",
+                lambda m: self._bus(m)["format"].encode("ascii"),
+            ),
+            (
+                rf"{bus}:{_mn('FORMat')}\s+{_VALUE}",
+                lambda m: self._bus_set(
+                    m, "format", self._enum(m.group(2), _BUS_FORMATS)
+                ),
+            ),
+            (
+                rf"{bus}:{_mn('LABel')}\?",
+                lambda m: b"1" if self._bus(m)["label"] else b"0",
+            ),
+            (
+                rf"{bus}:{_mn('POSition')}\?",
+                lambda m: str(self._bus(m)["position"]).encode("ascii"),
+            ),
+            (
+                rf"{bus}:{_mn('POSition')}\s+{_VALUE}",
+                lambda m: self._bus_set(m, "position", self._int(m.group(2))),
+            ),
+            (
+                rf"{bus}:{_mn('DISPlay')}\?",
+                lambda m: b"1" if self._bus(m)["display"] else b"0",
+            ),
+            (
+                rf"{bus}:{_mn('DISPlay')}\s+{_VALUE}",
+                lambda m: self._bus_set(m, "display", self._on_off(m.group(2))),
+            ),
+            (rf"{bus}:{_mn('EVENt')}\?", lambda m: b"1" if self._bus(m)["event"] else b"0"),
+            (rf"{bus}:{_mn('EVENt')}\s+{_VALUE}", self._bus_event_write),
+            (rf"{bus}:{_mn('DATA')}\?", self._bus_data),
+            (rf"{bus}:{_mn('THReshold')}\?\s+{_VALUE}", self._bus_threshold_query),
+            (
+                rf"{bus}:{_mn('THReshold')}\s+(\S+)\s*,\s*(\S+)",
+                self._bus_threshold_write,
+            ),
+        ]
+
+        for protocol, props in _BUS_PROTOCOL_PROPS.items():
+            head = rf"{bus}:{_mn(protocol)}"
+            for key, spec, kind, _default in props:
+                path = ":".join(_mn(part) for part in spec.split(":"))
+                entries.append(
+                    (
+                        rf"{head}:{path}\?",
+                        lambda m, p=protocol, k=key, t=kind: self._bus_prop_query(
+                            m, p, k, t
+                        ),
+                    )
+                )
+                entries.append(
+                    (
+                        rf"{head}:{path}\s+{_VALUE}",
+                        lambda m, p=protocol, k=key, t=kind: self._bus_prop_write(
+                            m, p, k, t, m.group(2)
+                        ),
+                    )
+                )
+        return entries
 
     # -- 内部: ハンドラ ---------------------------------------------------
 
@@ -562,6 +744,88 @@ class FakeScope:
 
     def _set_acquisition(self, state: str) -> None:
         self.acquisition = state
+        return None
+
+    # -- 内部: デコードバス -----------------------------------------------
+
+    def _bus(self, match: re.Match[str]) -> dict:
+        return self.buses[int(match.group(1))]
+
+    def _bus_set(self, match: re.Match[str], key: str, value: object) -> None:
+        self._bus(match)[key] = value
+        return None
+
+    def _on_off(self, token: str) -> bool:
+        value = _normalize(token, ("ON", "OFF"))
+        if value is None:
+            if token.strip() not in ("0", "1"):
+                raise self._silent(OUT_OF_RANGE)
+            value = "ON" if token.strip() == "1" else "OFF"
+        return value == "ON"
+
+    def _bus_event_write(self, match: re.Match[str]) -> None:
+        """イベントテーブルはバスの表示がONでなければ有効化できない(ガイド)。"""
+        enabled = self._on_off(match.group(2))
+        bus = self._bus(match)
+        if enabled and not bus["display"]:
+            raise self._silent(OUT_OF_RANGE)
+        bus["event"] = enabled
+        return None
+
+    def _threshold_type(self, token: str) -> str:
+        value = _normalize(token, _THRESHOLD_TYPES)
+        if value is None:
+            raise self._silent(OUT_OF_RANGE)
+        return value
+
+    def _bus_data(self, match: re.Match[str]) -> bytes:
+        """イベントテーブルをTMCブロックで返す。
+
+        表示・イベントテーブルが無効なときの実機挙動は未確認(要実機検証)。
+        ここでは空ペイロードを返す(ドライバは送信前に早期returnする)。
+        """
+        bus = self._bus(match)
+        if not (bus["display"] and bus["event"]):
+            return _block(b"")
+        mode = bus["mode"]
+        header, rows = _BUS_DATA_TABLES.get(mode, _BUS_DATA_DEFAULT)
+        lines = [_BUS_DATA_TOKENS.get(mode, mode), header, *rows]
+        return _block(("\n".join(lines) + "\n").encode("ascii"))
+
+    def _bus_threshold_query(self, match: re.Match[str]) -> bytes:
+        thresholds = self._bus(match)["thresholds"]
+        # 実機実測: `:BUS1:THReshold? TX` → `0.000000`(NR3ではなく小数6桁)
+        return f"{thresholds[self._threshold_type(match.group(2))]:.6f}".encode("ascii")
+
+    def _bus_threshold_write(self, match: re.Match[str]) -> None:
+        value = self._float(match.group(2))
+        self._bus(match)["thresholds"][self._threshold_type(match.group(3))] = value
+        return None
+
+    def _bus_prop_query(
+        self, match: re.Match[str], protocol: str, key: str, kind: object
+    ) -> bytes:
+        value = self._bus(match)[protocol][key]
+        if kind == "bool":
+            return b"1" if value else b"0"
+        if kind == "float":
+            return _nr3(float(value)).encode("ascii")
+        return str(value).encode("ascii")
+
+    def _bus_prop_write(
+        self, match: re.Match[str], protocol: str, key: str, kind: object, token: str
+    ) -> None:
+        if kind == "bool":
+            value: object = self._on_off(token)
+        elif kind == "int":
+            value = self._int(token)
+        elif kind == "float":
+            value = self._float(token)
+        elif kind == "src":
+            value = self._enum(token, _SOURCES)
+        else:
+            value = self._enum(token, kind)  # 列挙(仕様タプル)
+        self._bus(match)[protocol][key] = value
         return None
 
     def _measure_item(self, match: re.Match[str]) -> bytes:

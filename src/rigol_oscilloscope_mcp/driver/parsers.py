@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+import re
 
 from ..errors import ErrorCode, ScopeError
 
@@ -78,6 +79,35 @@ def parse_nr3(text: str) -> float:
         return float(text.strip())
     except ValueError:
         raise _scpi_error(text, f"cannot interpret numeric response: {text!r}") from None
+
+
+#: 工学接尾辞 → 秒(イベントテーブルの時刻列はNR3ではなく `-2.47us` の形)。
+#: マイクロは MICRO SIGN(U+00B5)と GREEK SMALL LETTER MU(U+03BC)の両方が流通する。
+_ENG_SUFFIXES = {
+    "": 1.0,
+    "s": 1.0,
+    "ms": 1e-3,
+    "us": 1e-6,
+    "µs": 1e-6,
+    "μs": 1e-6,
+    "ns": 1e-9,
+    "ps": 1e-12,
+}
+
+_ENG_RE = re.compile(r"^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*(\D*)$")
+
+
+def parse_eng_number(text: str) -> float:
+    """`-2.47us` → `-2.47e-06`(接尾辞なしはそのままの数値)。
+
+    `:BUS<n>:DATA?` のイベントテーブルはNR3ではなく単位付きの表記を返す
+    (MHO900/DHO800/900プログラミングガイドの例: `-2.47us` / `-2.444us`)。
+    """
+    match = _ENG_RE.match(text.strip()) if isinstance(text, str) else None
+    scale = _ENG_SUFFIXES.get(match.group(2).strip().lower()) if match else None
+    if scale is None:
+        raise _scpi_error(text, f"cannot interpret engineering number: {text!r}")
+    return float(match.group(1)) * scale
 
 
 def parse_bool(text: str) -> bool:
