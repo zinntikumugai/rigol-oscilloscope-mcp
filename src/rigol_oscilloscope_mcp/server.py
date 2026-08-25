@@ -267,7 +267,7 @@ def create_server(
         """Return the features available on the connected device (channel count, supported features).
 
         When the profile confidence is generic, unverified features are restricted.
-        options reports the installed licence options, and is null when this
+        options reports the installed license options, and is null when this
         model does not support option queries.
         """
         driver = manager.require_scope()
@@ -456,7 +456,9 @@ def create_server(
         data_format: str | None = None,
         settings: dict | None = None,
     ) -> dict:
-        """Configure a serial protocol decode bus (bus 1-4). Omitted items are left unchanged.
+        """Configure a serial protocol decode bus. Omitted items are left unchanged.
+
+        The bus count is model-dependent (get_capabilities decode_buses; 4 on MHO98).
 
         protocol is uart / i2c / spi / can / lin / parallel (options such as
         I2S, FlexRay, MIL-STD-1553 and CAN-FD are not supported).

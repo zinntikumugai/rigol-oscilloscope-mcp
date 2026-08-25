@@ -769,6 +769,33 @@ def test_installed_options_isolates_a_broken_type(response: bytes | None) -> Non
     assert len(options) == len(OPTION_TYPES)
 
 
+class _DisconnectingOptionScope(FakeScope):
+    """BND の照会で切断相当の失敗を起こすフェイク。"""
+
+    def handle(self, command: str) -> bytes | None:
+        if command.strip().upper().endswith(" BND"):
+            raise ScopeError(ErrorCode.DEVICE_DISCONNECTED, "link lost", {})
+        return super().handle(command)
+
+
+def test_installed_options_propagates_disconnection() -> None:
+    """切断はNoneに降格せず伝播する(全Noneをキャッシュして成功に見せない)。"""
+    driver = make_driver(_DisconnectingOptionScope())
+
+    with pytest.raises(ScopeError) as exc_info:
+        driver.installed_options()
+
+    assert exc_info.value.code == ErrorCode.DEVICE_DISCONNECTED
+
+
+def test_installed_options_cache_returns_a_copy(driver: ScopeDriver) -> None:
+    """返却dictを書き換えてもキャッシュへ波及しない。"""
+    first = driver.installed_options()
+    first["bundle"] = None
+
+    assert driver.installed_options()["bundle"] is True
+
+
 # --------------------------------------------------------------------------
 # シリアルデコード(docs/verification/mho98-unlicensed.md 3章)
 # --------------------------------------------------------------------------
@@ -787,6 +814,36 @@ UART_SETTINGS = {
     "stop_bits": 1,
     "tx_threshold_v": 1.65,
 }
+
+
+def test_event_table_with_enabled_false_is_rejected_before_sending(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """表示OFF指定のままイベントテーブルは有効化できない(送信前拒否)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "uart", enabled=False, event_table=True)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert bus_writes(scope) == []
+
+
+def test_event_table_requires_display_already_on_when_enabled_omitted(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """enabled省略時は現在の表示状態を確認し、OFFなら送信前に拒否する。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "uart", event_table=True)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert bus_writes(scope) == []
+
+
+def test_event_table_with_display_already_on_succeeds(driver: ScopeDriver) -> None:
+    driver.configure_decode(1, "uart", enabled=True)
+
+    applied = driver.configure_decode(1, "uart", event_table=True)
+
+    assert applied["event_table"] is True
 
 
 def test_configure_decode_uart_sends_mode_first(
