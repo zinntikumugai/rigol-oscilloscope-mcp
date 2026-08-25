@@ -569,3 +569,47 @@ def test_autoset(driver: ScopeDriver, scope: FakeScope) -> None:
 
     assert ":AUToscale" in scope.command_log
     assert scope.acquisition == "RUN"
+
+
+# --------------------------------------------------------------------------
+# スクリーンショットのタイムアウト猶予
+# --------------------------------------------------------------------------
+
+
+class RecordingTransport(FakeTransport):
+    """query_binary に渡る timeout_s を記録するだけの薄いラッパ。"""
+
+    def __init__(self, scope: FakeScope) -> None:
+        super().__init__(scope)
+        self.binary_timeouts: list[float | None] = []
+
+    def query_binary(self, command: str, timeout_s: float | None = None) -> bytes:
+        self.binary_timeouts.append(timeout_s)
+        return super().query_binary(command, timeout_s)
+
+
+def test_capture_screenshot_uses_long_timeout(scope: FakeScope) -> None:
+    """約97KBの転送が既定5秒で切れないよう、方言既定の30秒を渡す。"""
+    transport = RecordingTransport(scope)
+    transport.open()
+    driver = ScopeDriver(ScpiSession(transport), load_profile("mho98"))
+
+    driver.capture_screenshot_bytes()
+
+    assert transport.binary_timeouts == [30.0]
+
+
+def test_capture_screenshot_timeout_from_dialect(scope: FakeScope) -> None:
+    transport = RecordingTransport(scope)
+    transport.open()
+    profile = Profile(
+        name="x",
+        confidence="generic",
+        capabilities={"screenshot": True},
+        dialect={"screenshot_timeout_s": 5},
+    )
+    driver = ScopeDriver(ScpiSession(transport), profile)
+
+    driver.capture_screenshot_bytes()
+
+    assert transport.binary_timeouts == [5.0]

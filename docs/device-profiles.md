@@ -43,6 +43,7 @@
 | `waveform_download` | true | capture_waveform 可否 |
 | `screenshot` | true | capture_screenshot 可否 |
 | `measurements` | 対応測定項目リスト | measure の項目検証 |
+| `impedance_control` | true | `:CHANnel<n>:IMPedance` の可否(問い合わせ含む) |
 | `impedance_50ohm` | true | 50Ω設定の可否 |
 
 未対応機能のToolが呼ばれた場合、実機へコマンドを送らず `UNSUPPORTED_FEATURE` を返す(理由は4.2参照)。
@@ -54,6 +55,8 @@
 | `measurement_items` | 意味的測定名 → SCPIニモニック対応表 | `vavg` → `VAVG`(`VAVerage` は**不可**、無応答+`-222`) |
 | `screenshot_command` | スクリーンショット取得コマンドと引数形式 | `:DISPlay:DATA?`(引数なし、PNG返却) |
 | `screenshot_format` | 機器が返す画像形式 | PNG(実測 約97KB) |
+| `screenshot_timeout_s` | 画像転送に与えるタイムアウト猶予(秒)。未宣言ならコード既定 30 | 30(通常問い合わせの5秒では約97KBの転送が間に合わない) |
+| `bwlimit_on` | 帯域制限「入」に送る値。未宣言なら帯域制限の設定自体を `UNSUPPORTED_FEATURE` とする | `20M`(選択肢 OFF/20M/100M/250M は要実機確認) |
 | `waveform_preamble` | プリアンブル解釈規約 | `yreference=128`、`volts=(raw-yorigin-yref)*yinc`。**yorigin はプロファイルに持たない**(定数ではなくチャンネルoffsetの生カウント換算で決まる動的値。実測: offset −0.064 V のとき `yorigin=-9.0`)。変換には必ずライブの `:WAVeform:PREamble?` の値を使う |
 | `nr3_quirks` | 数値応答の非標準形式 | 指数部1桁(`1.000000E+1`)を許容すること |
 | `snaps_to_125` | scale設定値の1-2-5スナップ有無 | **false**(3 V/div、0.3 ms/div がそのまま適用される) |

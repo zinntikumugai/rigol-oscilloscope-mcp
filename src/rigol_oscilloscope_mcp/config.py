@@ -156,14 +156,14 @@ def _as_path_list(src: _Source, key: str) -> tuple[Path, ...]:
     if value is None:
         return ()
     if isinstance(value, str):
-        parts = [part for part in value.split(os.pathsep) if part.strip()]
+        parts = [part.strip() for part in value.split(os.pathsep) if part.strip()]
     elif isinstance(value, list):
         parts = []
         for item in value:
             if not isinstance(item, str):
                 raise _invalid(key, item, "パス文字列である必要があります")
             if item.strip():
-                parts.append(item)
+                parts.append(item.strip())
     else:
         raise _invalid(key, value, "パスのリストである必要があります")
     return tuple(_resolve_path(part) for part in parts)

@@ -56,11 +56,17 @@ def capture_waveform(
 ) -> dict:
     """波形を取得して物理量(V)へ変換する。
 
-    `max_points` が None なら設定値を使う。点数が INLINE_POINTS_LIMIT 以下なら
+    `max_points` が None なら設定値を使う。設定値 `waveform_max_points` は上限も
+    兼ね、超える指定は設定値へ丸めて `max_points_clamped: true` を返す。
+    点数が INLINE_POINTS_LIMIT 以下なら
     `samples_v` を直接返し、超える場合は一時ファイル(CSV)のパスを返す。
     一時ファイルの削除は呼び出し側の責務(サーバーは消さない)。
     """
     limit = config.waveform_max_points if max_points is None else max_points
+    # 設定値は既定であると同時に上限(Requirements 8.1)。超過はエラーにせず丸める。
+    clamped = limit > config.waveform_max_points
+    if clamped:
+        limit = config.waveform_max_points
     if limit <= 0:
         raise ScopeError(
             ErrorCode.INVALID_PARAMETER,
@@ -83,6 +89,8 @@ def capture_waveform(
         "effective_sample_rate_sa_per_s": 1.0 / preamble.xincrement,
         "note": NOTE,
     }
+    if clamped:
+        result["max_points_clamped"] = True
 
     if len(samples) <= INLINE_POINTS_LIMIT:
         result["samples_v"] = samples

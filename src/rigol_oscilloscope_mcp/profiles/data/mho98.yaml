@@ -21,6 +21,7 @@ dialect:
   scpi_port: 5555
   screenshot_command: ":DISPlay:DATA?"
   screenshot_format: png
+  screenshot_timeout_s: 30 # 約97KBの転送猶予(通常問い合わせの5秒では足りない)
   bwlimit_on: "20M" # 帯域制限「入」の値(選択肢 OFF/20M/100M/250M は要実機確認)
   measurement_items:
     frequency: FREQuency

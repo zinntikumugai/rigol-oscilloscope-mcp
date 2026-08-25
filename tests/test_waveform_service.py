@@ -231,3 +231,18 @@ def test_large_capture_result_is_json_serializable(
         assert json.loads(json.dumps(result))["data_format"] == "csv"
     finally:
         os.unlink(result["data_file"])
+
+
+def test_max_points_above_config_is_clamped(driver: ScopeDriver, scope: FakeScope) -> None:
+    """設定値は既定かつ上限(Requirements 8.1)。超過分は丸めてエラーにしない。"""
+    result = capture_waveform(driver, Config(waveform_max_points=200), "CH1", max_points=1200)
+
+    assert ":WAVeform:STOP 200" in scope.command_log
+    assert result["max_points_clamped"] is True
+
+
+def test_max_points_within_config_is_not_clamped(driver: ScopeDriver, scope: FakeScope) -> None:
+    result = capture_waveform(driver, Config(waveform_max_points=200), "CH1", max_points=150)
+
+    assert ":WAVeform:STOP 150" in scope.command_log
+    assert "max_points_clamped" not in result

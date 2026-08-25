@@ -54,6 +54,7 @@ COUPLINGS = ("DC", "AC", "GND")
 IMPEDANCES = ("1M", "50")
 
 DEFAULT_SCREENSHOT_COMMAND = ":DISPlay:DATA?"
+DEFAULT_SCREENSHOT_TIMEOUT_S = 30.0
 # 帯域制限の「入」に用いる値は機種依存(MHO98は OFF/20M/100M/250M)。
 # 既定値は置かない: プロファイルが宣言していない値を実機へ送らない。
 BWLIMIT_OFF = "OFF"
@@ -297,7 +298,9 @@ class ScopeDriver:
     def capture_screenshot_bytes(self) -> bytes:
         self._require("screenshot", "画面キャプチャ")
         command = self._dialect("screenshot_command", DEFAULT_SCREENSHOT_COMMAND)
-        return self.session.query_binary(command)
+        # 画像は約97KB。通常の問い合わせ用タイムアウトでは足りず接続破棄になる。
+        timeout_s = self.profile.dialect.get("screenshot_timeout_s", DEFAULT_SCREENSHOT_TIMEOUT_S)
+        return self.session.query_binary(command, timeout_s=float(timeout_s))
 
     def read_waveform(self, channel: str, max_points: int | None = None) -> WaveformRaw:
         self._require("waveform_download", "波形データの取得")

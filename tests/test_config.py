@@ -366,3 +366,23 @@ def test_no_pwd_key_keeps_cwd_default() -> None:
 def test_pwd_dir_is_in_allowed_dirs(tmp_path: Path) -> None:
     cfg = load_config(env={"PWD": str(tmp_path)})
     assert tmp_path.resolve() in cfg.allowed_dirs
+
+
+def test_env_allowed_dirs_entries_are_stripped(tmp_path: Path) -> None:
+    """区切り後の空白は除去してから解決する(cwd相対の誤ルートを作らない)。"""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    cfg = load_config(
+        env={"RIGOL_MCP_ALLOWED_DIRS": os.pathsep.join([f"{a}", f" {b} "])}
+    )
+    assert a.resolve() in cfg.allowed_dirs
+    assert b.resolve() in cfg.allowed_dirs
+
+
+def test_toml_allowed_dirs_entries_are_stripped(tmp_path: Path) -> None:
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    path = write_toml(tmp_path, f'allowed_dirs = ["{a}", "  {b}  "]\n')
+    cfg = load_config(env={}, config_file=path)
+    assert a.resolve() in cfg.allowed_dirs
+    assert b.resolve() in cfg.allowed_dirs
