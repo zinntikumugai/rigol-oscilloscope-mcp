@@ -31,8 +31,9 @@ def _issue(store: ConfirmTokenStore, **kwargs) -> ConfirmRequest:
     params = {
         "tool": "autoset",
         "args": {"timeout_s": 10.0},
-        "description": "Auto Setupを実行し、全チャネルの設定を自動調整します",
-        "risk": "現在のスケール・トリガ設定が失われます",
+        # 本番(service/control.py)がLLMへ流す文言と同じく英語で揃える
+        "description": "Run Auto Setup and automatically adjust all channel settings",
+        "risk": "The current scale and trigger settings will be lost",
     }
     params.update(kwargs)
     return store.issue(**params)
@@ -52,7 +53,7 @@ def test_issue_returns_confirm_request_fields() -> None:
     req = _issue(store)
     assert isinstance(req, ConfirmRequest)
     assert req.tool == "autoset"
-    assert req.description.startswith("Auto Setup")
+    assert req.description.startswith("Run Auto Setup")
     assert req.risk
     assert req.expires_in_s == 300.0
     assert isinstance(req.token, str) and len(req.token) >= 16

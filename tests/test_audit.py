@@ -79,6 +79,7 @@ def test_record_with_detail(tmp_path: Path) -> None:
 
 
 def test_non_ascii_is_not_escaped(tmp_path: Path) -> None:
+    """非ASCIIがそのまま保存される(ensure_ascii=False)ことの検証用に意図的な日本語。"""
     path = tmp_path / "audit.jsonl"
     AuditLogger(path).record("raw_scpi", {"note": "確認済み"}, None, None, "success")
     text = path.read_text(encoding="utf-8")
