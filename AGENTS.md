@@ -37,7 +37,7 @@ skills/ + .claude-plugin/ + .codex-plugin/ + .agents/(Claude/Codex両プラグ�
 ## 絶対に守るルール
 
 1. **実機のIPアドレス・シリアルをリポジトリ内のいかなるファイルにも書かない。** 実機は `RIGOL_TEST_ADDRESS` 環境変数でのみ渡す。`tests/test_ip_guard.py` がlintしており、コミット前に `git grep "172\.16\."` が空であることを確認する。例示IPが必要なら TEST-NET(`192.0.2.x`)を使う
-2. **プロファイルで確認されていないSCPIニモニックを実機に送らない。** 実機MHO98は未定義ヘッダのクエリ1発でSCPIサーバー全体が沈黙する(再接続でも回復せず、空行1本で回復 — `LanTransport.open()` が対策済み)。未対応機能は送信前に `UNSUPPORTED_FEATURE` を返す。新しいコマンドは機種プロファイル(`profiles/data/*.yaml`)への宣言とセットで追加する
+2. **プロファイルで確認されていないSCPIニモニックを実機に送らない。** 実機MHO98は未定義ヘッダのクエリ1発でSCPIサーバー全体が沈黙する(再接続でも回復せず、空行1本で回復 — `LanTransport.open()` が対策済み)。未対応機能は送信前に `UNSUPPORTED_FEATURE` を返す。新しいコマンドは機種プロファイル(`profiles/data/*.yaml`)への宣言とセットで追加する。`*OPT?` はRigolオシロ全シリーズで未定義ヘッダ(ガイド確認済み)。オプション照会は `:SYSTem:OPTion:STATus?` +ガイド記載トークンのみを使う(リスト外トークンでも沈黙する)
 3. **設定系は set → エラーキュー確認 → read-back を必須**とし、requested / applied の両値を返す(機器は1-2-5にスナップしない。yorigin等のプリアンブル値は動的なので必ずライブ値を使う)
 4. **実機で実行禁止**: 50Ω設定(FIFT)、autoset、factory reset(confirmフローはFakeScopeテストのみで担保)。実機writeテストは必ず「現在値取得→set→readback→finallyで復元」パターン
 5. **新Toolの追加手順**: `safety/classes.py` の `TOOL_CLASSES` へ分類を追記(未登録は起動失敗する)。RESTRICTED_WRITE / DANGEROUS_WRITE に分類したら `confirm_token` 引数が必須(起動時チェックが強制)。引数条件付きの昇格(configure_channelの50Ω等)は `service/control.py` の責務

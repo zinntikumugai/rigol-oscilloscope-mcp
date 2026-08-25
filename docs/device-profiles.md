@@ -61,6 +61,10 @@
 | `snaps_to_125` | scale設定値の1-2-5スナップ有無 | **false**(3 V/div、0.3 ms/div がそのまま適用される) |
 | `invalid_query_behavior` | 不正ニモニック送信時の挙動 | **無応答**(クライアント側タイムアウト)+ エラーキューに `-100,"Command err"` |
 | `error_queue_stale` | 接続時にエラーキューが前セッションの残留で汚染されうるか | true(接続時drain必須) |
+| `option_query` | 導入済みオプションの照会コマンド。**未宣言ならオプション照会自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) | `:SYSTem:OPTion:STATus?`(`:VALid?` は後方互換形。応答は `0` / `1`) |
+| `option_types` | 意味的なオプション名 → `<type>` トークン対応表。ここに載るトークンだけを送る | `bundle: BND` / `afg_50mhz: AFG50` / `memory_500mpts: RLU-05` ほか計11個 |
+
+`:SYSTem:OPTion:*` は**MHO900専用**でDHO800/900のガイドには存在しない。したがって `option_query` / `option_types` は `mho98.yaml` にのみ宣言し、`rigol-generic.yaml` には置かない — **キーの不在がそのままゲート**である(4.2の原則の適用例)。`*OPT?` はRigolオシロ全シリーズで未定義ヘッダのため使わない。`<type>` リスト外のトークン(実測: `AUTOA`)でもSCPIサーバーが沈黙するので、`option_types` に載っていないトークンを送ってはならない。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md)(未ライセンス状態でも `AFG50` / `RLU-05` は `1` を返す)。
 
 LAN raw socket ポート(既定 5555)はプロファイル外で扱う。プロファイルは接続後のIDN照合で確定するため、接続設定(connect の引数 / config)の担当([Requirements.md](Requirements.md) 4.3、[tools.md](tools.md) connect)。
 

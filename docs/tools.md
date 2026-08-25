@@ -82,6 +82,17 @@ API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。「500 mV」「20 us」等の�
 
 接続機器の利用可能機能を返す。プロファイルのcapabilities([device-profiles.md](device-profiles.md) 2.1)と実機Queryの組み合わせ。`profile`(名前・信頼度)を含み、`generic` の場合は未検証機能が制限されることを明示する。
 
+返却:
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `profile` | object | `name` / `confidence` |
+| `capabilities` | object | プロファイルのcapabilitiesブロックそのまま |
+| `options` | object \| null | 導入済みライセンスオプション(意味的な名前 → `true` / `false`)。判定できなかった項目は `null` |
+| `unsupported_vendor` | bool | 製造者がRIGOLでない場合 `true` |
+
+`options` はプロファイルが `option_query` / `option_types` を宣言する機種でのみ得られ、**非対応機種では `null`**(照会自体を実機へ送らない。[device-profiles.md](device-profiles.md) 2.2)。実機MHO98では未ライセンス状態でも `afg_50mhz` / `memory_500mpts` が `true`(工場出荷標準)である点に注意([verification/mho98-unlicensed.md](verification/mho98-unlicensed.md))。オプションの照会結果は接続中キャッシュされる(ライセンス適用は再起動を伴うため、接続中に変化しない)。
+
 ---
 
 ## 2. 状態取得

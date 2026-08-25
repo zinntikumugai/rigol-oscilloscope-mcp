@@ -163,6 +163,22 @@ for _spec, _value in _MEASUREMENTS:
     _MEASURE_VALUES[_short] = _value
     _MEASURE_VALUES[_long] = _value
 
+# オプション照会の `<type>`(MHO900プログラミングガイド 3.24.18/3.24.19)。
+# 実機はこのリスト外のトークンにも沈黙する(docs/verification/mho98-unlicensed.md)。
+_OPTION_TYPES = (
+    "BND",
+    "AFG100",
+    "AFG50",
+    "AUDIO",
+    "CAN-FD",
+    "FLEX",
+    "AERO",
+    "RLU-05",
+    "BWU03T05",
+    "BWU03T08",
+    "BWU05T08",
+)
+
 _COUPLINGS = ("DC", "AC", "GND")
 _BWLIMITS = ("OFF", "20M", "100M", "250M")
 _IMPEDANCES = ("OMEG", "FIFTy")
@@ -196,8 +212,15 @@ class FakeScope:
         self,
         stale_error_queue: bool = False,
         snap_to_125: bool = False,
+        options: dict[str, bool] | None = None,
     ) -> None:
         self.snap_to_125 = snap_to_125
+        # オプションのライセンス状態(`<type>` トークン → 導入済みか)。
+        # 既定は全導入済み。明示した場合、挙げなかったトークンは未導入とする。
+        supplied = {t.strip().upper(): bool(v) for t, v in (options or {}).items()}
+        self.options: dict[str, bool] = {
+            token: supplied.get(token, options is None) for token in _OPTION_TYPES
+        }
         self.error_queue: deque[str] = deque()
         if stale_error_queue:
             # 前セッションの残留(phase0実測: 接続直後に -222 が残っていた)
@@ -284,6 +307,13 @@ class FakeScope:
         entries: list[tuple[str, Callable]] = [
             (r"\*IDN\?", lambda m: IDN.encode("ascii")),
             (rf":?{_mn('SYSTem')}:{_mn('ERRor')}\?", self._system_error),
+            # オプション照会。`:STATus?`(推奨)と `:VALid?`(後方互換)は同一応答。
+            # `*OPT?` は実装しない(Rigol全シリーズで未定義ヘッダ = 沈黙)。
+            (
+                rf":?{_mn('SYSTem')}:{_mn('OPTion')}:"
+                rf"(?:{_mn('STATus')}|{_mn('VALid')})\?\s+{_VALUE}",
+                self._option_status,
+            ),
         ]
 
         for key, spec in _CHANNEL_PROPS:
@@ -450,6 +480,13 @@ class FakeScope:
     def _system_error(self, match: re.Match[str]) -> bytes:
         error = self.error_queue.popleft() if self.error_queue else NO_ERROR
         return error.encode("ascii")
+
+    def _option_status(self, match: re.Match[str]) -> bytes:
+        installed = self.options.get(match.group(1).strip().upper())
+        if installed is None:
+            # 実機実測: リスト外トークン(例 AUTOA)でもSCPIサーバーが沈黙する
+            raise self._silent(OUT_OF_RANGE)
+        return b"1" if installed else b"0"
 
     def _channel_token(self, token: str) -> str:
         """`CHANnel2` / `chan2` → `CHAN2`(短形式)。"""

@@ -32,6 +32,23 @@ dialect:
     duty: PDUTy # 返却単位は比率(0.5002 = 50.02%)
     rise_time: RTIMe
     fall_time: FTIMe
+  # オプション照会(MHO900専用。DHO800/900には存在しない)。実機検証:
+  # docs/verification/mho98-unlicensed.md。*OPT? はRigol全シリーズで未定義
+  # ヘッダ(送るとSCPIサーバーが沈黙)なので絶対に使わない。<type>リスト外の
+  # トークンも同様に沈黙する — 下記11個以外を送らないこと
+  option_query: ":SYSTem:OPTion:STATus?"
+  option_types:
+    bundle: BND
+    afg_100mhz: AFG100
+    afg_50mhz: AFG50
+    audio_i2s: AUDio
+    can_fd: CAN-FD
+    flexray: FLEX
+    mil_std_1553: AERO
+    memory_500mpts: RLU-05
+    bandwidth_350_to_500: BWU03T05
+    bandwidth_350_to_800: BWU03T08
+    bandwidth_500_to_800: BWU05T08
   waveform_preamble:
     # yorigin はここに持たない。定数ではなく設定依存の動的値であり、
     # チャンネルoffsetの生カウント換算(= offset / yincrement)で決まる

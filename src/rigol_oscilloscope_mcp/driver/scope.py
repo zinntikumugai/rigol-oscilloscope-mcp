@@ -156,6 +156,7 @@ class ScopeDriver:
     def __init__(self, session: ScpiSession, profile: Profile) -> None:
         self.session = session
         self.profile = profile
+        self._options: dict[str, bool | None] | None = None
 
     @property
     def analog_channels(self) -> int:
@@ -220,6 +221,40 @@ class ScopeDriver:
         return IdnInfo(
             manufacturer=parts[0], model=parts[1], serial=parts[2], firmware=parts[3]
         )
+
+    def installed_options(self) -> dict[str, bool | None]:
+        """導入済みオプションを意味的な名前で返す(不明な項目は None)。
+
+        プロファイルが `option_query` / `option_types` を宣言していない機種では
+        1コマンドも送らず UNSUPPORTED_FEATURE(`:SYSTem:OPTion:*` はMHO900専用で、
+        未定義ヘッダを送るとSCPIサーバーが沈黙するため)。
+
+        結果はインスタンスにキャッシュする。ライセンスは接続中に変わらない
+        (適用は再起動を伴う)。接続ごとに新しいdriverが作られるので、再接続が
+        そのままキャッシュ無効化になる。
+        """
+        if self._options is not None:
+            return self._options
+
+        query = self._required_dialect("option_query", "querying installed options")
+        types = self.profile.dialect.get("option_types")
+        if not isinstance(types, dict) or not types:
+            raise _unsupported(
+                "this model's profile does not declare a value to use for "
+                "querying installed options",
+                {"dialect": "option_types", "profile": self.profile.name},
+            )
+
+        options: dict[str, bool | None] = {}
+        for name, token in types.items():
+            try:
+                response = self.session.query(f"{query} {token}").strip()
+            except ScopeError:
+                # 1件の失敗で他の結果まで失わない(不明は None)
+                response = ""
+            options[name] = {"1": True, "0": False}.get(response)
+        self._options = options
+        return options
 
     # -- 取得(READ_ONLY)-------------------------------------------------
 
