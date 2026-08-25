@@ -333,6 +333,24 @@ def create_server(
         )
 
     @_register
+    def analyze_waveform(
+        channel: str = "CH1",
+        analyses: list[str] | None = None,
+        max_points: int | None = None,
+    ) -> dict:
+        """Analyze a waveform on the host and return only the summary.
+
+        The raw samples are never returned; use capture_waveform when the data
+        itself is needed. analyses is a subset of ["stats", "fft"] (all of them
+        when omitted). stats gives min/max/mean/rms/std/vpp in volts; fft gives
+        the dominant frequency and the strongest peaks. Frequency accuracy is
+        limited by frequency_resolution_hz, so do not read more digits than that.
+        """
+        return service.analyze_waveform(
+            manager.require_scope(), resolved_config, channel, analyses, max_points
+        )
+
+    @_register
     def capture_screenshot(
         path: str | None = None,
         format: str | None = None,

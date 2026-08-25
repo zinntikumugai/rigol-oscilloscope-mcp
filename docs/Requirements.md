@@ -440,7 +440,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 **Safety**
 
 - [x] 50Ωへの変更・Auto Setup が confirmトークンなしで実行されない(tests/test_server_phase2.py::test_50ohm_requires_confirmation_then_succeeds / ::test_autoset_requires_confirmation_then_returns_state / ::test_confirm_token_is_bound_to_the_arguments、FakeScope。**どちらも危険操作のため実機へは意図的に送っていない**)
-- [x] `raw_scpi` がデフォルト無効(tests/test_config.py::test_defaults_with_empty_env で `raw_scpi is False`、tests/test_server_phase2.py::test_list_tools_exposes_phase1_and_phase2 で公開Tool 19個に含まれないことを検証)
+- [x] `raw_scpi` がデフォルト無効(tests/test_config.py::test_defaults_with_empty_env で `raw_scpi is False`、tests/test_server_phase2.py::test_list_tools_exposes_every_phase で公開Tool 20個に含まれないことを検証)
 - [x] 書き込み操作が監査ログに Before / After 付きで記録される(tests/device/test_write.py::test_audit_log_records_every_write で実機の書き込み40行を検証、tests/test_server_phase2.py::test_write_operations_are_audited、FakeScope)
 
 **AI連携**

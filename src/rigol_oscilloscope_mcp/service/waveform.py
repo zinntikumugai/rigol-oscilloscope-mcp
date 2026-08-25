@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import os
 import tempfile
+from typing import NamedTuple
 
 from ..config import Config
-from ..driver.scope import ScopeDriver, normalize_channel
+from ..driver.scope import ScopeDriver, WaveformPreamble, normalize_channel
 from ..errors import ErrorCode, ScopeError
 
 # これ以下の点数はレスポンスにサンプル配列を直接含める
@@ -42,19 +43,24 @@ def _write_csv(times: list[float], volts: list[float]) -> str:
     return path
 
 
-def capture_waveform(
+class SampleRead(NamedTuple):
+    """`read_samples()` の返却(電圧列と、メタデータ組み立てに要る素材)。"""
+
+    samples: list[float]
+    preamble: WaveformPreamble
+    clamped: bool
+
+
+def read_samples(
     driver: ScopeDriver,
     config: Config,
     channel: str,
     max_points: int | None = None,
-) -> dict:
-    """波形を取得して物理量(V)へ変換する。
+) -> SampleRead:
+    """生波形を読んで物理量(V)へ変換する(capture_waveform / analyze_waveform 共通)。
 
     `max_points` が None なら設定値を使う。設定値 `waveform_max_points` は上限も
-    兼ね、超える指定は設定値へ丸めて `max_points_clamped: true` を返す。
-    点数が INLINE_POINTS_LIMIT 以下なら
-    `samples_v` を直接返し、超える場合は一時ファイル(CSV)のパスを返す。
-    一時ファイルの削除は呼び出し側の責務(サーバーは消さない)。
+    兼ね、超える指定は設定値へ丸めて `clamped=True` を返す。
     """
     limit = config.waveform_max_points if max_points is None else max_points
     # 設定値は既定であると同時に上限(Requirements 8.1)。超過はエラーにせず丸める。
@@ -74,6 +80,22 @@ def capture_waveform(
         (value - preamble.yorigin - preamble.yreference) * preamble.yincrement
         for value in raw.data
     ]
+    return SampleRead(samples, preamble, clamped)
+
+
+def capture_waveform(
+    driver: ScopeDriver,
+    config: Config,
+    channel: str,
+    max_points: int | None = None,
+) -> dict:
+    """波形を取得して物理量(V)へ変換する。
+
+    点数が INLINE_POINTS_LIMIT 以下なら `samples_v` を直接返し、超える場合は
+    一時ファイル(CSV)のパスを返す。
+    一時ファイルの削除は呼び出し側の責務(サーバーは消さない)。
+    """
+    samples, preamble, clamped = read_samples(driver, config, channel, max_points)
 
     result = {
         "channel": normalize_channel(channel),
