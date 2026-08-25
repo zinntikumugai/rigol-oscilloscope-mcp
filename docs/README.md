@@ -9,10 +9,11 @@
 | [device-profiles.md](device-profiles.md) | 機種プロファイル仕様。3層解決(verified / family / generic)と、検証済みMHO98プロファイル(quirk集) | 規範(詳細) |
 | [roadmap.md](roadmap.md) | 今後の対応予定(MVP対象外)。Phase 3/4の機能、Claudeプラグイン化、方針未定の検討事項 | 予定・記録 |
 | [verification/mho98-phase0.md](verification/mho98-phase0.md) | Phase 0 実機SCPI検証結果(MHO98, LAN :5555)。各文書が引用する実測エビデンス | エビデンス |
+| [verification/mho98-mvp.md](verification/mho98-mvp.md) | MVP(Phase 1 + 2)実機検証結果(MHO98)。read-only 9件 + write 9件のPASS記録と、新たに判明した実機仕様 | エビデンス |
 
 ## 読む順序の目安
 
 1. **全体像を知りたい** → [Requirements.md](Requirements.md) の1〜3章(目的・コンセプト・対象範囲)
 2. **Toolを設計・実装する** → [tools.md](tools.md) と [Requirements.md](Requirements.md) 6章(安全要件)・7章(動作原則)
-3. **機種対応を追加する** → [device-profiles.md](device-profiles.md) と [verification/mho98-phase0.md](verification/mho98-phase0.md)
+3. **機種対応を追加する** → [device-profiles.md](device-profiles.md) と [verification/mho98-phase0.md](verification/mho98-phase0.md) / [verification/mho98-mvp.md](verification/mho98-mvp.md)
 4. **MVP後の計画を知りたい** → [roadmap.md](roadmap.md)

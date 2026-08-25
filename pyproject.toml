@@ -2,7 +2,7 @@
 name = "rigol-oscilloscope-mcp"
 version = "0.1.0"
 description = "Rigol製オシロスコープをSCPI経由で操作するMCPサーバー"
-readme = "docs/README.md"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "mcp>=1,<2",

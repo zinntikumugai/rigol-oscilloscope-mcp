@@ -70,18 +70,14 @@ DISCONNECTED_STATUS = ConnectionStatus(
 def _default_transport_factory(
     transport: str, address: str, port: int, timeout_s: float
 ) -> Transport:
-    """既定のトランスポート生成。USBは遅延importで任意依存に留める。"""
+    """既定のトランスポート生成。USBは遅延importでpyvisaのロードを接続時まで遅らせる。"""
     if transport == "lan":
         return LanTransport(address, port, timeout_s)
     if transport == "usb":
-        try:
-            from ..transport.usb import UsbTransport  # noqa: PLC0415
-        except ImportError as exc:
-            raise ScopeError(
-                ErrorCode.UNSUPPORTED_FEATURE,
-                "USB transport未実装",
-                {"transport": transport, "address": address},
-            ) from exc
+        # pyvisa自体はモジュール内で遅延importしており、欠けていれば
+        # UsbTransport.open() が UNSUPPORTED_FEATURE を報告する。
+        from ..transport.usb import UsbTransport  # noqa: PLC0415
+
         return UsbTransport(address, timeout_s)
     raise ScopeError(
         ErrorCode.INVALID_PARAMETER,
