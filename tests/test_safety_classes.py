@@ -9,7 +9,7 @@ from rigol_oscilloscope_mcp.safety.classes import (
     classify,
 )
 
-# docs/tools.md 8章のサマリ表(Phase 1/2 + 開発用 raw_scpi)
+# docs/tools.md 8章のサマリ表(Phase 1/2/4 + 開発用 raw_scpi)
 EXPECTED = {
     "connect": "SAFE_WRITE",
     "disconnect": "SAFE_WRITE",
@@ -22,6 +22,7 @@ EXPECTED = {
     "get_acquisition_state": "READ_ONLY",
     "measure": "READ_ONLY",
     "capture_waveform": "READ_ONLY",
+    "analyze_waveform": "READ_ONLY",
     "capture_screenshot": "READ_ONLY",
     "configure_channel": "SAFE_WRITE",
     "configure_timebase": "SAFE_WRITE",

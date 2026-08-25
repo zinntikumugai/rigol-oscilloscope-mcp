@@ -13,7 +13,7 @@ GUI自動操作は使わない。
 ## 特徴
 
 - **会話ベースの接続** — 接続先はユーザーが会話で指示するのが基本(`connect(address="...")`)。環境変数のデフォルトは任意のフォールバック
-- **19個のMCP Tool** — 接続 / 識別 / 状態取得 / 測定 / 波形 / スクリーンショット / チャンネル・タイムベース・トリガ設定 / Run・Stop・Single・Autoset。SCPI文字列をLLMに書かせず、意味的Toolのみを公開する
+- **20個のMCP Tool** — 接続 / 識別 / 状態取得 / 測定 / 波形 / 解析(統計・FFT)/ スクリーンショット / チャンネル・タイムベース・トリガ設定 / Run・Stop・Single・Autoset。SCPI文字列をLLMに書かせず、意味的Toolのみを公開する
 - **4クラスの安全ポリシー + confirmトークン** — 全操作を READ_ONLY / SAFE_WRITE / RESTRICTED_WRITE / DANGEROUS_WRITE に分類。50Ω入力やAuto SetupはホストUI非依存の2段階確認(confirmトークン)を必須とする
 - **スクリーンショット保存** — png / jpg / bmp / webp で指定パスへ保存し、画像そのものもLLMへ返す(書き込み先は許可ルートで制限)
 - **機種プロファイル** — SCPI方言・機能有無・パラメータ範囲を同梱YAMLで宣言し、モデル完全一致 → ファミリ → 汎用Rigol の3層で解決する

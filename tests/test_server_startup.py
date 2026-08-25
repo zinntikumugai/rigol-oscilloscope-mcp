@@ -18,7 +18,7 @@ from rigol_oscilloscope_mcp.config import Config
 from rigol_oscilloscope_mcp.errors import ErrorCode, ScopeError
 from rigol_oscilloscope_mcp.server import PACKAGE_LOGGER, _checked_tool, create_server
 
-EXPECTED_TOOL_COUNT = 19
+EXPECTED_TOOL_COUNT = 20
 
 
 @pytest.fixture
