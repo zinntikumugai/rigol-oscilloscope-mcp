@@ -644,6 +644,23 @@ class ScopeDriver:
         self._reject_all_sources_off(name, items, settings)
 
         prefix = f":BUS{number}"
+        # イベントテーブルはバス表示が先に有効であることが前提(ガイドの制約。
+        # 表示OFFのまま :EVENt ON を送ると実機が沈黙し得るため、送信前に弾く)
+        if event_table:
+            if enabled is False:
+                raise _invalid(
+                    "event_table=true requires the decode bus display to be on; "
+                    "call with enabled=true",
+                    {"bus": number, "enabled": enabled},
+                )
+            if enabled is None and DISPLAY_ITEM.from_scpi(
+                self.session.query(f"{prefix}{DISPLAY_ITEM.path}?")
+            ) is not True:
+                raise _invalid(
+                    "event_table=true requires the decode bus display to be on, "
+                    "but it is currently off; call with enabled=true",
+                    {"bus": number},
+                )
         mnemonic = protocols[name]
         mode_to, mode_from = profile_enum(tuple(protocols.items()))
 
