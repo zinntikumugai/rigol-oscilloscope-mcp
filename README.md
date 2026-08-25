@@ -25,10 +25,10 @@ GUI自動操作は使わない。
 GitHubリポジトリからの `uvx` 起動を標準とする(PyPI公開はしていない)。
 
 ```bash
-uvx --from git+https://github.com/<owner>/rigol-oscilloscope-mcp rigol-oscilloscope-mcp
+uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp rigol-oscilloscope-mcp
 ```
 
-`<owner>` は実際のリポジトリ所有者に読み替えること。タグ付きリリースには `@<tag>` を付けてバージョンを固定できる。
+タグ付きリリースには `@<tag>` を付けてバージョンを固定できる。
 
 ### Claude Code(`.mcp.json` または `claude mcp add`)
 
@@ -37,7 +37,7 @@ uvx --from git+https://github.com/<owner>/rigol-oscilloscope-mcp rigol-oscillosc
   "mcpServers": {
     "rigol-oscilloscope": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/<owner>/rigol-oscilloscope-mcp", "rigol-oscilloscope-mcp"],
+      "args": ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp", "rigol-oscilloscope-mcp"],
       "env": { "RIGOL_MCP_SCREENSHOT_DIR": "~/scope-captures" }
     }
   }
@@ -49,7 +49,7 @@ uvx --from git+https://github.com/<owner>/rigol-oscilloscope-mcp rigol-oscillosc
 ```toml
 [mcp_servers.rigol-oscilloscope]
 command = "uvx"
-args = ["--from", "git+https://github.com/<owner>/rigol-oscilloscope-mcp", "rigol-oscilloscope-mcp"]
+args = ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp", "rigol-oscilloscope-mcp"]
 
 [mcp_servers.rigol-oscilloscope.env]
 RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
@@ -82,7 +82,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 ホスト側のMCP設定や会話フローを、オシロスコープを用意せずに確認できる。
 
 ```bash
-RIGOL_MCP_FAKE=1 uvx --from git+https://github.com/<owner>/rigol-oscilloscope-mcp rigol-oscilloscope-mcp
+RIGOL_MCP_FAKE=1 uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp rigol-oscilloscope-mcp
 ```
 
 ## 開発
