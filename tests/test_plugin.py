@@ -40,6 +40,18 @@ def test_codex_manifest_is_valid():
     assert mcp_path.is_file()
 
 
+def test_claude_marketplace_references_the_plugin():
+    """Claude Codeの /plugin install はマーケットプレイス必須(実機で確認済み)。
+
+    `@` 以降はマーケットプレイスの name を指すため、README記載のインストール
+    手順(rigol-oscilloscope@rigol-oscilloscope-mcp)と一致することを固定する。
+    """
+    data = json.loads((REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+    assert data["name"] == "rigol-oscilloscope-mcp"
+    entries = {p["name"]: p for p in data["plugins"]}
+    assert entries["rigol-oscilloscope"]["source"] == "./"
+
+
 def test_codex_marketplace_references_the_plugin():
     data = json.loads(CODEX_MARKETPLACE.read_text(encoding="utf-8"))
     entries = {p["name"] for p in data["plugins"]}
