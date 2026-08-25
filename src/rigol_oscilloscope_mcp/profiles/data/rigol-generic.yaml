@@ -11,9 +11,7 @@ capabilities:
   measurements: [frequency, period, vpp, vmax, vmin]
 
 dialect:
-  scpi_port: 5555
   screenshot_command: ":DISPlay:DATA?"
-  screenshot_format: png
   measurement_items:
     frequency: FREQuency
     period: PERiod

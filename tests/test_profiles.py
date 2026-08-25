@@ -66,7 +66,7 @@ def test_load_generic_profile() -> None:
     assert p.name == GENERIC
     assert p.confidence == "generic"
     assert p.capabilities["analog_channels"] == 4
-    assert p.dialect["scpi_port"] == 5555
+    assert p.dialect["screenshot_command"] == ":DISPlay:DATA?"
     assert p.limits == {}
     assert sorted(p.dialect["measurement_items"]) == [
         "frequency",
@@ -87,7 +87,6 @@ def test_load_mho98_profile_fields() -> None:
     assert p.capabilities["protocol_decode"] is True
     assert p.capabilities["impedance_50ohm"] is True
     assert p.dialect["screenshot_command"] == ":DISPlay:DATA?"
-    assert p.dialect["screenshot_format"] == "png"
     # yorigin は定数ではなく設定依存の動的値のためプロファイルには持たせない
     # (実測: offset -0.064 V で yorigin=-9.0)。ライブのプリアンブルを使うこと。
     assert p.dialect["waveform_preamble"] == {"yreference": 128}
@@ -207,7 +206,7 @@ capabilities:
   analog_channels: 2
   screenshot: true
 dialect:
-  scpi_port: 5555
+  screenshot_command: ":DISPlay:DATA?"
   measurement_items:
     frequency: FREQuency
 limits:
@@ -238,7 +237,7 @@ limits:
     assert child.capabilities["analog_channels"] == 4
     # 親のキーは残る
     assert child.capabilities["screenshot"] is True
-    assert child.dialect["scpi_port"] == 5555
+    assert child.dialect["screenshot_command"] == ":DISPlay:DATA?"
     # dictは再帰マージ
     assert child.dialect["measurement_items"] == {
         "frequency": "FREQuency",

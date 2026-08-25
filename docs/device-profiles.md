@@ -54,7 +54,6 @@
 |---|---|---|
 | `measurement_items` | 意味的測定名 → SCPIニモニック対応表 | `vavg` → `VAVG`(`VAVerage` は**不可**、無応答+`-222`) |
 | `screenshot_command` | スクリーンショット取得コマンドと引数形式 | `:DISPlay:DATA?`(引数なし、PNG返却) |
-| `screenshot_format` | 機器が返す画像形式 | PNG(実測 約97KB) |
 | `screenshot_timeout_s` | 画像転送に与えるタイムアウト猶予(秒)。未宣言ならコード既定 30 | 30(通常問い合わせの5秒では約97KBの転送が間に合わない) |
 | `bwlimit_on` | 帯域制限「入」に送る値。未宣言なら帯域制限の設定自体を `UNSUPPORTED_FEATURE` とする | `20M`(選択肢 OFF/20M/100M/250M は要実機確認) |
 | `waveform_preamble` | プリアンブル解釈規約 | `yreference=128`、`volts=(raw-yorigin-yref)*yinc`。**yorigin はプロファイルに持たない**(定数ではなくチャンネルoffsetの生カウント換算で決まる動的値。実測: offset −0.064 V のとき `yorigin=-9.0`)。変換には必ずライブの `:WAVeform:PREamble?` の値を使う |
@@ -62,7 +61,8 @@
 | `snaps_to_125` | scale設定値の1-2-5スナップ有無 | **false**(3 V/div、0.3 ms/div がそのまま適用される) |
 | `invalid_query_behavior` | 不正ニモニック送信時の挙動 | **無応答**(クライアント側タイムアウト)+ エラーキューに `-100,"Command err"` |
 | `error_queue_stale` | 接続時にエラーキューが前セッションの残留で汚染されうるか | true(接続時drain必須) |
-| `scpi_port` | LAN raw socket ポート | 5555 |
+
+LAN raw socket ポート(既定 5555)はプロファイル外で扱う。プロファイルは接続後のIDN照合で確定するため、接続設定(connect の引数 / config)の担当([Requirements.md](Requirements.md) 4.3、[tools.md](tools.md) connect)。
 
 ### 2.3 limits — パラメータ範囲
 
@@ -100,9 +100,7 @@ capabilities:
     [frequency, period, vpp, vmax, vmin, vavg, rms, duty, rise_time, fall_time]
 
 dialect:
-  scpi_port: 5555
   screenshot_command: ":DISPlay:DATA?"
-  screenshot_format: png
   measurement_items:
     frequency: FREQuency
     period: PERiod
