@@ -39,7 +39,8 @@
 | `digital_channels` | 16 | 将来のLA対応 |
 | `afg_channels` | 2 | 将来のAFG対応 |
 | `bandwidth_hz` | 実機依存 | 参考情報 |
-| `protocol_decode` | true | 将来のデコード対応 |
+| `protocol_decode` | true | デコード対応(`configure_decode` の可否) |
+| `decode_buses` | 4 | デコードバス本数(`bus` 引数の検証。未宣言ならデコード自体を行わない) |
 | `waveform_download` | true | capture_waveform 可否 |
 | `screenshot` | true | capture_screenshot 可否 |
 | `measurements` | 対応測定項目リスト | measure の項目検証 |
@@ -63,8 +64,14 @@
 | `error_queue_stale` | 接続時にエラーキューが前セッションの残留で汚染されうるか | true(接続時drain必須) |
 | `option_query` | 導入済みオプションの照会コマンド。**未宣言ならオプション照会自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) | `:SYSTem:OPTion:STATus?`(`:VALid?` は後方互換形。応答は `0` / `1`) |
 | `option_types` | 意味的なオプション名 → `<type>` トークン対応表。ここに載るトークンだけを送る | `bundle: BND` / `afg_50mhz: AFG50` / `memory_500mpts: RLU-05` ほか計11個 |
+| `decode_protocols` | 意味的プロトコル名 → `:BUS<n>:MODE` の値。**未宣言なら `configure_decode` 自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) | `uart: RS232` / `i2c: IIC` / `spi: SPI` / `can: CAN` / `lin: LIN` / `parallel: PARallel` の6種 |
+| `decode_formats` | デコード表示形式の対応表(`:BUS<n>:FORMat`) | `hex: HEX` / `ascii: ASCii` / `dec: DEC` / `bin: BIN` |
 
 `:SYSTem:OPTion:*` は**MHO900専用**でDHO800/900のガイドには存在しない。したがって `option_query` / `option_types` は `mho98.yaml` にのみ宣言し、`rigol-generic.yaml` には置かない — **キーの不在がそのままゲート**である(4.2の原則の適用例)。`*OPT?` はRigolオシロ全シリーズで未定義ヘッダのため使わない。`<type>` リスト外のトークン(実測: `AUTOA`)でもSCPIサーバーが沈黙するので、`option_types` に載っていないトークンを送ってはならない。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md)(未ライセンス状態でも `AFG50` / `RLU-05` は `1` を返す)。
+
+`decode_protocols` に載せるのは**標準搭載の6種のみ**。I2S(`IIS`)/ FlexRay / MIL-STD-1553(`M1553`)/ CAN-FD(`:BUS<n>:CAN:FDBaud`)はライセンスオプション必須のため意図的に載せず、**不在がそのままゲート**になる(未宣言のプロトコルは送信前に `UNSUPPORTED_FEATURE`)。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 3章(未ライセンス状態でも RS232/IIC/SPI/CAN/LIN/PAR は全て正常応答)。
+
+なお `:BUS` のコア(`:MODE` / `:DISPlay` / `:FORMat` / `:THReshold` と主要プロトコル配下)は、プログラミングガイドを比較する限り **DHO800/900 とMHO900で共通**である。ただし現時点で実機検証済みなのはMHO98だけなので `mho98.yaml` にのみ宣言する。DHO系の実機が1台でも検証できたら、共通部分をファミリプロファイルへ引き上げる(1章の3層解決)。
 
 LAN raw socket ポート(既定 5555)はプロファイル外で扱う。プロファイルは接続後のIDN照合で確定するため、接続設定(connect の引数 / config)の担当([Requirements.md](Requirements.md) 4.3、[tools.md](tools.md) connect)。
 

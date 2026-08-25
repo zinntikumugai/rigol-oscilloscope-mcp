@@ -65,6 +65,12 @@ TIMEBASE_POSITION_S = 0.001
 #: 機器が受理しないかもしれない中間値(丸め挙動の観測用。assertは緩い)
 ODD_SCALE_V_PER_DIV = 3.3
 
+#: デコード検証に使うバスと設定値(BUS1。設定は表示・解析層のみに効く)
+DECODE_BUS = 1
+DECODE_BAUD_BPS = 115200
+#: 標準搭載プロトコル(オプション必須のものはプロファイルに無い)
+DECODE_PROTOCOLS = ("uart", "i2c", "spi", "can", "lin", "parallel")
+
 #: `:SINGle` 直後に許容するトリガ状態(実測: WAIT。すぐトリガすると TD を経て STOP)
 SINGLE_STATUSES = ("WAIT", "TD")
 
@@ -619,7 +625,93 @@ def test_odd_scale_value_is_observed(
     assert applied > 0
 
 
-# -- 9. 監査ログ(最後に実行し、それまでの全操作を検証)---------------------
+# -- 9. シリアルデコード(tools.md 6章)-------------------------------------
+
+
+@pytest.fixture
+def decode_before(
+    request: pytest.FixtureRequest, driver: ScopeDriver
+) -> Iterator[dict]:
+    """BUS1の現在設定を丸ごと控え、teardownで必ず書き戻す。
+
+    デコード設定は表示・解析層のみで取り込み設定を変えないが、それでも
+    利用者の設定であることに変わりはないので他のwrite検証と同じ規律で扱う。
+    プロトコルがオプション必須(未対応)の場合はテスト自体をskipする。
+    """
+    before = driver.get_decode_config(DECODE_BUS)
+    tag = request.node.name
+    _report(f"[before:{tag}] bus{DECODE_BUS}={before}")
+    if before["protocol"] not in DECODE_PROTOCOLS:
+        pytest.skip(f"BUS{DECODE_BUS} は未対応プロトコル({before['protocol']})")
+    try:
+        yield before
+    finally:
+        failure: Exception | None = None
+        try:
+            driver.configure_decode(
+                DECODE_BUS,
+                before["protocol"],
+                enabled=before["enabled"],
+                event_table=before["event_table"],
+                data_format=before["data_format"],
+                settings=before["settings"],
+            )
+        except Exception as exc:  # 復元は最後まで試みる
+            failure = exc
+
+        after = driver.get_decode_config(DECODE_BUS)
+        drift = _diff(before, after)
+        _report(f"[restore:{tag}] bus{DECODE_BUS} 復元後={after}")
+        if drift:
+            _report(f"[restore:{tag}] **復元漏れ**: {drift}")
+        if failure is not None:
+            _report(f"[restore:{tag}] **復元コマンド失敗**: {failure!r}")
+        assert failure is None, f"BUS{DECODE_BUS} の復元に失敗: {failure!r}"
+        assert not drift, f"BUS{DECODE_BUS} が復元されていません: {drift}"
+
+
+def test_configure_decode_uart_set_and_readback(
+    control: ControlService,
+    driver: ScopeDriver,
+    decode_before: dict,
+) -> None:
+    """UARTデコードを設定し、read-backで確認する(復元はfixtureが行う)。
+
+    ソースは CH2 を使う(CH1 はプローブ補正信号の観測に使われているため)。
+    """
+    started = time.perf_counter()
+    result = control.configure_decode(
+        driver,
+        DECODE_BUS,
+        "uart",
+        settings={
+            "tx_source": TEST_CHANNEL,
+            "rx_source": "off",
+            "baud_bps": DECODE_BAUD_BPS,
+            "data_bits": 8,
+            "parity": "none",
+            "stop_bits": 1,
+        },
+    )
+    elapsed = time.perf_counter() - started
+
+    applied = result["applied"]["settings"]
+    _report(
+        f"[decode] bus{DECODE_BUS} applied={applied} "
+        f"changed={result['changed']} 所要 {elapsed:.3f}s"
+    )
+
+    assert result["applied"]["protocol"] == "uart"
+    assert applied["tx_source"] == TEST_CHANNEL
+    assert applied["baud_bps"] == DECODE_BAUD_BPS
+    assert applied["parity"] == "none"
+
+    readback = driver.get_decode_config(DECODE_BUS)
+    assert readback["protocol"] == "uart"
+    assert readback["settings"]["baud_bps"] == DECODE_BAUD_BPS
+
+
+# -- 10. 監査ログ(最後に実行し、それまでの全操作を検証)--------------------
 
 
 def test_audit_log_records_every_write(audit_path: Path) -> None:
@@ -646,5 +738,10 @@ def test_audit_log_records_every_write(audit_path: Path) -> None:
             assert entry["before"] is not None
             assert entry["after"] is not None
 
-    assert {"configure_channel", "configure_timebase", "configure_trigger"} <= set(tools)
+    assert {
+        "configure_channel",
+        "configure_timebase",
+        "configure_trigger",
+        "configure_decode",
+    } <= set(tools)
     assert {"run", "stop", "single"} <= set(tools)

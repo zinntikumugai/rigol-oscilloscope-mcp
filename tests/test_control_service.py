@@ -1019,6 +1019,96 @@ def test_autoset_skips_the_before_state_without_audit_log(
 
 
 # ==========================================================================
+# configure_decode(tools.md 6章 / Phase 4)
+# ==========================================================================
+
+
+def test_configure_decode_returns_requested_and_applied(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    result = service.configure_decode(
+        driver,
+        1,
+        "uart",
+        enabled=True,
+        settings={"baud_bps": 115200, "tx_source": "CH2"},
+    )
+
+    assert result["bus"] == 1
+    assert result["requested"] == {
+        "enabled": True,
+        "settings": {"baud_bps": 115200, "tx_source": "CH2"},
+    }
+    assert result["applied"] == {
+        "bus": 1,
+        "protocol": "uart",
+        "enabled": True,
+        "settings": {"baud_bps": 115200, "tx_source": "CH2"},
+    }
+
+
+def test_configure_decode_reports_changed(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    assert service.configure_decode(driver, 1, "uart")["changed"] is True
+    # 同じ設定の再適用は変化なし
+    assert service.configure_decode(driver, 1, "uart")["changed"] is False
+
+
+def test_configure_decode_is_audited(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    service.configure_decode(driver, 1, "uart", settings={"baud_bps": 115200})
+    row = operations(audit_path)[0]
+
+    assert row["tool"] == "configure_decode"
+    assert row["result"] == "success"
+    assert row["requested"]["protocol"] == "uart"
+    assert row["before"]["protocol"] == "parallel"  # FakeScopeの既定
+    assert row["after"]["protocol"] == "uart"
+    assert row["after"]["settings"]["baud_bps"] == 115200
+
+
+def test_configure_decode_needs_no_confirmation(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    """表示・解析層のみの変更で取り込み設定も出力も変えない(SAFE_WRITE)。"""
+    service.configure_decode(driver, 1, "uart")
+
+    assert confirms(audit_path) == []
+
+
+def test_configure_decode_rejects_unknown_protocol(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        service.configure_decode(driver, 1, "i2s")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+
+
+def test_configure_decode_error_is_audited(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    with pytest.raises(ScopeError):
+        service.configure_decode(driver, 1, "uart", settings={"baud_bps": 0})
+
+    row = operations(audit_path)[0]
+    assert row["result"] == "error"
+    assert row["detail"]["error"]["code"] == ErrorCode.INVALID_PARAMETER
+
+
+def test_configure_decode_invalid_setting_writes_nothing(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """検証で弾かれた場合、バスへの書き込みは1件も出ない(読みは行う)。"""
+    with pytest.raises(ScopeError):
+        service.configure_decode(driver, 1, "uart", settings={"baud_bps": 0})
+
+    assert [c for c in sent(scope, ":BUS") if "?" not in c] == []
+
+
+# ==========================================================================
 # パッケージ公開
 # ==========================================================================
 

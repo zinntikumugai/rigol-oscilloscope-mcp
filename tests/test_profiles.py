@@ -117,6 +117,36 @@ def test_generic_does_not_declare_option_query() -> None:
     assert "option_types" not in p.dialect
 
 
+def test_mho98_declares_standard_decode_protocols() -> None:
+    """標準搭載6種のみ(オプション必須プロトコルは不在=ゲート)。"""
+    p = load_profile("mho98")
+
+    assert p.capabilities["decode_buses"] == 4
+    assert p.dialect["decode_protocols"] == {
+        "uart": "RS232",
+        "i2c": "IIC",
+        "spi": "SPI",
+        "can": "CAN",
+        "lin": "LIN",
+        "parallel": "PARallel",
+    }
+    assert p.dialect["decode_formats"] == {
+        "hex": "HEX",
+        "ascii": "ASCii",
+        "dec": "DEC",
+        "bin": "BIN",
+    }
+
+
+def test_generic_does_not_declare_decode() -> None:
+    """`:BUS` はDHO/MHO共通だが未検証。宣言の不在がそのままゲートになる。"""
+    p = load_profile(GENERIC)
+
+    assert "decode_protocols" not in p.dialect
+    assert "decode_buses" not in p.capabilities
+    assert p.supports("protocol_decode") is False
+
+
 def test_mho98_inherits_generic_and_overrides() -> None:
     generic = load_profile(GENERIC)
     mho98 = load_profile("mho98")
