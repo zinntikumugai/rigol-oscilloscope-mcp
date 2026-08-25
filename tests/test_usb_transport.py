@@ -87,6 +87,30 @@ class FakeInstrument:
         self.closed = True
 
 
+class FakeInvalidSession(Exception):
+    """`pyvisa.errors.InvalidSession` 相当(VisaIOErrorではない別系統の例外)。"""
+
+
+class StrictSessionInstrument(FakeInstrument):
+    """close後に属性を書き戻すと InvalidSession を投げる計器スタブ。
+
+    実 pyvisa は close 済みセッションへの `instrument.timeout = ...` で
+    InvalidSession を上げる。意図した ScopeError がこれに隠蔽されないことを検証する。
+    """
+
+    closed = False  # 基底の __init__ が self.timeout を触る時点で参照される
+
+    @property
+    def timeout(self) -> float | None:
+        return self._timeout
+
+    @timeout.setter
+    def timeout(self, value: float | None) -> None:
+        if self.closed:
+            raise FakeInvalidSession("session is closed")
+        self._timeout = value
+
+
 class FakeResourceManager:
     """`pyvisa.ResourceManager` の代役。呼び出し可能かつインスタンスを兼ねる。"""
 
@@ -292,6 +316,26 @@ def test_query_timeout_maps_to_timeout_error(visa: FakeVisa) -> None:
 
     assert excinfo.value.code == ErrorCode.TIMEOUT
     assert excinfo.value.detail["command"] == ":MEAS:VPP? CHAN1"
+    # 遅延応答によるdesyncを防ぐため、タイムアウトでも接続を破棄する
+    assert link.is_open is False
+    assert visa.instrument.closed is True
+
+
+def test_query_after_timeout_requires_reconnect(visa: FakeVisa) -> None:
+    """タイムアウト後は同一transportで続けられない(遅延応答を読まない)。"""
+    link = opened(visa)
+    visa.instrument.read_error = FakeVisaIOError(VI_ERROR_TMO)
+    with pytest.raises(ScopeError):
+        link.query(":MEAS:VPP? CHAN1")
+
+    visa.instrument.read_error = None
+    visa.instrument.responses.append("1.234\n")  # 前問への遅延応答
+
+    with pytest.raises(ScopeError) as excinfo:
+        link.query("*IDN?")
+
+    assert excinfo.value.code == ErrorCode.DEVICE_DISCONNECTED
+    assert visa.instrument.responses == ["1.234\n"]  # 読んでいない
 
 
 def test_query_other_visa_error_maps_to_disconnected(visa: FakeVisa) -> None:
@@ -326,7 +370,8 @@ def test_query_temporary_timeout_is_applied_and_restored(visa: FakeVisa) -> None
     assert visa.instrument.timeout == 5000  # finally で復元
 
 
-def test_query_restores_timeout_after_failure(visa: FakeVisa) -> None:
+def test_query_failure_drops_connection_instead_of_restoring(visa: FakeVisa) -> None:
+    """失敗時は接続ごと破棄するので、一時timeoutの復元は行わない。"""
     link = opened(visa)
     visa.instrument.read_error = FakeVisaIOError(VI_ERROR_TMO)
 
@@ -334,7 +379,32 @@ def test_query_restores_timeout_after_failure(visa: FakeVisa) -> None:
         link.query(":WAV:DATA?", timeout_s=30.0)
 
     assert visa.instrument.timeout_at_read == [30000]
-    assert visa.instrument.timeout == 5000
+    assert link.is_open is False
+
+
+@pytest.mark.parametrize(
+    ("error_code", "expected"),
+    [
+        (VI_ERROR_TMO, ErrorCode.TIMEOUT),
+        (VI_ERROR_CONN_LOST, ErrorCode.DEVICE_DISCONNECTED),
+    ],
+)
+def test_query_failure_is_not_masked_by_timeout_restore(
+    monkeypatch: pytest.MonkeyPatch, error_code: int, expected: ErrorCode
+) -> None:
+    """close後の timeout 書き戻し(InvalidSession)が ScopeError を隠さない。"""
+    instrument = StrictSessionInstrument()
+    rm = FakeResourceManager(instrument)
+    _install_pyvisa(monkeypatch, rm)
+    link = UsbTransport(RESOURCE)
+    link.open()
+    instrument.read_error = FakeVisaIOError(error_code)
+
+    with pytest.raises(ScopeError) as excinfo:
+        link.query(":WAV:DATA?", timeout_s=30.0)
+
+    assert excinfo.value.code == expected
+    assert link.is_open is False
 
 
 def test_query_without_open_is_disconnected() -> None:
@@ -430,8 +500,9 @@ def test_query_binary_timeout_maps_to_timeout_error(visa: FakeVisa) -> None:
     assert excinfo.value.code == ErrorCode.TIMEOUT
     assert excinfo.value.detail["command"] == ":DISP:DATA?"
     assert visa.instrument.timeout_at_read == [20000]
-    assert visa.instrument.timeout == 5000
-    assert visa.instrument.read_termination == "\n"
+    assert visa.instrument.read_termination == "\n"  # read_raw前の値へ復元済み
+    assert link.is_open is False  # desync防止のため接続を破棄する
+    assert visa.instrument.closed is True
 
 
 # --------------------------------------------------------------------------

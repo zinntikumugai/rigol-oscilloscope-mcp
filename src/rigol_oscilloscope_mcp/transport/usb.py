@@ -176,7 +176,13 @@ class UsbTransport:
         try:
             yield
         finally:
-            instrument.timeout = previous
+            # 失敗経路では `_failure` が既にセッションを閉じている。閉じた
+            # セッションへの書き戻しは pyvisa の InvalidSession を招き、
+            # 意図した ScopeError を生のpyvisa例外で隠蔽してしまう。
+            # よって復元はbest-effort(未closeのときだけ、失敗は無視)。
+            if self._instrument is not None:
+                with contextlib.suppress(Exception):
+                    instrument.timeout = previous
 
     def _require_open(self, command: str) -> Any:
         if self._instrument is None:
@@ -188,18 +194,30 @@ class UsbTransport:
         return self._instrument
 
     def _failure(self, command: str, exc: BaseException) -> ScopeError:
-        """VisaIOError を ScopeError へ変換する。"""
+        """VisaIOError を ScopeError へ変換する(いずれの場合も接続を破棄する)。"""
         if self._is_timeout(exc):
-            return ScopeError(
-                ErrorCode.TIMEOUT,
-                f"応答がタイムアウトしました: {command}",
-                {"command": command, "resource": self.resource},
-            )
+            return self._timeout(command)
         # タイムアウト以外のVISAエラーは接続断とみなし、内部状態も閉じる。
         self.close()
         return ScopeError(
             ErrorCode.DEVICE_DISCONNECTED,
             f"USB接続が切断されました({exc}): {command}",
+            {"command": command, "resource": self.resource},
+        )
+
+    def _timeout(self, command: str) -> ScopeError:
+        """タイムアウト。セッションを破棄する(LanTransportと同趣旨)。
+
+        機器が遅延して応答を返すと(実機MHO98では負荷時に0.9〜3.0秒の遅延応答を
+        実測)、次のqueryが前問の応答を自分の応答として読むdesyncが起きる。
+        USBTMCもメッセージがデバイス側に残るため事情は同じで、セッションごと
+        捨てるのが確実。次回操作は `ConnectionManager.require_scope()` の
+        自動再接続(=接続時のdrain)からやり直せる。
+        """
+        self.close()
+        return ScopeError(
+            ErrorCode.TIMEOUT,
+            f"応答がタイムアウトしました: {command}",
             {"command": command, "resource": self.resource},
         )
 
