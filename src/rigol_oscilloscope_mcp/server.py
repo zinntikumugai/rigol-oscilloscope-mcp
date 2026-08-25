@@ -267,7 +267,7 @@ def create_server(
         """Return the features available on the connected device (channel count, supported features).
 
         When the profile confidence is generic, unverified features are restricted.
-        options reports the installed licence options, and is null when this
+        options reports the installed license options, and is null when this
         model does not support option queries.
         """
         driver = manager.require_scope()
