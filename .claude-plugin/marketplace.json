@@ -1,0 +1,11 @@
+{
+  "name": "rigol-oscilloscope-mcp",
+  "owner": { "name": "zinntikumugai" },
+  "plugins": [
+    {
+      "name": "rigol-oscilloscope",
+      "source": "./",
+      "description": "Control RIGOL oscilloscopes over SCPI: an MCP server plus a measurement-workflow skill with safety guidance."
+    }
+  ]
+}

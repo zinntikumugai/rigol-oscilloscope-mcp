@@ -394,6 +394,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 リポジトリルートをプラグインルートとし、ClaudeとCodexの両プラグインを同梱する。スキル(`skills/`)とMCPサーバー起動定義(10.1の `uvx` 標準形)は両者で共有し、マニフェストのみホストごとに持つ:
 
 - `.claude-plugin/plugin.json` — Claude用マニフェスト(MCPサーバー定義をインラインで含む。`skills/` は自動発見)
+- `.claude-plugin/marketplace.json` — Claude Codeのマーケットプレイス定義(**`/plugin install` はマーケットプレイス経由が必須**と実機確認済み。`@` 以降はマーケットプレイスの `name` を指す)
 - `.codex-plugin/plugin.json` — Codex用マニフェスト(`skills` は `./skills/` を、`mcpServers` は `./.codex-plugin/mcp.json` を参照)
 - `.agents/plugins/marketplace.json` — Codexのマーケットプレイス定義(Codexはプラグイン導入がマーケットプレイス経由のため単一プラグインでも必要)
 - `skills/measurement-workflows/SKILL.md` — 測定ワークフロースキル(1本に統合、Agent Skillsオープン標準形式で両ホスト共通)。信号種別→推奨設定の対応表、UART測定・未知信号探索のワークフロー、安全プロンプト(物理確認の促し、商用電源測定の拒否)、測定反復の上限ガイダンス(目安5回)を含む

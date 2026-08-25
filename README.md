@@ -36,9 +36,11 @@ uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.0 ri
 
 本リポジトリはClaudeプラグインを兼ねており、MCPサーバーに加えて測定ワークフロースキル
 (信号種別ごとの推奨設定・UART/未知信号の測定手順・安全プロンプト)が同時に導入される。
+マーケットプレイスを追加してからインストールする(`@` 以降はマーケットプレイス名):
 
 ```
-/plugin install rigol-oscilloscope@zinntikumugai/rigol-oscilloscope-mcp
+/plugin marketplace add zinntikumugai/rigol-oscilloscope-mcp
+/plugin install rigol-oscilloscope@rigol-oscilloscope-mcp
 ```
 
 ### Claude Code(`.mcp.json` または `claude mcp add`)
