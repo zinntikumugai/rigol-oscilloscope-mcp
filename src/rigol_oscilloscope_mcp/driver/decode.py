@@ -21,7 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..errors import ErrorCode, ScopeError
-from .parsers import format_number, parse_bool, parse_nr3
+from .parsers import format_number, parse_bool, parse_eng_number, parse_nr3
 
 # 変換器の型: (値, 意味的キー) → 送信トークン / 応答文字列 → 値
 ToScpi = Callable[[object, str], str]
@@ -315,3 +315,66 @@ EVENT_ITEM = _item(":EVENt", _bool())
 #: プロファイルの対応表(`decode_protocols` / `decode_formats`)から
 #: 共通項目の変換器を組み立てるための公開口
 profile_enum = _enum
+
+
+# -- イベントテーブル(`:BUS<n>:DATA?` のペイロード)-------------------------
+
+#: 時刻列だけは意味を確定させる(秒へ変換する唯一の列)
+TIME_COLUMN = "time_s"
+
+#: エラー詳細に載せる生ペイロードの長さ上限(全文は載せない)
+_RAW_PREFIX = 200
+
+_NON_ALNUM = re.compile(r"[^a-z0-9]+")
+
+
+def _column_name(text: str) -> str:
+    """`Time` → `time_s`、`Tx/Rx` → `tx_rx`(列構成は機種・プロトコル依存)。"""
+    name = _NON_ALNUM.sub("_", text.strip().lower()).strip("_")
+    return TIME_COLUMN if name == "time" else name
+
+
+def _cells(line: str) -> list[str]:
+    """行をカンマで分割する。行末のカンマ1個ぶんの空セルだけ落とす。
+
+    実機の行・ヘッダは末尾がカンマ(`Time,Tx/Rx,Data,Error,`)。空のセル自体は
+    意味を持つ(エラー無しの `Error` 列)ので、まとめて落としてはならない。
+    """
+    cells = line.split(",")
+    return cells[:-1] if line.endswith(",") else cells
+
+
+def parse_event_table(payload: bytes) -> tuple[list[str], list[dict], str]:
+    """イベントテーブルのペイロードを `(列名, 行, デコード種別トークン)` へ。
+
+    構成は「種別トークン / ヘッダ行 / 行...」(MHO900・DHO800/900プログラミング
+    ガイド 3.4)。**列構成はプロトコル依存でガイドに記載が無い**ため、ヘッダ行が
+    与える列をそのまま採用する(スキーマを実装側に持たない)。
+    """
+    text = payload.decode("utf-8", "replace")
+    lines = [line.strip() for line in text.splitlines()]
+    lines = [line for line in lines if line]
+    if not lines:
+        return [], [], ""
+    token = lines[0]
+    if len(lines) < 2:
+        return [], [], token
+
+    header = lines[1]
+    if "," not in header:
+        raise ScopeError(
+            ErrorCode.SCPI_ERROR,
+            f"cannot interpret the event table header: {header!r}",
+            {"raw": text[:_RAW_PREFIX]},
+        )
+    columns = [_column_name(cell) for cell in _cells(header)]
+
+    events: list[dict] = []
+    for line in lines[2:]:
+        cells = _cells(line)
+        row: dict[str, object] = {}
+        for index, name in enumerate(columns):
+            cell = cells[index] if index < len(cells) else ""
+            row[name] = parse_eng_number(cell) if name == TIME_COLUMN else cell
+        events.append(row)
+    return columns, events, token

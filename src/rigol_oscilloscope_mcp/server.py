@@ -488,8 +488,8 @@ def create_server(
         - parallel: clk_source, clk_slope, bus_width, endian, polarity.
           Example: {"clk_source": "CH1", "bus_width": 8, "endian": "msb"}
 
-        Set event_table=true (together with enabled=true) before reading decoded
-        results; reading the results themselves is not implemented yet.
+        Set event_table=true (together with enabled=true) before reading the
+        decoded results with get_decode_result.
         This only changes what the device displays and analyses: acquisition
         settings are untouched, so configure the channels and trigger separately.
         """
@@ -502,6 +502,26 @@ def create_server(
             data_format=data_format,
             settings=settings,
         )
+
+    @_register
+    def get_decode_result(bus: int = 1, max_events: int | None = None) -> dict:
+        """Read the decoded event table of a decode bus (bus 1-4).
+
+        Call configure_decode with enabled=true and event_table=true first;
+        otherwise no table is read and the reason is returned in warnings.
+        Stop the acquisition (stop) before reading, or the table keeps changing
+        between reads and is only a snapshot.
+
+        The column names depend on the protocol and on the device (for example
+        time_s, tx_rx, data, error for UART/RS232); read columns instead of
+        assuming a fixed layout. time_s is in seconds relative to the trigger,
+        and the other cells are strings formatted as the data_format of
+        configure_decode selects (hex / ascii / dec / bin).
+
+        max_events returns only the first N events; event_count is always the
+        total number of events on the device before truncation.
+        """
+        return service.get_decode_result(manager.require_scope(), bus, max_events)
 
     # -- Acquisition(tools.md 4章)-----------------------------------------
 

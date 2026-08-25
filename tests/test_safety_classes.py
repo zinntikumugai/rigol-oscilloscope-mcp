@@ -31,6 +31,7 @@ EXPECTED = {
     "single": "SAFE_WRITE",
     "autoset": "RESTRICTED_WRITE",
     "configure_decode": "SAFE_WRITE",
+    "get_decode_result": "READ_ONLY",
     "raw_scpi": "DANGEROUS_WRITE",
 }
 

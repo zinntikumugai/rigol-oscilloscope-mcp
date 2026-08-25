@@ -60,6 +60,7 @@ TOOL_CLASSES: dict[str, OperationClass] = {
     # 表示・解析層のみを変える(取り込み設定も出力も変えない)完全に可逆な操作で、
     # configure_channel より侵襲性が低いため SAFE_WRITE。
     "configure_decode": OperationClass.SAFE_WRITE,
+    "get_decode_result": OperationClass.READ_ONLY,
     # 8. Raw SCPI(開発用・デフォルト無効)
     "raw_scpi": OperationClass.DANGEROUS_WRITE,
 }

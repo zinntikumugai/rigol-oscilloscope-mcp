@@ -9,6 +9,7 @@ from rigol_oscilloscope_mcp.driver.parsers import (
     from_scpi_sweep,
     parse_bool,
     parse_coupling,
+    parse_eng_number,
     parse_nr3,
     to_scpi_impedance,
     to_scpi_slope,
@@ -255,3 +256,35 @@ def test_format_number_is_lossless(value: float) -> None:
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
 def test_format_number_rejects_non_finite(value: float) -> None:
     _assert_param_error(format_number, value)
+
+
+# --------------------------------------------------------------------------
+# parse_eng_number(イベントテーブルの時刻列。`-2.47us` のような接尾辞付き)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("-2.47us", -2.47e-6),
+        ("-2.444us", -2.444e-6),
+        ("3ms", 3e-3),
+        ("100ns", 100e-9),
+        ("1.5ps", 1.5e-12),
+        ("2s", 2.0),
+        ("-0.5", -0.5),
+        ("0", 0.0),
+        ("  +1.25 ms  ", 1.25e-3),
+        ("1.0E-3s", 1.0e-3),
+        # マイクロは2種類のグリフが流通する(MICRO SIGN / GREEK SMALL LETTER MU)
+        ("-2.47µs", -2.47e-6),
+        ("-2.47μs", -2.47e-6),
+    ],
+)
+def test_parse_eng_number(text: str, expected: float) -> None:
+    assert parse_eng_number(text) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("raw", ["", "abc", "us", "1.2.3us", "5km", "1 2us", None])
+def test_parse_eng_number_rejects_garbage(raw) -> None:
+    _assert_scpi_error(parse_eng_number, raw)

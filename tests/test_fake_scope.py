@@ -619,3 +619,53 @@ def test_option_gated_decode_subtrees_are_not_modeled(
     """オプション必須プロトコルは実装しない(送れば沈黙する)。"""
     with pytest.raises(SilentTimeout):
         scope.handle(command)
+
+
+def _enable_event_table(scope: FakeScope, bus: int = 1) -> None:
+    scope.handle(f":BUS{bus}:DISPlay ON")
+    scope.handle(f":BUS{bus}:EVENt ON")
+
+
+def test_bus_data_returns_a_tmc_block(scope: FakeScope) -> None:
+    """`:BUS<n>:DATA?` は definite-length block(`#9...`)で返る。"""
+    _enable_event_table(scope)
+
+    response = scope.handle(":BUS1:DATA?")
+
+    assert response.startswith(b"#9")
+    payload = response[11:-1]  # `#9` + 9桁長 ... 末尾改行
+    assert len(payload) == int(response[2:11])
+    # 既定モードは PAR(実機プローブの :BUS4:MODE? と同じ短形式)
+    assert payload.decode("ascii").splitlines()[0] == "PARALLEL"
+
+
+def test_bus_data_header_matches_the_device(scope: FakeScope) -> None:
+    """実機実測(MHO98, MODE=RS232): 先頭2行は `RS232` と `Time,Tx/Rx,Data,Error,`。"""
+    _enable_event_table(scope)
+    scope.handle(":BUS1:MODE RS232")
+
+    payload = scope.handle(":BUS1:DATA?")[11:-1].decode("ascii")
+
+    assert payload.splitlines()[:2] == ["RS232", "Time,Tx/Rx,Data,Error,"]
+
+
+def test_bus_data_tracks_the_mode(scope: FakeScope) -> None:
+    _enable_event_table(scope)
+
+    lines = scope.handle(":BUS1:DATA?")[11:-1].decode("ascii").splitlines()
+
+    assert lines[0] == "PARALLEL"
+    assert lines[1] == "Time,Data,"
+    # プログラミングガイドの例そのまま
+    assert lines[2:4] == ["-2.47us,0,", "-2.444us,1,"]
+
+    scope.handle(":BUS1:MODE CAN")
+    assert scope.handle(":BUS1:DATA?")[11:-1].decode("ascii").splitlines()[0] == "CAN"
+
+
+def test_bus_data_is_empty_while_the_event_table_is_off(scope: FakeScope) -> None:
+    """イベントテーブル無効時は空ペイロード(要実機検証)。"""
+    scope.handle(":BUS1:DISPlay ON")
+
+    assert scope.handle(":BUS1:EVENt?") == b"0"
+    assert scope.handle(":BUS1:DATA?") == b"#9000000000\n"
