@@ -19,6 +19,14 @@ from dataclasses import dataclass
 from ..errors import ErrorCode, ScopeError
 from ..models import ChannelState, IdnInfo, MeasurementResult, TimebaseState, TriggerState
 from ..profiles import Profile
+from .decode import (
+    DECODE_ITEMS,
+    DISPLAY_ITEM,
+    EVENT_ITEM,
+    EXCLUSIVE_SOURCES,
+    DecodeItem,
+    profile_enum,
+)
 from .parsers import (
     format_number,
     from_scpi_impedance,
@@ -528,6 +536,235 @@ class ScopeDriver:
         for command in commands:
             self.session.write_checked(command)
         return self.get_trigger()
+
+    # -- シリアルデコード(tools.md 6章)-----------------------------------
+
+    def _decode_protocols(self) -> dict[str, str]:
+        """このプロファイルが宣言する プロトコル名 → SCPIニモニック。
+
+        宣言の不在がそのままゲート(オプション必須プロトコルは載せない)。
+        変換表(decode.py)を持たないプロトコルは宣言されていても扱わない。
+        """
+        self._require("protocol_decode", "protocol decode")
+        declared = self.profile.dialect.get("decode_protocols")
+        protocols = (
+            {name: value for name, value in declared.items() if name in DECODE_ITEMS}
+            if isinstance(declared, dict)
+            else {}
+        )
+        if not protocols:
+            raise _unsupported(
+                "this model's profile does not declare a value to use for "
+                "protocol decode",
+                {"dialect": "decode_protocols", "profile": self.profile.name},
+            )
+        return protocols
+
+    def _decode_bus(self, bus: int) -> int:
+        count = self.profile.capabilities.get("decode_buses")
+        if not isinstance(count, int) or count < 1:
+            raise _unsupported(
+                "this model's profile does not declare how many decode buses exist",
+                {"capability": "decode_buses", "profile": self.profile.name},
+            )
+        if isinstance(bus, bool) or not isinstance(bus, int) or not 1 <= bus <= count:
+            raise _invalid(
+                f"decode bus {bus!r} does not exist (this model has bus 1-{count})",
+                {"bus": bus, "decode_buses": count},
+            )
+        return bus
+
+    def _decode_format(self) -> tuple[object, object]:
+        """`:FORMat` の 意味的な値 ⇔ トークン 変換器。"""
+        formats = self.profile.dialect.get("decode_formats")
+        if not isinstance(formats, dict) or not formats:
+            raise _unsupported(
+                "this model's profile does not declare a value to use for "
+                "the decode display format",
+                {"dialect": "decode_formats", "profile": self.profile.name},
+            )
+        return profile_enum(tuple(formats.items()))
+
+    def _decode_command(
+        self, prefix: str, mnemonic: str, key: str, item: DecodeItem, value: object
+    ) -> tuple[str, str]:
+        """1項目の (設定コマンド, read-back問い合わせ)。値の検証もここで行う。"""
+        token = item.to_scpi(value, key)
+        if item.threshold_type is not None:
+            # 閾値だけは形が不規則(値と種別をカンマで並べ、問い合わせは種別を引数に取る)
+            return (
+                f"{prefix}:THReshold {token},{item.threshold_type}",
+                f"{prefix}:THReshold? {item.threshold_type}",
+            )
+        return (
+            f"{prefix}:{mnemonic}{item.path} {token}",
+            f"{prefix}:{mnemonic}{item.path}?",
+        )
+
+    def configure_decode(
+        self,
+        bus: int,
+        protocol: str,
+        *,
+        enabled: bool | None = None,
+        event_table: bool | None = None,
+        data_format: str | None = None,
+        settings: dict | None = None,
+    ) -> dict:
+        """デコードバスを設定し、read-backした適用値を返す。
+
+        **全ての検証を送信前に済ませる**(不正トークン1発で実機のSCPIサーバーが
+        沈黙するため)。送信順は `:MODE` → 表示形式 → プロトコル別設定 →
+        `:DISPlay` → `:EVENt` に固定する(イベントテーブルの有効化には
+        バスの表示が先に必要、というガイドの制約に従う)。
+        """
+        protocols = self._decode_protocols()
+        name = protocol.strip().lower() if isinstance(protocol, str) else protocol
+        if name not in protocols:
+            raise _unsupported(
+                f"protocol decode '{protocol}' is not supported on this model "
+                f"(supported: {sorted(protocols)})",
+                {"protocol": protocol, "supported": sorted(protocols)},
+            )
+        number = self._decode_bus(bus)
+        items = DECODE_ITEMS[name]
+
+        if settings is None:
+            settings = {}
+        elif not isinstance(settings, dict):
+            raise _invalid(
+                f"settings is not an object: {settings!r}", {"settings": settings}
+            )
+        unknown = [key for key in settings if key not in items]
+        if unknown:
+            raise _invalid(
+                f"unknown setting for protocol '{name}': {sorted(unknown)}",
+                {"protocol": name, "unknown": sorted(unknown), "allowed": sorted(items)},
+            )
+        self._reject_all_sources_off(name, items, settings)
+
+        prefix = f":BUS{number}"
+        # イベントテーブルはバス表示が先に有効であることが前提(ガイドの制約。
+        # 表示OFFのまま :EVENt ON を送ると実機が沈黙し得るため、送信前に弾く)
+        if event_table:
+            if enabled is False:
+                raise _invalid(
+                    "event_table=true requires the decode bus display to be on; "
+                    "call with enabled=true",
+                    {"bus": number, "enabled": enabled},
+                )
+            if enabled is None and DISPLAY_ITEM.from_scpi(
+                self.session.query(f"{prefix}{DISPLAY_ITEM.path}?")
+            ) is not True:
+                raise _invalid(
+                    "event_table=true requires the decode bus display to be on, "
+                    "but it is currently off; call with enabled=true",
+                    {"bus": number},
+                )
+        mnemonic = protocols[name]
+        mode_to, mode_from = profile_enum(tuple(protocols.items()))
+
+        # (返却キー, 設定コマンド, read-back問い合わせ, 応答変換, settings配下か)
+        plan: list[tuple[str, str, str, object, bool]] = [
+            (
+                "protocol",
+                f"{prefix}:MODE {mode_to(name, 'protocol')}",
+                f"{prefix}:MODE?",
+                mode_from,
+                False,
+            )
+        ]
+        if data_format is not None:
+            format_to, format_from = self._decode_format()
+            plan.append(
+                (
+                    "data_format",
+                    f"{prefix}:FORMat {format_to(data_format, 'data_format')}",
+                    f"{prefix}:FORMat?",
+                    format_from,
+                    False,
+                )
+            )
+        for key, value in settings.items():
+            item = items[key]
+            set_cmd, query = self._decode_command(prefix, mnemonic, key, item, value)
+            plan.append((key, set_cmd, query, item.from_scpi, True))
+        for key, value, item in (
+            ("enabled", enabled, DISPLAY_ITEM),
+            ("event_table", event_table, EVENT_ITEM),
+        ):
+            if value is not None:
+                plan.append(
+                    (
+                        key,
+                        f"{prefix}{item.path} {item.to_scpi(value, key)}",
+                        f"{prefix}{item.path}?",
+                        item.from_scpi,
+                        False,
+                    )
+                )
+
+        applied: dict[str, object] = {"bus": number}
+        applied_settings: dict[str, object] = {}
+        for key, set_cmd, query, from_scpi, is_setting in plan:
+            value = from_scpi(self.session.set_and_verify(set_cmd, query))
+            if is_setting:
+                applied_settings[key] = value
+            else:
+                applied[key] = value
+        applied["settings"] = applied_settings
+        return applied
+
+    @staticmethod
+    def _reject_all_sources_off(
+        protocol: str, items: dict[str, DecodeItem], settings: dict
+    ) -> None:
+        """デコード対象が1本も残らない指定を拒否する(機器も受理しない)。"""
+        pair = EXCLUSIVE_SOURCES.get(protocol)
+        if pair is None or not all(key in settings for key in pair):
+            return
+        if all(items[key].to_scpi(settings[key], key) == "OFF" for key in pair):
+            raise _invalid(
+                f"{pair[0]} and {pair[1]} cannot both be off "
+                "(there would be nothing to decode)",
+                {"protocol": protocol, "sources": list(pair)},
+            )
+
+    def get_decode_config(self, bus: int) -> dict:
+        """デコードバスの現在設定を意味的なキーで返す。"""
+        protocols = self._decode_protocols()
+        number = self._decode_bus(bus)
+        prefix = f":BUS{number}"
+        query = self.session.query
+
+        _, mode_from = profile_enum(tuple(protocols.items()))
+        raw_mode = query(f"{prefix}:MODE?").strip()
+        try:
+            protocol = mode_from(raw_mode)
+        except ScopeError:
+            # オプション必須プロトコル(IIS等)に設定されているバス。生の名前だけ
+            # 返し、配下の項目には触れない(未確認ニモニックを送らない)
+            protocol = raw_mode.lower()
+
+        _, format_from = self._decode_format()
+        config: dict[str, object] = {
+            "bus": number,
+            "protocol": protocol,
+            "enabled": DISPLAY_ITEM.from_scpi(query(f"{prefix}{DISPLAY_ITEM.path}?")),
+            "event_table": EVENT_ITEM.from_scpi(query(f"{prefix}{EVENT_ITEM.path}?")),
+            "data_format": format_from(query(f"{prefix}:FORMat?")),
+        }
+        items = DECODE_ITEMS.get(protocol, {})
+        mnemonic = protocols.get(protocol, "")
+        settings: dict[str, object] = {}
+        for key, item in items.items():
+            if item.threshold_type is not None:
+                response = query(f"{prefix}:THReshold? {item.threshold_type}")
+            else:
+                response = query(f"{prefix}:{mnemonic}{item.path}?")
+            settings[key] = item.from_scpi(response)
+        config["settings"] = settings
+        return config
 
     # -- Acquisition ------------------------------------------------------
 

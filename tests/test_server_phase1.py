@@ -1,4 +1,4 @@
-"""server.py のテスト(Phase 1 Tool群 / tools.md 8章)。
+"""server.py のテスト(Phase 1 Tool群 / tools.md 9章)。
 
 MCP SDK の in-memory 接続で実際にTool呼び出しを往復させ、クライアントから
 見える content(text JSON / image)を固定する。機器は FakeTransport 注入で

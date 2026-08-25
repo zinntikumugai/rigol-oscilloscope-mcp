@@ -10,6 +10,7 @@ capabilities:
   digital_channels: 16
   afg_channels: 2
   protocol_decode: true
+  decode_buses: 4 # :BUS1〜:BUS4(実測: :BUS4:MODE? まで応答、:BUS5 は沈黙)
   waveform_download: true
   screenshot: true
   impedance_control: true # :CHANnel<n>:IMPedance が使える(問い合わせ含む)
@@ -32,6 +33,23 @@ dialect:
     duty: PDUTy # 返却単位は比率(0.5002 = 50.02%)
     rise_time: RTIMe
     fall_time: FTIMe
+  # シリアルデコード(:BUS<n>:MODE の値)。標準搭載6種のみ。
+  # i2s(IIS)/ flexray / m1553(AERO)/ CAN-FD はライセンスオプション必須の
+  # ため意図的に不在 — **不在がそのままゲート**(4.2の原則)。
+  # 実機検証: docs/verification/mho98-unlicensed.md 3章(未ライセンス状態で
+  # RS232/IIC/SPI/CAN/LIN/PAR の読み書きが全て正常応答)
+  decode_protocols:
+    uart: RS232
+    i2c: IIC
+    spi: SPI
+    can: CAN
+    lin: LIN
+    parallel: PARallel
+  decode_formats:
+    hex: HEX
+    ascii: ASCii
+    dec: DEC
+    bin: BIN
   # オプション照会(MHO900専用。DHO800/900には存在しない)。実機検証:
   # docs/verification/mho98-unlicensed.md。*OPT? はRigol全シリーズで未定義
   # ヘッダ(送るとSCPIサーバーが沈黙)なので絶対に使わない。<type>リスト外の

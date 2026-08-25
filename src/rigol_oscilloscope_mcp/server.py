@@ -1,4 +1,4 @@
-"""MCPサーバー(Phase 1: Read Only / Phase 2: 書き込み系 Tool群 / tools.md 8章)。
+"""MCPサーバー(Phase 1: Read Only / Phase 2: 書き込み系 / Phase 4: デコード / tools.md 9章)。
 
 MCP SDK(FastMCP)への依存は本モジュールに閉じ込め、下位層(service / driver)
 はSDKを知らないまま保つ。
@@ -209,7 +209,7 @@ def create_server(
     config: Config | None = None,
     connection_manager: ConnectionManager | None = None,
 ) -> FastMCP:
-    """Phase 1 / Phase 2 のToolを登録したサーバーを組み立てる。
+    """Phase 1 / Phase 2 / Phase 4 のToolを登録したサーバーを組み立てる。
 
     `config` 省略時は環境変数・設定ファイルから解決する。
     `connection_manager` 省略時は生成し、`RIGOL_MCP_FAKE=1` なら実機の代わりに
@@ -443,6 +443,64 @@ def create_server(
             level_v=level_v,
             slope=slope,
             sweep_mode=sweep_mode,
+        )
+
+    # -- シリアルデコード(tools.md 6章)-------------------------------------
+
+    @_register
+    def configure_decode(
+        protocol: str,
+        bus: int = 1,
+        enabled: bool | None = None,
+        event_table: bool | None = None,
+        data_format: str | None = None,
+        settings: dict | None = None,
+    ) -> dict:
+        """Configure a serial protocol decode bus. Omitted items are left unchanged.
+
+        The bus count is model-dependent (get_capabilities decode_buses; 4 on MHO98).
+
+        protocol is uart / i2c / spi / can / lin / parallel (options such as
+        I2S, FlexRay, MIL-STD-1553 and CAN-FD are not supported).
+        data_format is hex / ascii / dec / bin. Source values are "CH1"-"CH4",
+        "D0"-"D15" or "off".
+
+        settings keys per protocol (all optional):
+        - uart: tx_source, rx_source, baud_bps, data_bits, parity (none/odd/even),
+          stop_bits (1/1.5/2), endian (msb/lsb), polarity (positive/negative),
+          tx_threshold_v, rx_threshold_v. Example: {"tx_source": "CH1",
+          "baud_bps": 115200, "data_bits": 8, "parity": "none", "stop_bits": 1,
+          "tx_threshold_v": 1.65}
+        - i2c: scl_source, sda_source, swap_sda_scl, address_bits (7/8/10),
+          scl_threshold_v, sda_threshold_v. Example: {"scl_source": "CH1",
+          "sda_source": "CH2", "address_bits": 7}
+        - spi: clk_source, clk_slope (rising/falling), mosi_source, miso_source,
+          cs_source, cs_polarity (high/low), frame_mode (cs/timeout), timeout_s,
+          data_bits (4-32), endian, polarity (high/low), clk_threshold_v,
+          mosi_threshold_v, miso_threshold_v, cs_threshold_v. Example:
+          {"clk_source": "CH1", "mosi_source": "CH2", "data_bits": 8}
+        - can: source, signal_type (tx/rx/canh/canl/differential), baud_bps,
+          sample_point_percent, threshold_v. Example: {"source": "CH1",
+          "signal_type": "canh", "baud_bps": 500000}
+        - lin: source, baud_bps, parity_enabled, standard (v1x/v2x/mixed),
+          threshold_v. Example: {"source": "CH1", "baud_bps": 19200,
+          "standard": "v2x"}
+        - parallel: clk_source, clk_slope, bus_width, endian, polarity.
+          Example: {"clk_source": "CH1", "bus_width": 8, "endian": "msb"}
+
+        Set event_table=true (together with enabled=true) before reading decoded
+        results; reading the results themselves is not implemented yet.
+        This only changes what the device displays and analyses: acquisition
+        settings are untouched, so configure the channels and trigger separately.
+        """
+        return control.configure_decode(
+            manager.require_scope(),
+            bus,
+            protocol,
+            enabled=enabled,
+            event_table=event_table,
+            data_format=data_format,
+            settings=settings,
         )
 
     # -- Acquisition(tools.md 4章)-----------------------------------------

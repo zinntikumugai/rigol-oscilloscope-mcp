@@ -794,3 +794,416 @@ def test_installed_options_cache_returns_a_copy(driver: ScopeDriver) -> None:
     first["bundle"] = None
 
     assert driver.installed_options()["bundle"] is True
+
+
+# --------------------------------------------------------------------------
+# シリアルデコード(docs/verification/mho98-unlicensed.md 3章)
+# --------------------------------------------------------------------------
+
+
+def bus_writes(scope: FakeScope) -> list[str]:
+    """`:BUS` への書き込みのみ(問い合わせ・エラーキュー確認を除く)。"""
+    return [c for c in scope.command_log if "?" not in c and c.upper().startswith(":BUS")]
+
+
+UART_SETTINGS = {
+    "tx_source": "CH1",
+    "baud_bps": 115200,
+    "data_bits": 8,
+    "parity": "none",
+    "stop_bits": 1,
+    "tx_threshold_v": 1.65,
+}
+
+
+def test_event_table_with_enabled_false_is_rejected_before_sending(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """表示OFF指定のままイベントテーブルは有効化できない(送信前拒否)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "uart", enabled=False, event_table=True)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert bus_writes(scope) == []
+
+
+def test_event_table_requires_display_already_on_when_enabled_omitted(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """enabled省略時は現在の表示状態を確認し、OFFなら送信前に拒否する。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "uart", event_table=True)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert bus_writes(scope) == []
+
+
+def test_event_table_with_display_already_on_succeeds(driver: ScopeDriver) -> None:
+    driver.configure_decode(1, "uart", enabled=True)
+
+    applied = driver.configure_decode(1, "uart", event_table=True)
+
+    assert applied["event_table"] is True
+
+
+def test_configure_decode_uart_sends_mode_first(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """順序: :MODE → 表示形式 → プロトコル設定 → :DISPlay → :EVENt。"""
+    driver.configure_decode(
+        1,
+        "uart",
+        enabled=True,
+        event_table=True,
+        data_format="ascii",
+        settings=UART_SETTINGS,
+    )
+
+    assert bus_writes(scope) == [
+        ":BUS1:MODE RS232",
+        ":BUS1:FORMat ASCii",
+        ":BUS1:RS232:TX CHANnel1",
+        ":BUS1:RS232:BAUD 115200",
+        ":BUS1:RS232:DBITs 8",
+        ":BUS1:RS232:PARity NONE",
+        ":BUS1:RS232:SBITs 1",
+        ":BUS1:THReshold 1.65,TX",
+        ":BUS1:DISPlay ON",
+        ":BUS1:EVENt ON",
+    ]
+
+
+def test_configure_decode_returns_applied_readback(driver: ScopeDriver) -> None:
+    applied = driver.configure_decode(
+        1, "uart", enabled=True, data_format="ascii", settings=UART_SETTINGS
+    )
+
+    assert applied == {
+        "bus": 1,
+        "protocol": "uart",
+        "enabled": True,
+        "data_format": "ascii",
+        "settings": {
+            "tx_source": "CH1",
+            "baud_bps": 115200,
+            "data_bits": 8,
+            "parity": "none",
+            "stop_bits": 1,
+            "tx_threshold_v": pytest.approx(1.65),
+        },
+    }
+
+
+def test_configure_decode_omits_unspecified_items(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """未指定の項目にはコマンドを1件も送らない。"""
+    applied = driver.configure_decode(2, "lin")
+
+    assert bus_writes(scope) == [":BUS2:MODE LIN"]
+    assert applied == {"bus": 2, "protocol": "lin", "settings": {}}
+
+
+def test_configure_decode_i2c(driver: ScopeDriver, scope: FakeScope) -> None:
+    driver.configure_decode(
+        1,
+        "i2c",
+        settings={
+            "scl_source": "CH1",
+            "sda_source": "D3",
+            "swap_sda_scl": True,
+            "address_bits": 10,
+            "scl_threshold_v": 1.4,
+        },
+    )
+
+    assert bus_writes(scope) == [
+        ":BUS1:MODE IIC",
+        ":BUS1:IIC:SCLK:SOURce CHANnel1",
+        ":BUS1:IIC:SDA:SOURce D3",
+        ":BUS1:IIC:EXCHange ON",
+        ":BUS1:IIC:ADDBits 10",
+        ":BUS1:THReshold 1.4,SCL",
+    ]
+
+
+def test_configure_decode_spi(driver: ScopeDriver, scope: FakeScope) -> None:
+    applied = driver.configure_decode(
+        3,
+        "spi",
+        settings={
+            "clk_source": "CH1",
+            "clk_slope": "rising",
+            "mosi_source": "CH2",
+            "miso_source": "off",
+            "cs_source": "CH3",
+            "cs_polarity": "low",
+            "frame_mode": "timeout",
+            "timeout_s": 1e-6,
+            "data_bits": 16,
+            "endian": "msb",
+            "polarity": "high",
+            "cs_threshold_v": 1.2,
+        },
+    )
+
+    assert bus_writes(scope) == [
+        ":BUS3:MODE SPI",
+        ":BUS3:SPI:SCLK:SOURce CHANnel1",
+        ":BUS3:SPI:SCLK:SLOPe POSitive",
+        ":BUS3:SPI:MOSI:SOURce CHANnel2",
+        ":BUS3:SPI:MISO:SOURce OFF",
+        ":BUS3:SPI:SS:SOURce CHANnel3",
+        ":BUS3:SPI:SS:POLarity LOW",
+        ":BUS3:SPI:MODE TIMeout",
+        ":BUS3:SPI:TIMeout:TIME 1e-06",
+        ":BUS3:SPI:DBITs 16",
+        ":BUS3:SPI:ENDian MSB",
+        ":BUS3:SPI:POLarity HIGH",
+        ":BUS3:THReshold 1.2,CS",
+    ]
+    assert applied["settings"]["miso_source"] == "OFF"
+    assert applied["settings"]["timeout_s"] == pytest.approx(1e-6)
+
+
+def test_configure_decode_can(driver: ScopeDriver, scope: FakeScope) -> None:
+    driver.configure_decode(
+        4,
+        "can",
+        settings={
+            "source": "CH2",
+            "signal_type": "differential",
+            "baud_bps": 500000,
+            "sample_point_percent": 75,
+            "threshold_v": 2.0,
+        },
+    )
+
+    assert bus_writes(scope) == [
+        ":BUS4:MODE CAN",
+        ":BUS4:CAN:SOURce CHANnel2",
+        ":BUS4:CAN:STYPe DIFFerential",
+        ":BUS4:CAN:BAUD 500000",
+        ":BUS4:CAN:SPOint 75",
+        ":BUS4:THReshold 2.0,CAN",
+    ]
+
+
+def test_configure_decode_lin(driver: ScopeDriver, scope: FakeScope) -> None:
+    driver.configure_decode(
+        1,
+        "lin",
+        settings={
+            "source": "D0",
+            "baud_bps": 19200,
+            "parity_enabled": True,
+            "standard": "v2x",
+            "threshold_v": 1.0,
+        },
+    )
+
+    assert bus_writes(scope) == [
+        ":BUS1:MODE LIN",
+        ":BUS1:LIN:SOURce D0",
+        ":BUS1:LIN:BAUD 19200",
+        ":BUS1:LIN:PARity ON",
+        ":BUS1:LIN:STANdard V2X",
+        ":BUS1:THReshold 1.0,LIN",
+    ]
+
+
+def test_configure_decode_parallel(driver: ScopeDriver, scope: FakeScope) -> None:
+    driver.configure_decode(
+        1,
+        "parallel",
+        settings={
+            "clk_source": "CH4",
+            "clk_slope": "falling",
+            "bus_width": 8,
+            "endian": "lsb",
+            "polarity": "negative",
+        },
+    )
+
+    assert bus_writes(scope) == [
+        ":BUS1:MODE PARallel",
+        ":BUS1:PARallel:CLK CHANnel4",
+        ":BUS1:PARallel:SLOPe NEGative",
+        ":BUS1:PARallel:WIDTh 8",
+        ":BUS1:PARallel:ENDian LSB",
+        ":BUS1:PARallel:POLarity NEGative",
+    ]
+
+
+# -- 送信前に失敗する検証 --------------------------------------------------
+
+
+def test_configure_decode_unknown_protocol_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """オプション必須のプロトコル(i2s等)は宣言が無い = 送信前に拒否。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "i2s")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert "uart" in excinfo.value.message
+    assert scope.command_log == []
+
+
+def test_configure_decode_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.configure_decode(1, "uart", settings={"baud_bps": 9600})
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+@pytest.mark.parametrize("bus", [0, 5, -1])
+def test_configure_decode_bus_out_of_range_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope, bus: int
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(bus, "uart")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_decode_unknown_setting_key_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """他プロトコルのキーを混ぜた場合、許容キー一覧を detail で返す。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "uart", settings={"scl_source": "CH1"})
+
+    error = excinfo.value
+    assert error.code == ErrorCode.INVALID_PARAMETER
+    assert error.detail["allowed"] == sorted(
+        [
+            "tx_source",
+            "rx_source",
+            "baud_bps",
+            "data_bits",
+            "parity",
+            "stop_bits",
+            "endian",
+            "polarity",
+            "tx_threshold_v",
+            "rx_threshold_v",
+        ]
+    )
+    assert scope.command_log == []
+
+
+@pytest.mark.parametrize(
+    ("protocol", "settings"),
+    [
+        ("uart", {"baud_bps": 0}),
+        ("uart", {"baud_bps": 20_000_001}),
+        ("uart", {"data_bits": 4}),
+        ("uart", {"stop_bits": 3}),
+        ("uart", {"parity": "mark"}),
+        ("uart", {"tx_source": "CH9"}),
+        ("spi", {"data_bits": 33}),
+        ("spi", {"timeout_s": 11.0}),
+        ("spi", {"frame_mode": "auto"}),
+        ("can", {"baud_bps": 9600}),
+        ("can", {"sample_point_percent": 95}),
+        ("lin", {"baud_bps": 1200}),
+        ("lin", {"standard": "v3x"}),
+        ("parallel", {"bus_width": 0}),
+    ],
+)
+def test_configure_decode_rejects_out_of_range_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope, protocol: str, settings: dict
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, protocol, settings=settings)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+@pytest.mark.parametrize(
+    ("protocol", "settings"),
+    [
+        ("uart", {"tx_source": "off", "rx_source": "OFF"}),
+        ("spi", {"mosi_source": "off", "miso_source": "off"}),
+    ],
+)
+def test_configure_decode_rejects_both_sources_off(
+    driver: ScopeDriver, scope: FakeScope, protocol: str, settings: dict
+) -> None:
+    """両方OFFはデコード対象が無い(機器も受理しない)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, protocol, settings=settings)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+# -- 読み取り --------------------------------------------------------------
+
+
+def test_get_decode_config_round_trip(driver: ScopeDriver) -> None:
+    driver.configure_decode(
+        1, "uart", enabled=True, event_table=True, settings=UART_SETTINGS
+    )
+
+    config = driver.get_decode_config(1)
+
+    assert config["bus"] == 1
+    assert config["protocol"] == "uart"
+    assert config["enabled"] is True
+    assert config["event_table"] is True
+    assert config["data_format"] == "hex"
+    assert config["settings"]["baud_bps"] == 115200
+    assert config["settings"]["tx_source"] == "CH1"
+    assert config["settings"]["rx_threshold_v"] == pytest.approx(0.0)
+    assert set(config["settings"]) == set(UART_SETTINGS) | {
+        "rx_source",
+        "endian",
+        "polarity",
+        "rx_threshold_v",
+    }
+
+
+def test_get_decode_config_uses_threshold_query_form(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """閾値の問い合わせは `:BUS<n>:THReshold? <type>`(実機実測の形)。"""
+    driver.configure_decode(1, "uart")
+    scope.command_log.clear()
+
+    driver.get_decode_config(1)
+
+    assert ":BUS1:THReshold? TX" in scope.command_log
+
+
+def test_get_decode_config_reports_unsupported_mode_as_is(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """オプション必須プロトコルに設定されたバスは、生の名前だけ返す。
+
+    ライセンス適用後に `:BUS1:MODE?` が `IIS` を返しても読み取りが壊れず、かつ
+    未確認ニモニック(`:BUS1:IIS:...`)を1件も送らないこと。
+    """
+    scope.buses[1]["mode"] = "IIS"
+
+    config = driver.get_decode_config(1)
+
+    assert config["protocol"] == "iis"
+    assert config["settings"] == {}
+    assert sent(scope, ":IIS") == []
+
+
+def test_get_decode_config_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.get_decode_config(1)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []

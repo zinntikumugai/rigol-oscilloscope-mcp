@@ -132,8 +132,8 @@ def test_list_tools_exposes_phase1_and_phase2(server) -> None:
 
     names = anyio.run(main)
 
-    assert set(names) == PHASE1_TOOLS | PHASE2_TOOLS
-    assert len(names) == 19
+    # 総数は tests/test_server_startup.py が持つ(フェーズ追加のたびに触らない)
+    assert PHASE1_TOOLS | PHASE2_TOOLS <= set(names)
 
 
 def test_write_tool_descriptions_warn_about_confirmation(server) -> None:
