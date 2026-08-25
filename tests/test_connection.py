@@ -11,8 +11,12 @@ import pytest
 from rigol_oscilloscope_mcp.config import Config
 from rigol_oscilloscope_mcp.driver.scope import ScopeDriver
 from rigol_oscilloscope_mcp.errors import ErrorCode, ScopeError
-from rigol_oscilloscope_mcp.service.connection import ConnectionManager
+from rigol_oscilloscope_mcp.service.connection import (
+    ConnectionManager,
+    _default_transport_factory,
+)
 from rigol_oscilloscope_mcp.testing import FakeScope, FakeTransport
+from rigol_oscilloscope_mcp.transport import UsbTransport
 
 
 class RecordingFactory:
@@ -298,10 +302,18 @@ def test_lock_is_reentrant(manager: ConnectionManager) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_default_factory_reports_usb_not_implemented() -> None:
-    manager = ConnectionManager(Config())
+def test_default_factory_builds_usb_transport() -> None:
+    """USBは遅延importの `UsbTransport`(接続はopen時、ここでは生成のみ)。"""
+    link = _default_transport_factory(
+        "usb", "USB0::0x1AB1::0x044C::MHO0001::INSTR", 5555, 5.0
+    )
 
+    assert isinstance(link, UsbTransport)
+    assert link.is_open is False
+
+
+def test_default_factory_rejects_unknown_transport() -> None:
     with pytest.raises(ScopeError) as excinfo:
-        manager.connect(address="USB0::0x1AB1::0x044C::MHO0001::INSTR")
+        _default_transport_factory("serial", "COM3", 5555, 5.0)
 
-    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
