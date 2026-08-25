@@ -1,16 +1,13 @@
-"""エントリポイント(スタブ)。
+"""エントリポイント(`rigol-oscilloscope-mcp` / `python -m rigol_oscilloscope_mcp`)。
 
-MCPサーバー本体は後続タスクで実装する。
+サーバー本体は server.py。ここは起動だけを担う。
 """
 
 from __future__ import annotations
 
-import sys
+from .server import main
 
-
-def main() -> int:
-    print("rigol-oscilloscope-mcp: server not yet implemented", file=sys.stderr)
-    return 1
+__all__ = ["main"]
 
 
 if __name__ == "__main__":
