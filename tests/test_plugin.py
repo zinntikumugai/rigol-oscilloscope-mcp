@@ -80,8 +80,10 @@ def test_skill_references_real_tools():
         "configure_channel",
         "configure_timebase",
         "configure_trigger",
+        "run",
         "single",
         "measure",
+        "capture_waveform",
         "capture_screenshot",
     ):
         assert tool in body, f"skill does not mention tool {tool}"

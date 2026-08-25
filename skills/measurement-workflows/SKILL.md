@@ -12,7 +12,7 @@ description: Measurement workflows and safety rules for the rigol-oscilloscope M
 
 ## Choosing settings from the signal type
 
-Pick the row matching the signal, then adjust with the user's known values. All values map 1:1 onto `configure_channel` / `configure_timebase` / `configure_trigger` arguments.
+Pick the row matching the signal, then adjust with the user's known values. The coupling / Vpp / freq / trigger / sweep_mode / probe_ratio columns map onto `configure_channel` / `configure_timebase` / `configure_trigger` arguments; the acquire column names the acquisition tool to call afterwards (`run` or `single`).
 
 | signal | coupling | assume Vpp | assume freq | trigger | sweep_mode | acquire | probe_ratio | notes |
 |---|---|---|---|---|---|---|---|---|
