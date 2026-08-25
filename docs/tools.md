@@ -66,7 +66,7 @@ API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。「500 mV」「20 us」等の�
 ```json
 {
   "connected": true,
-  "address": "192.168.1.120",
+  "address": "192.0.2.10",
   "transport": "lan",
   "manufacturer": "RIGOL TECHNOLOGIES",
   "model": "MHO98",
@@ -372,7 +372,8 @@ FFTの実装:
 
 動作・規範:
 
-- **確認フローは2段階**(Requirements.md 6.2、`autoset` と同じ実装): 1段目は `confirm_token` 無しで呼ばれ、**機器へ1コマンドも送らずに** `USER_CONFIRMATION_REQUIRED` を返す(`detail` に `confirm_token` / `description` / `risk` / `instruction` / `expires_in_s`)。2段目でそのトークンを渡して初めて出力がONになる。トークンは**チャンネル単位にバインド**され(ch1の承認でch2はONにできない)、単回・期限つき・接続世代つき
+- **確認フローは2段階**(Requirements.md 6.2、`autoset` と同じ実装): 1段目は `confirm_token` 無しで呼ばれ、**機器へ書き込みを1つも送らずに**(現在設定の読み取りのみ)`USER_CONFIRMATION_REQUIRED` を返す(`detail` に `confirm_token` / `description` / `risk` / `instruction` / `expires_in_s`)。2段目でそのトークンを渡して初めて出力がONになる。トークンは**チャンネル単位**かつ**発行時点のAFG設定スナップショット**にバインドされ(ch1の承認でch2はONにできない。発行後に振幅等を変更するとトークンは無効になり再承認が必要)、単回・期限つき・接続世代つき
+- **信頼モデル**: この確認フローが防ぐのは**LLMの誤操作・早とちり**であり、悪意あるMCPホストへの防御ではない(トークンは同じ呼び出し元に返る)。物理的な安全は配線を管理する人間の責務(Requirements.md 2.3)
 - **リスク文言の趣旨**(実行時文字列は英語): ①出力ONは「今そこに物理的に繋がっているもの」へ実信号を注入する行為であること、②**何が繋がっていて駆動して安全かを人間の利用者に確認させる**こと(生きた回路・通電中の回路を知らずに駆動しない)、③波形・周波数・振幅・オフセットは**ONにした瞬間に効く**ので、`get_afg_state` で読み戻して利用者に提示してから確認を求めること。LLMが自分で承認を代行しないよう、Tool description でも同じことを求める
 - 切替後の設定一式を `state` で返すのは、「実際に何が出ているか」をそのまま利用者へ示せるようにするため
 - 出力ONのまま設定を変えると外へ出る信号がその場で変わる。設定は原則ONにする前に済ませる

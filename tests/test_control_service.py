@@ -1236,16 +1236,43 @@ def test_enable_afg_risk_asks_about_the_physical_setup(
     assert "get_afg_state" in risk
 
 
-def test_enable_afg_without_token_sends_nothing(
+def test_enable_afg_without_token_sends_no_writes(
     service: ControlService, driver: ScopeDriver, scope: FakeScope
 ) -> None:
-    """承認前に機器へは1コマンドも送らない(出力もOFFのまま)。"""
+    """承認前に機器へ書き込みは1つも送らない(現在設定の読み取りのみ。出力もOFFのまま)。"""
     scope.command_log.clear()
 
     request_enable_afg(service, driver)
 
-    assert scope.command_log == []
+    assert [c for c in scope.command_log if "?" not in c] == []
     assert scope.afg[1]["output"] is False
+
+
+def test_enable_afg_token_is_bound_to_the_current_settings(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """発行後に設定を変えると旧トークンは無効(振幅の吊り上げを防ぐ)。"""
+    token = request_enable_afg(service, driver).detail["confirm_token"]
+    service.configure_afg(driver, 1, amplitude_vpp=20.0)
+
+    with pytest.raises(ScopeError) as excinfo:
+        service.enable_afg(driver, 0, channel=1, confirm_token=token)
+
+    assert excinfo.value.code == ErrorCode.USER_CONFIRMATION_REQUIRED
+    assert scope.afg[1]["output"] is False
+
+
+def test_enable_afg_token_survives_unrelated_reads(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """設定を変えなければ発行→消費が通る(読み取りはトークンを壊さない)。"""
+    token = request_enable_afg(service, driver).detail["confirm_token"]
+    driver.get_afg_config(1)
+
+    result = service.enable_afg(driver, 0, channel=1, confirm_token=token)
+
+    assert result["state"]["output"] is True
+    service.disable_afg(driver, 1)
 
 
 def test_enable_afg_issue_is_audited(

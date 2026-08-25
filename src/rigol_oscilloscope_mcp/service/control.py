@@ -351,11 +351,17 @@ class ControlService:
 
         **本Toolだけが実際に信号を外へ出す。** 接続先の被測定回路に何が繋がって
         いるかはサーバー側からは分からないため、承認は必須(トークンはチャンネル
-        単位・単回・接続世代つき)。トークン無しでは機器へ1コマンドも送らない。
+        単位・単回・接続世代つき)。トークン無しでは機器へ**書き込みを1つも
+        送らない**(現在設定の読み取りのみ行う)。
+
+        トークンは発行時点のAFG設定スナップショットにも束縛する: 発行と消費の
+        間に設定(振幅等)を変更すると引数ダイジェストが一致せず、トークンは
+        無効になる(承認後の振幅吊り上げの防止)。
         """
+        settings = driver.get_afg_config(channel)
         self._require_confirmation(
             "enable_afg",
-            {"channel": channel},
+            {"channel": channel, "settings": settings},
             generation,
             confirm_token,
             description=_AFG_OUTPUT_DESCRIPTION.format(n=channel),

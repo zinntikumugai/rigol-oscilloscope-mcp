@@ -1,14 +1,16 @@
 # rigol-oscilloscope-mcp
 
-Rigol製オシロスコープを **LLMから操作する** MCPサーバー。
+> An MCP (Model Context Protocol) server that lets LLMs (Claude, Codex, etc.) drive RIGOL oscilloscopes over SCPI (LAN / USB) — connect, configure channels/timebase/trigger, measure, capture waveforms and screenshots, decode serial protocols, run host-side FFT analysis, and control the built-in AFG, all through semantic tools with a four-tier safety policy. Verified on a real RIGOL MHO98; other RIGOL models work best-effort via device profiles. Documentation is currently in Japanese.
+
+RIGOL製オシロスコープを **LLMから操作する** MCPサーバー。
 
 「x10プローブで1kHz 3Vの波形を見えるようにして」「今の波形をスクショして保存して」といった自然言語の指示を、
 LLM(Claude / Codex 等)がMCP Tool呼び出しへ変換し、本サーバーがSCPI(LAN / USB)で機器を制御する。
 GUI自動操作は使わない。
 
 - **RIGOL MHO98 で実機検証済み**(→ [docs/verification/mho98-mvp.md](docs/verification/mho98-mvp.md))
-- 他のRigol機種は機種プロファイルによるベストエフォート対応(未知の機種は generic プロファイルで動作し、その旨を明示する)
-- Rigol以外のベンダーは対象外(接続時に警告を返すが拒否はしない)
+- 他のRIGOL機種は機種プロファイルによるベストエフォート対応(未知の機種は generic プロファイルで動作し、その旨を明示する)
+- RIGOL以外のベンダーは対象外(接続時に警告を返すが拒否はしない)
 
 ## 特徴
 
@@ -16,19 +18,19 @@ GUI自動操作は使わない。
 - **26個のMCP Tool** — 接続 / 識別 / 状態取得 / 測定 / 波形 / 解析(統計・FFT)/ スクリーンショット / チャンネル・タイムベース・トリガ設定 / Run・Stop・Single・Autoset / シリアルデコード設定・結果取得 / 信号発生(AFG)設定・状態取得・出力制御(出力ONは確認フロー付き)。SCPI文字列をLLMに書かせず、意味的Toolのみを公開する
 - **4クラスの安全ポリシー + confirmトークン** — 全操作を READ_ONLY / SAFE_WRITE / RESTRICTED_WRITE / DANGEROUS_WRITE に分類。50Ω入力やAuto SetupはホストUI非依存の2段階確認(confirmトークン)を必須とする
 - **スクリーンショット保存** — png / jpg / bmp / webp で指定パスへ保存し、画像そのものもLLMへ返す(書き込み先は許可ルートで制限)
-- **機種プロファイル** — SCPI方言・機能有無・パラメータ範囲を同梱YAMLで宣言し、モデル完全一致 → ファミリ → 汎用Rigol の3層で解決する
+- **機種プロファイル** — SCPI方言・機能有無・パラメータ範囲を同梱YAMLで宣言し、モデル完全一致 → ファミリ → 汎用RIGOL の3層で解決する
 - **requested / applied の両値返却** — 機器が設定値をスナップするかは機種依存のため、要求値とread-back値を両方返す
 - **監査ログ** — 書き込み操作を Before / Action / After 付きでJSONLに記録する
 
 ## インストール・起動
 
-GitHubリポジトリからの `uvx` 起動を標準とする(PyPI公開はしていない)。
+GitHubリポジトリからの `uvx` 起動を標準とする。
 
 ```bash
-uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp rigol-oscilloscope-mcp
+uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.0 rigol-oscilloscope-mcp
 ```
 
-タグ付きリリースには `@<tag>` を付けてバージョンを固定できる。
+既定でタグ(`@v0.1.0`)にバージョンを固定している。最新の開発版(main)を使う場合は `@v0.1.0` を外す。
 
 ### Claude Code — プラグイン(推奨)
 
@@ -46,7 +48,7 @@ uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp rigol-osc
   "mcpServers": {
     "rigol-oscilloscope": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp", "rigol-oscilloscope-mcp"],
+      "args": ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.0", "rigol-oscilloscope-mcp"],
       "env": { "RIGOL_MCP_SCREENSHOT_DIR": "~/scope-captures" }
     }
   }
@@ -69,7 +71,7 @@ codex plugin install rigol-oscilloscope
 ```toml
 [mcp_servers.rigol-oscilloscope]
 command = "uvx"
-args = ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp", "rigol-oscilloscope-mcp"]
+args = ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.0", "rigol-oscilloscope-mcp"]
 
 [mcp_servers.rigol-oscilloscope.env]
 RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
@@ -123,7 +125,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 ホスト側のMCP設定や会話フローを、オシロスコープを用意せずに確認できる。
 
 ```bash
-RIGOL_MCP_FAKE=1 uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp rigol-oscilloscope-mcp
+RIGOL_MCP_FAKE=1 uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.0 rigol-oscilloscope-mcp
 ```
 
 ## 開発
@@ -160,7 +162,7 @@ RIGOL_TEST_ADDRESS=<あなたのオシロのIP> RIGOL_TEST_ALLOW_WRITE=1 uv run 
 
 ## 安全上の注意
 
-**MHO98をはじめ多くのRigolオシロは非絶縁である**(各入力のGNDが筐体・USB等のGNDと共通、測定カテゴリ Category I)。
+**MHO98をはじめ多くのRIGOLオシロは非絶縁である**(各入力のGNDが筐体・USB等のGNDと共通、測定カテゴリ Category I)。
 本サーバーは危険な設定変更を防止するが、電気的安全性そのものを保証するものではない。
 
 | 主体 | 責務 |
@@ -174,6 +176,14 @@ RIGOL_TEST_ADDRESS=<あなたのオシロのIP> RIGOL_TEST_ALLOW_WRITE=1 uv run 
 - Firmware Update / Calibration / Factory Service操作 / ネットワーク設定変更は非対象
 
 詳細は [docs/Requirements.md](docs/Requirements.md) 6章(安全要件)。
+
+**confirmフローの信頼モデル:** 2段階確認(confirmトークン)は、**LLMの誤操作・早とちりを防ぐ**ための仕組みであり、悪意あるMCPホストへの防御ではない(トークンは同じ呼び出し元へ返るため、ホスト自身が悪意を持てば2回呼ぶだけで通過できる)。物理的な安全は「何が配線されているか」を管理する人間にのみ担保できる。なお `enable_afg` のトークンは発行時点のAFG設定にも束縛され、発行後に設定(振幅等)を変更するとトークンは無効になる。
+
+**免責:** 本ソフトウェアは無保証で提供される([LICENSE](LICENSE))。本ソフトウェアの使用に起因する計測器・被測定物(DUT)・周辺機器の損傷、測定結果の誤り、およびそれらから生じるいかなる損害についても、作者は責任を負わない。
+
+## ライセンス
+
+[MIT License](LICENSE) — Copyright (c) 2026 zinntikumugai
 
 ## ドキュメント
 

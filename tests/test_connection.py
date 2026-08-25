@@ -115,18 +115,18 @@ def test_connect_without_address_asks_the_user(manager: ConnectionManager) -> No
 
 def test_connect_falls_back_to_config_address(factory: RecordingFactory) -> None:
     manager = ConnectionManager(
-        Config(address="10.0.0.5", port=5025), transport_factory=factory
+        Config(address="192.0.2.5", port=5025), transport_factory=factory
     )
 
     status = manager.connect()
 
-    assert status.address == "10.0.0.5"
+    assert status.address == "192.0.2.5"
     assert status.port == 5025
-    assert factory.calls == [("lan", "10.0.0.5", 5025, 5.0)]
+    assert factory.calls == [("lan", "192.0.2.5", 5025, 5.0)]
 
 
 def test_argument_address_wins_over_config(factory: RecordingFactory) -> None:
-    manager = ConnectionManager(Config(address="10.0.0.5"), transport_factory=factory)
+    manager = ConnectionManager(Config(address="192.0.2.5"), transport_factory=factory)
 
     status = manager.connect(address="192.0.2.10", port=1234)
 
@@ -136,7 +136,7 @@ def test_argument_address_wins_over_config(factory: RecordingFactory) -> None:
 
 def test_config_transport_is_used(factory: RecordingFactory) -> None:
     manager = ConnectionManager(
-        Config(address="10.0.0.5", transport="usb"), transport_factory=factory
+        Config(address="192.0.2.5", transport="usb"), transport_factory=factory
     )
 
     assert manager.connect().transport == "usb"
