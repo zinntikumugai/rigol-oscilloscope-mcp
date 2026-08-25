@@ -254,9 +254,37 @@ Auto Setupは利用者の設定を大きく上書きするため、confirmトー
 - 対応プロトコルは機種プロファイルの `decode_protocols` が持つ([device-profiles.md](device-profiles.md) 2.2)。**未宣言のプロトコル(I2S / FlexRay / MIL-STD-1553 / CAN-FD)は送信前に `UNSUPPORTED_FEATURE`** — これらはライセンスオプション必須で、標準搭載6種のみを扱う
 - 返却: `bus` / `requested` / `applied`(read-back値)/ `changed`
 
-### `get_decode_result` — READ_ONLY / Phase 4(未実装)
+### `get_decode_result` — READ_ONLY / Phase 4
 
-デコード結果(イベントテーブル)の取得。**未実装**(PR C 予定)。結果取得SCPIとイベントテーブルの応答形式は実機検証が必要なため、本PRでは設定系のみを提供する。現時点でデコード結果を読むには `event_table=true` にしたうえで `capture_screenshot` で画面を確認する。
+デコード結果(イベントテーブル)を `:BUS<n>:DATA?` から読む。**書き込みを一切行わない**(取り込みの停止もしない)。
+
+引数:
+
+| 名前 | 型 | 説明 |
+|---|---|---|
+| `bus` | int | デコードバス番号。既定 1 |
+| `max_events` | int | 返すイベント数の上限(ホスト側で切り詰め)。未指定なら全件 |
+
+返却:
+
+| キー | 説明 |
+|---|---|
+| `bus` | バス番号 |
+| `protocol` | `:BUS<n>:MODE?` 由来の意味的プロトコル名(未対応プロトコルは生の名前を小文字化) |
+| `columns` | 列名。**プロトコル・機種依存**(実機MHO98のRS232は `["time_s", "tx_rx", "data", "error"]`) |
+| `events` | 行(列名 → 値)。`time_s` のみ秒のfloat、他は文字列(表記は `data_format` に従う) |
+| `event_count` | 切り詰め**前**の総件数 |
+| `truncated` | `max_events` で切り詰めたか |
+| `warnings` | 自然文の警告(下記) |
+
+動作・規範:
+
+- **前提は `configure_decode(enabled=true, event_table=true)`**。どちらかがOFFのバスでは `:DATA?` を**送らず**、`configure_decode(bus=N, ...)` を促す警告付きで空の結果を返す(OFF時の `:DATA?` の実機挙動が未確認のため送らない)
+- **取り込み中は警告を出すだけで停止しない**(read-onlyを崩さない)。安定した表が要るなら先に `stop` を呼ぶ。ガイドが停止を要求するのは `:BUS<n>:EEXPort` で、`:DATA?` については記載がない
+- 応答はTMCブロックで、中身は「デコード種別トークン / ヘッダ行 / 行...」の改行区切りCSV。**列構成はガイドに記載が無く**、実装はヘッダ行が与える列をそのまま採用する(スキーマを持たない)。列名は小文字snake_case化のみ行い(`Tx/Rx` → `tx_rx`)、`Time` だけ `time_s` として秒へ変換する(`-2.47us` のような工学表記)
+- 行が0件(信号なし)でも正常に `events: []` を返す(実機実測)
+- クエリ後にエラーキューを確認する(値が返ってもエラーが積まれる実機挙動、[verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 4章)
+- 列構成の実機観測は [verification/mho98-phase4.md](verification/mho98-phase4.md) に記録する(RS232のヘッダは実測済み。他プロトコルは未観測)
 
 ---
 
@@ -303,7 +331,9 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `autoset` | RESTRICTED_WRITE | 2 |
 | `recommend_setup`(未実装・スキルで代替) | READ_ONLY | 3 |
 | `configure_decode` | SAFE_WRITE | 4 |
-| `get_decode_result`(未実装) | READ_ONLY | 4 |
+| `get_decode_result` | READ_ONLY | 4 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-将来(Phase 4の残り): デコード結果取得(`get_decode_result`)、Logic Analyzer、AFG(出力ONはDANGEROUS_WRITE)、高度解析。
+登録Tool数は21(Phase 1: 12 + Phase 2: 7 + Phase 4: 2。`recommend_setup` / `raw_scpi` は未登録)。
+
+将来(Phase 4の残り): Logic Analyzer、AFG(出力ONはDANGEROUS_WRITE)、高度解析。

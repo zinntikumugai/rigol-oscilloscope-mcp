@@ -1150,3 +1150,199 @@ def test_get_decode_config_unsupported_profile_sends_nothing(
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert scope.command_log == []
+
+
+# -- イベントテーブル(get_decode_events)-----------------------------------
+
+
+class EventTableScope(FakeScope):
+    """`:BUS<n>:DATA?` のペイロードだけ差し替えるフェイク(異常系の観測用)。"""
+
+    payload = b""
+
+    def handle(self, command: str) -> bytes | None:
+        text = command.strip().upper()
+        if text.startswith(":BUS") and text.endswith(":DATA?"):
+            self.command_log.append(command)
+            length = f"{len(self.payload):09d}".encode("ascii")
+            return b"#9" + length + self.payload + b"\n"
+        return super().handle(command)
+
+
+def enable_event_table(driver: ScopeDriver, scope: FakeScope, protocol: str) -> None:
+    driver.configure_decode(1, protocol, enabled=True, event_table=True)
+    scope.command_log.clear()
+
+
+def test_get_decode_events_parses_the_guide_example(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """プログラミングガイド 3.4 の PARALLEL 例をそのまま解釈する。"""
+    enable_event_table(driver, scope, "parallel")
+
+    result = driver.get_decode_events(1)
+
+    assert result["bus"] == 1
+    assert result["protocol"] == "parallel"
+    assert result["columns"] == ["time_s", "data"]
+    assert result["events"] == [
+        {"time_s": pytest.approx(-2.47e-6), "data": "0"},
+        {"time_s": pytest.approx(-2.444e-6), "data": "1"},
+    ]
+    assert isinstance(result["events"][0]["time_s"], float)
+
+
+def test_get_decode_events_parses_the_device_rs232_columns(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """実機実測のRS232ヘッダ(`Time,Tx/Rx,Data,Error,`)を列追加なしで扱える。"""
+    enable_event_table(driver, scope, "uart")
+
+    result = driver.get_decode_events(1)
+
+    assert result["protocol"] == "uart"
+    assert result["columns"] == ["time_s", "tx_rx", "data", "error"]
+    assert result["events"][0] == {
+        "time_s": pytest.approx(-2.47e-6),
+        "tx_rx": "Tx",
+        "data": "0x55",
+        "error": "",
+    }
+
+
+def test_get_decode_events_accepts_an_empty_table() -> None:
+    """実機実測: 信号なしでは行が0件(ヘッダのみ)でも正常に返る。"""
+    scope = EventTableScope()
+    scope.payload = b"RS232\nTime,Tx/Rx,Data,Error,\n"
+    driver = make_driver(scope)
+    enable_event_table(driver, scope, "uart")
+    driver.stop()
+
+    result = driver.get_decode_events(1)
+
+    assert result["columns"] == ["time_s", "tx_rx", "data", "error"]
+    assert result["events"] == []
+    assert result["warnings"] == []
+
+
+def test_get_decode_events_accepts_an_empty_payload() -> None:
+    scope = EventTableScope()
+    driver = make_driver(scope)
+    enable_event_table(driver, scope, "uart")
+
+    result = driver.get_decode_events(1)
+
+    assert result["columns"] == []
+    assert result["events"] == []
+
+
+def test_get_decode_events_rejects_a_malformed_payload() -> None:
+    scope = EventTableScope()
+    scope.payload = b"RS232\nnot a table at all\n"
+    driver = make_driver(scope)
+    enable_event_table(driver, scope, "uart")
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_decode_events(1)
+
+    assert excinfo.value.code == ErrorCode.SCPI_ERROR
+    assert "not a table at all" in excinfo.value.detail["raw"]
+
+
+def test_get_decode_events_rejects_a_malformed_time_column() -> None:
+    scope = EventTableScope()
+    scope.payload = b"RS232\nTime,Data,\nlater,0x55,\n"
+    driver = make_driver(scope)
+    enable_event_table(driver, scope, "uart")
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_decode_events(1)
+
+    assert excinfo.value.code == ErrorCode.SCPI_ERROR
+    assert excinfo.value.detail["raw"] == "later"
+
+
+def test_get_decode_events_skips_the_query_while_the_bus_is_off(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """バス非表示ならデータ問い合わせを送らずに警告を返す。"""
+    driver.configure_decode(1, "uart")
+    scope.command_log.clear()
+
+    result = driver.get_decode_events(1)
+
+    assert result["events"] == []
+    assert result["columns"] == []
+    assert result["protocol"] == "uart"
+    assert any("configure_decode(bus=1, enabled=true)" in w for w in result["warnings"])
+    assert sent(scope, ":DATA?") == []
+
+
+def test_get_decode_events_skips_the_query_while_the_event_table_is_off(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_decode(1, "uart", enabled=True)
+    scope.command_log.clear()
+
+    result = driver.get_decode_events(1)
+
+    assert result["events"] == []
+    assert any(
+        "configure_decode(bus=1, event_table=true)" in w for w in result["warnings"]
+    )
+    assert sent(scope, ":DATA?") == []
+
+
+def test_get_decode_events_warns_while_acquisition_is_running(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    enable_event_table(driver, scope, "uart")
+
+    warnings = driver.get_decode_events(1)["warnings"]
+
+    assert any("acquisition is running" in w for w in warnings)
+    # 警告するだけで取り込みは止めない(read-only)
+    assert sent(scope, "STOP") == []
+
+
+def test_get_decode_events_is_quiet_while_stopped(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    enable_event_table(driver, scope, "uart")
+    driver.stop()
+
+    assert driver.get_decode_events(1)["warnings"] == []
+
+
+def test_get_decode_events_checks_the_error_queue(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """値が返ってもエラーが積まれることがある(オプションゲート済みの実機挙動)。"""
+    enable_event_table(driver, scope, "uart")
+    scope.error_queue.append(fake_scope_module.OUT_OF_RANGE)
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_decode_events(1)
+
+    assert excinfo.value.code == ErrorCode.SCPI_ERROR
+
+
+@pytest.mark.parametrize("bus", [0, 5])
+def test_get_decode_events_bus_out_of_range_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope, bus: int
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_decode_events(bus)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_get_decode_events_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.get_decode_events(1)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []

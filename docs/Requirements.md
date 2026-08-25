@@ -101,11 +101,11 @@ LLMに `:CHAN1:SCAL 1` のようなSCPI文字列を直接生成・送信させ�
 - Acquisition: Run / Stop / Single / Auto Setup(要承認)
 - Measurement: frequency, period, vpp, vmax, vmin, vavg, rms, duty, rise_time, fall_time
 - データ取得: 波形サンプル、スクリーンショット(ファイル保存 + 画像返却)、状態一括取得
-- シリアルプロトコルデコード設定(Phase 4で昇格): 標準搭載6種(UART/RS232、I²C、SPI、CAN、LIN、パラレル)のバス設定・表示・イベントテーブル(`configure_decode`)。ライセンスオプション必須のプロトコル(I2S、FlexRay、MIL-STD-1553、CAN-FD)は非対象
+- シリアルプロトコルデコード(Phase 4で昇格): 標準搭載6種(UART/RS232、I²C、SPI、CAN、LIN、パラレル)のバス設定・表示・イベントテーブル(`configure_decode`)と、デコード結果(イベントテーブル)の取得(`get_decode_result`)。ライセンスオプション必須のプロトコル(I2S、FlexRay、MIL-STD-1553、CAN-FD)は非対象
 
 ### 3.3 将来対応(Phase 4以降)
 
-デコード結果の取得(`get_decode_result`)、Logic Analyzer(D0–D15)、AFG(出力ONはDANGEROUS_WRITE)、ホスト側高度解析(FFT等)。予定の詳細は [roadmap.md](roadmap.md) に記録し、着手時に要件へ昇格させる。
+Logic Analyzer(D0–D15)、AFG(出力ONはDANGEROUS_WRITE)、ホスト側高度解析(FFT等)。予定の詳細は [roadmap.md](roadmap.md) に記録し、着手時に要件へ昇格させる。
 
 ### 3.4 非対象
 
@@ -407,7 +407,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 - **Phase 1 — Read Only MCP: 完了。** `connect` / `disconnect` / `scope_identify` / `get_capabilities` / `get_state` / `get_*` / `measure` / `capture_waveform` / `capture_screenshot`。機器を変更できない状態でMCP連携とプロファイル機構を検証
 - **Phase 2 — Basic Control: 完了。** `configure_*` / `run` / `stop` / `single` / `autoset`。Safety Layer(操作クラス・confirmトークン)導入。MVPの実機検証結果は [verification/mho98-mvp.md](verification/mho98-mvp.md)
 - **Phase 3 — Measurement Assistant: 完了。** 同梱スキル(`skills/measurement-workflows/`)による測定目的→設定の実用化とClaudeプラグイン化(10.3)。サーバー側Tool `recommend_setup` は実装せず、スキルで精度不足が実証された場合のフォールバックとして据え置き([tools.md](tools.md) 7章)
-- **Phase 4 — Advanced: 進行中。** シリアルデコード(標準6種の設定 `configure_decode` を実装、結果取得 `get_decode_result` は未実装)、導入済みオプション照会(`get_capabilities` の `options`)。以降 Logic Analyzer、AFG、高度解析
+- **Phase 4 — Advanced: 進行中。** シリアルデコード(標準6種の設定 `configure_decode` と結果取得 `get_decode_result` を実装)、導入済みオプション照会(`get_capabilities` の `options`)。以降 Logic Analyzer、AFG、高度解析
 
 ### 11.2 受入基準(MVP = Phase 1 + 2)
 

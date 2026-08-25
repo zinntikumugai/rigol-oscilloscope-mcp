@@ -39,7 +39,7 @@
 | `digital_channels` | 16 | 将来のLA対応 |
 | `afg_channels` | 2 | 将来のAFG対応 |
 | `bandwidth_hz` | 実機依存 | 参考情報 |
-| `protocol_decode` | true | デコード対応(`configure_decode` の可否) |
+| `protocol_decode` | true | デコード対応(`configure_decode` / `get_decode_result` の可否) |
 | `decode_buses` | 4 | デコードバス本数(`bus` 引数の検証。未宣言ならデコード自体を行わない) |
 | `waveform_download` | true | capture_waveform 可否 |
 | `screenshot` | true | capture_screenshot 可否 |

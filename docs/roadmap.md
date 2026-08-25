@@ -15,13 +15,14 @@ MVP(Phase 1 + 2 = Read Only + Basic Control)完了後に対応する機能と、
 
 ## 2. Phase 4 — 機器の高度機能
 
-### 2.1 シリアルプロトコルデコード(設定は完了・要件へ昇格)
+### 2.1 シリアルプロトコルデコード(設定・結果取得とも完了・要件へ昇格)
 
-**標準搭載6種(UART/RS232、I²C、SPI、CAN、LIN、パラレル)の設定Tool `configure_decode` を実装済み**([tools.md](tools.md) 6章、要件は [Requirements.md](Requirements.md) 3.2)。プロトコル別引数は `settings` オブジェクトで受け、対応表は機種プロファイルの `decode_protocols` と `driver/decode.py` が持つ。
+**標準搭載6種(UART/RS232、I²C、SPI、CAN、LIN、パラレル)の設定Tool `configure_decode` と結果取得Tool `get_decode_result` を実装済み**([tools.md](tools.md) 6章、要件は [Requirements.md](Requirements.md) 3.2)。プロトコル別引数は `settings` オブジェクトで受け、対応表は機種プロファイルの `decode_protocols` と `driver/decode.py` が持つ。
 
 残件:
 
-- **`get_decode_result`(未実装・PR C予定)**: デコード結果の取得SCPIとイベントテーブルの応答形式は実機検証が必要
+- **イベントテーブルの列構成は観測しながら固めていく**: `:BUS<n>:DATA?` の列はプロトコル依存でガイドに記載が無く、実装はヘッダ行をそのまま採用する(スキーマを持たない)。実機で観測できた列構成は [verification/mho98-phase4.md](verification/mho98-phase4.md) に追記していく(RS232の `Time,Tx/Rx,Data,Error,` は実測済み)
+- **バス無効時の `:DATA?` 挙動は未確認**: 現状は送信前に早期returnしているため実害はないが、観測できたら記録する
 - **オプション必須プロトコルは延期**: I2S、FlexRay、MIL-STD-1553、CAN-FD。未ライセンス機では検証できないため、ライセンス適用後に着手する
 - **将来ゲートは送信前に不要**: オプション必須ニモニックは沈黙せず「値を返しつつエラーキューに `-222` を積む」と実測済みのため、既存の「set → エラーキュー確認 → read-back」で機器自身のエラーを検出できる(実測根拠: [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 4章)。ただしquery系でもエラーキュー確認を省略しないこと
 - `:BUS` コアはDHO/MHO共通と見られる(ガイド比較)。DHO実機を検証できたらファミリプロファイルへ引き上げる([device-profiles.md](device-profiles.md) 2.2)

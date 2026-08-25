@@ -218,6 +218,20 @@ _THRESHOLD_TYPES = (
     "TX", "RX", "SCL", "SDA", "CLK", "MISO", "MOSI", "CS", "CAN", "LIN", "PAL", "PALCLK",
 )
 
+#: `:BUS<n>:DATA?` ペイロード先頭のデコード種別トークン(モード短形式 → トークン)。
+#: RS232 は実機実測(docs/verification/mho98-phase4.md)、PARALLEL はガイドの例。
+#: それ以外は 要実機検証(ここではモード名をそのまま返す)。
+_BUS_DATA_TOKENS = {"PAR": "PARALLEL", "IIC": "I2C"}
+
+#: プロトコル別のイベントテーブル(ヘッダ行, 行...)。
+#: RS232 のヘッダは実機実測。行の中身と他プロトコルの列構成は 要実機検証。
+_BUS_DATA_TABLES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "RS232": ("Time,Tx/Rx,Data,Error,", ("-2.47us,Tx,0x55,,", "-2.444us,Tx,0xAA,,")),
+    "PAR": ("Time,Data,", ("-2.47us,0,", "-2.444us,1,")),
+}
+#: 列構成が未確認のプロトコル用のフォールバック(要実機検証)
+_BUS_DATA_DEFAULT = _BUS_DATA_TABLES["PAR"]
+
 _SOURCES = (
     tuple(f"CHANnel{n}" for n in range(1, 5))
     + tuple(f"D{n}" for n in range(16))
@@ -613,6 +627,7 @@ class FakeScope:
             ),
             (rf"{bus}:{_mn('EVENt')}\?", lambda m: b"1" if self._bus(m)["event"] else b"0"),
             (rf"{bus}:{_mn('EVENt')}\s+{_VALUE}", self._bus_event_write),
+            (rf"{bus}:{_mn('DATA')}\?", self._bus_data),
             (rf"{bus}:{_mn('THReshold')}\?\s+{_VALUE}", self._bus_threshold_query),
             (
                 rf"{bus}:{_mn('THReshold')}\s+(\S+)\s*,\s*(\S+)",
@@ -762,6 +777,20 @@ class FakeScope:
         if value is None:
             raise self._silent(OUT_OF_RANGE)
         return value
+
+    def _bus_data(self, match: re.Match[str]) -> bytes:
+        """イベントテーブルをTMCブロックで返す。
+
+        表示・イベントテーブルが無効なときの実機挙動は未確認(要実機検証)。
+        ここでは空ペイロードを返す(ドライバは送信前に早期returnする)。
+        """
+        bus = self._bus(match)
+        if not (bus["display"] and bus["event"]):
+            return _block(b"")
+        mode = bus["mode"]
+        header, rows = _BUS_DATA_TABLES.get(mode, _BUS_DATA_DEFAULT)
+        lines = [_BUS_DATA_TOKENS.get(mode, mode), header, *rows]
+        return _block(("\n".join(lines) + "\n").encode("ascii"))
 
     def _bus_threshold_query(self, match: re.Match[str]) -> bytes:
         thresholds = self._bus(match)["thresholds"]

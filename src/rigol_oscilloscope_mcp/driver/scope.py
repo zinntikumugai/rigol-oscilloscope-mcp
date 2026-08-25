@@ -25,6 +25,7 @@ from .decode import (
     EVENT_ITEM,
     EXCLUSIVE_SOURCES,
     DecodeItem,
+    parse_event_table,
     profile_enum,
 )
 from .parsers import (
@@ -72,6 +73,8 @@ BWLIMIT_OFF = "OFF"
 IMPEDANCE_UNKNOWN = "unknown"
 
 DEFAULT_ANALOG_CHANNELS = 4
+# :TRIGger:STATus? の生値がこれなら停止中(TD / WAIT / AUTO 等は動作中)
+STOPPED_TRIGGER_STATUS = "STOP"
 PREAMBLE_FIELDS = 10
 
 _CHANNEL_RE = re.compile(r"^(?:CH|CHAN|CHANNEL)?\s*([0-9]+)$", re.IGNORECASE)
@@ -738,6 +741,80 @@ class ScopeDriver:
             settings[key] = item.from_scpi(response)
         config["settings"] = settings
         return config
+
+    def get_decode_events(self, bus: int) -> dict:
+        """イベントテーブル(`:BUS<n>:DATA?`)を読む。**書き込みは一切しない**。
+
+        応答はTMCブロックで、中身は「デコード種別トークン / ヘッダ行 / 行...」の
+        改行区切りCSV(MHO900・DHO800/900プログラミングガイド 3.4)。列構成は
+        プロトコル依存でガイドに記載が無いため、**列名は解釈せずそのまま返す**
+        (時刻列だけは `time_s` として秒へ変換する)。
+        """
+        protocols = self._decode_protocols()
+        number = self._decode_bus(bus)
+        prefix = f":BUS{number}"
+        query = self.session.query
+
+        _, mode_from = profile_enum(tuple(protocols.items()))
+        raw_mode = query(f"{prefix}:MODE?").strip()
+        try:
+            protocol = mode_from(raw_mode)
+        except ScopeError:
+            protocol = raw_mode.lower()
+
+        empty: dict[str, object] = {
+            "bus": number,
+            "protocol": protocol,
+            "columns": [],
+            "events": [],
+        }
+        # 未表示・イベントテーブル未表示のときの `:DATA?` の挙動は未確認なので送らない
+        if not DISPLAY_ITEM.from_scpi(query(f"{prefix}{DISPLAY_ITEM.path}?")):
+            return {
+                **empty,
+                "warnings": [
+                    f"decode bus {number} is not enabled; "
+                    f"call configure_decode(bus={number}, enabled=true) first"
+                ],
+            }
+        if not EVENT_ITEM.from_scpi(query(f"{prefix}{EVENT_ITEM.path}?")):
+            return {
+                **empty,
+                "warnings": [
+                    f"the event table of decode bus {number} is off; "
+                    f"call configure_decode(bus={number}, event_table=true) first"
+                ],
+            }
+
+        warnings: list[str] = []
+        if self.get_trigger_status() != STOPPED_TRIGGER_STATUS:
+            # 停止は上位(stop Tool)の判断。ここでは read-only を崩さない
+            warnings.append(
+                "acquisition is running; the event table is only a snapshot and "
+                "may change between reads (stop the acquisition for a stable table)"
+            )
+
+        command = f"{prefix}:DATA?"
+        payload = self.session.query_binary(command)
+        # 値が返ってもエラーが積まれることがある(mho98-unlicensed.md 4章)
+        self.session.check_error(command)
+
+        columns, events, token = parse_event_table(payload)
+        if token:
+            try:
+                protocol = mode_from(token)
+            except ScopeError:
+                protocol = token.lower()
+                warnings.append(
+                    f"the event table reports an unknown decoding type: {token!r}"
+                )
+        return {
+            "bus": number,
+            "protocol": protocol,
+            "columns": columns,
+            "events": events,
+            "warnings": warnings,
+        }
 
     # -- Acquisition ------------------------------------------------------
 

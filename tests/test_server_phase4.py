@@ -24,7 +24,7 @@ from rigol_oscilloscope_mcp.testing import FakeScope, FakeTransport
 
 ADDRESS = "192.0.2.10"  # TEST-NET-1(実接続は FakeTransport が肩代わりする)
 
-PHASE4_TOOLS = {"configure_decode"}
+PHASE4_TOOLS = {"configure_decode", "get_decode_result"}
 
 
 # --------------------------------------------------------------------------
@@ -148,6 +148,75 @@ def test_configure_decode_unknown_protocol_returns_error_dict(server) -> None:
 
 def test_configure_decode_while_disconnected(server) -> None:
     result = data(server, "configure_decode", {"protocol": "uart"})
+
+    assert result["error"] is True
+    assert result["code"] == ErrorCode.DEVICE_DISCONNECTED
+
+
+# --------------------------------------------------------------------------
+# get_decode_result
+# --------------------------------------------------------------------------
+
+
+def test_get_decode_result_end_to_end(server) -> None:
+    connected(server)
+    data(
+        server,
+        "configure_decode",
+        {"protocol": "uart", "bus": 1, "enabled": True, "event_table": True},
+    )
+    data(server, "stop")
+
+    result = data(server, "get_decode_result", {"bus": 1})
+
+    assert result["bus"] == 1
+    assert result["protocol"] == "uart"
+    # 列構成はプロトコル依存(実機実測のRS232ヘッダ)
+    assert result["columns"] == ["time_s", "tx_rx", "data", "error"]
+    assert result["event_count"] == len(result["events"])
+    assert result["truncated"] is False
+    assert result["warnings"] == []
+    assert isinstance(result["events"][0]["time_s"], float)
+
+
+def test_get_decode_result_warns_while_the_bus_is_off(server) -> None:
+    connected(server)
+    data(server, "configure_decode", {"protocol": "uart", "bus": 2})
+
+    result = data(server, "get_decode_result", {"bus": 2})
+
+    assert result["events"] == []
+    assert result["event_count"] == 0
+    assert any("configure_decode(bus=2, enabled=true)" in w for w in result["warnings"])
+
+
+def test_get_decode_result_truncates_with_max_events(server) -> None:
+    connected(server)
+    data(
+        server,
+        "configure_decode",
+        {"protocol": "uart", "bus": 1, "enabled": True, "event_table": True},
+    )
+
+    result = data(server, "get_decode_result", {"bus": 1, "max_events": 1})
+
+    assert len(result["events"]) == 1
+    assert result["event_count"] == 2
+    assert result["truncated"] is True
+    assert any("max_events" in w for w in result["warnings"])
+
+
+def test_get_decode_result_rejects_max_events_zero(server) -> None:
+    connected(server)
+
+    result = data(server, "get_decode_result", {"max_events": 0})
+
+    assert result["error"] is True
+    assert result["code"] == ErrorCode.INVALID_PARAMETER
+
+
+def test_get_decode_result_while_disconnected(server) -> None:
+    result = data(server, "get_decode_result", {})
 
     assert result["error"] is True
     assert result["code"] == ErrorCode.DEVICE_DISCONNECTED

@@ -12,13 +12,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import asdict
 
-from ..driver.scope import ScopeDriver
+from ..driver.scope import STOPPED_TRIGGER_STATUS, ScopeDriver
 from ..errors import ErrorCode, ScopeError
 
 VALID_SECTIONS = ("channels", "timebase", "trigger", "acquisition")
 
 # :TRIGger:STATus? の生値がこれなら停止中(TD / WAIT / AUTO 等は動作中)
-STOPPED_STATUS = "STOP"
+STOPPED_STATUS = STOPPED_TRIGGER_STATUS
 
 
 def get_channel_dict(driver: ScopeDriver, channel: str) -> dict:

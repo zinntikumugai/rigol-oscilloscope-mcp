@@ -33,6 +33,7 @@ from rigol_oscilloscope_mcp.service import (
     ConnectionStatus,
     capture_screenshot,
     capture_waveform,
+    get_decode_result,
     get_state,
     measure,
 )
@@ -395,3 +396,41 @@ def test_identify_latency_profile(driver: ScopeDriver) -> None:
             ", ".join(f"{d:.4f}" for d in durations),
         )
     )
+
+
+# -- 9. デコード結果(read-only。設定は一切変えない)------------------------
+
+
+def test_get_decode_result_bus1(driver: ScopeDriver) -> None:
+    """バス1のイベントテーブルを読む(表示・イベントテーブルの状態は変えない)。
+
+    read-onlyスイートなのでデコードを有効化しない。既に有効ならテーブルの
+    解釈可能性(時刻列がfloat)を、無効なら早期returnの警告形を検証する。
+    """
+    config = driver.get_decode_config(1)
+    _report(
+        "[decode] bus1 protocol=%s enabled=%s event_table=%s format=%s"
+        % (
+            config["protocol"],
+            config["enabled"],
+            config["event_table"],
+            config["data_format"],
+        )
+    )
+
+    result = get_decode_result(driver, 1)
+
+    assert result["bus"] == 1
+    assert result["truncated"] is False
+    if not (config["enabled"] and config["event_table"]):
+        assert result["events"] == []
+        assert result["columns"] == []
+        assert any("configure_decode(bus=1" in w for w in result["warnings"])
+        return
+
+    _report(f"[decode] columns={result['columns']} events={result['event_count']}")
+    for event in result["events"][:3]:
+        _report(f"[decode] {event}")
+    # 表が空(ヘッダごと無い)ことはあり得るが、列があれば先頭は時刻列
+    assert result["columns"][:1] in ([], ["time_s"])
+    assert all(isinstance(e["time_s"], float) for e in result["events"])
