@@ -1,4 +1,4 @@
-"""MCPサーバー(Phase 1: Read Only Tool群 / tools.md 8章)。
+"""MCPサーバー(Phase 1: Read Only / Phase 2: 書き込み系 Tool群 / tools.md 8章)。
 
 MCP SDK(FastMCP)への依存は本モジュールに閉じ込め、下位層(service / driver)
 はSDKを知らないまま保つ。
@@ -30,7 +30,8 @@ from mcp.server.fastmcp import FastMCP, Image
 from . import service
 from .config import Config, load_config
 from .errors import ScopeError
-from .service import ConnectionManager, ConnectionStatus
+from .safety import AuditLogger, ConfirmTokenStore
+from .service import ConnectionManager, ConnectionStatus, ControlService
 from .service.connection import DISCONNECTED_MESSAGE
 
 SERVER_NAME = "rigol-oscilloscope-mcp"
@@ -133,7 +134,7 @@ def create_server(
     config: Config | None = None,
     connection_manager: ConnectionManager | None = None,
 ) -> FastMCP:
-    """Phase 1のToolを登録したサーバーを組み立てる。
+    """Phase 1 / Phase 2 のToolを登録したサーバーを組み立てる。
 
     `config` 省略時は環境変数・設定ファイルから解決する。
     `connection_manager` 省略時は生成し、`RIGOL_MCP_FAKE=1` なら実機の代わりに
@@ -141,6 +142,9 @@ def create_server(
     """
     resolved_config = load_config() if config is None else config
     manager = _build_manager(resolved_config) if connection_manager is None else connection_manager
+    # confirmトークンはサーバー(=セッション)寿命で共有する。世代バインドは
+    # 呼び出しごとに manager.generation を渡すことで効かせる(Requirements.md 6.2)
+    control = ControlService(ConfirmTokenStore(), AuditLogger(resolved_config.audit_log))
 
     server = FastMCP(SERVER_NAME, instructions=INSTRUCTIONS)
     tool = server.tool
@@ -294,6 +298,126 @@ def create_server(
         if not return_image:
             return metadata
         return [metadata, Image(data=shot.image_bytes, format=shot.format)]
+
+    # -- 設定変更(tools.md 3章)-------------------------------------------
+
+    @tool()
+    @_tool_result
+    def configure_channel(
+        channel: str,
+        enabled: bool | None = None,
+        scale_v_per_div: float | None = None,
+        offset_v: float | None = None,
+        coupling: str | None = None,
+        probe_ratio: float | None = None,
+        bandwidth_limit: bool | None = None,
+        impedance: str | None = None,
+        confirm_token: str | None = None,
+    ) -> dict:
+        """垂直軸(チャンネル)を設定する。未指定の項目は変更しない。
+
+        channel は "CH1"〜"CH4"、coupling は DC / AC / GND、
+        impedance は "1M" / "50"。変更する項目を最低1つ指定すること。
+        機器が値をスナップすることがあるため、結果は requested ではなく
+        applied(read-back値)を信頼する。
+
+        impedance="50" は機器破損リスクがあるため確認フローが必要:
+        1回目は実行されず confirm_token が返るので、人間の利用者に実行可否を
+        確認したうえで、同じ引数に confirm_token を添えて再度呼ぶこと。
+        """
+        with manager.lock:
+            return control.configure_channel(
+                manager.require_scope(),
+                manager.generation,
+                channel,
+                enabled=enabled,
+                scale_v_per_div=scale_v_per_div,
+                offset_v=offset_v,
+                coupling=coupling,
+                probe_ratio=probe_ratio,
+                bandwidth_limit=bandwidth_limit,
+                impedance=impedance,
+                confirm_token=confirm_token,
+            )
+
+    @tool()
+    @_tool_result
+    def configure_timebase(
+        scale_s_per_div: float | None = None,
+        position_s: float | None = None,
+    ) -> dict:
+        """水平軸(時間軸)を設定する。未指定の項目は変更しない。
+
+        変更する項目を最低1つ指定すること。機器が値をスナップすることがあるため、
+        結果は applied(read-back値)を信頼する。
+        """
+        with manager.lock:
+            return control.configure_timebase(
+                manager.require_scope(),
+                scale_s_per_div=scale_s_per_div,
+                position_s=position_s,
+            )
+
+    @tool()
+    @_tool_result
+    def configure_trigger(
+        source: str | None = None,
+        level_v: float | None = None,
+        slope: str | None = None,
+        sweep_mode: str | None = None,
+    ) -> dict:
+        """エッジトリガを設定する。未指定の項目は変更しない。
+
+        source は "CH1"〜"CH4"、slope は rising / falling / either、
+        sweep_mode は auto / normal / single。変更する項目を最低1つ指定すること。
+        """
+        with manager.lock:
+            return control.configure_trigger(
+                manager.require_scope(),
+                source=source,
+                level_v=level_v,
+                slope=slope,
+                sweep_mode=sweep_mode,
+            )
+
+    # -- Acquisition(tools.md 4章)-----------------------------------------
+
+    @tool()
+    @_tool_result
+    def run() -> dict:
+        """波形取り込みを開始する(連続実行)。"""
+        with manager.lock:
+            return control.run(manager.require_scope())
+
+    @tool()
+    @_tool_result
+    def stop() -> dict:
+        """波形取り込みを停止する(画面の波形を固定する)。"""
+        with manager.lock:
+            return control.stop(manager.require_scope())
+
+    @tool()
+    @_tool_result
+    def single() -> dict:
+        """シングルショット取り込みを行う(1回トリガして停止する)。"""
+        with manager.lock:
+            return control.single(manager.require_scope())
+
+    @tool()
+    @_tool_result
+    def autoset(confirm_token: str | None = None) -> dict:
+        """Auto Setup(オートスケール)を実行する。
+
+        現在の設定が大きく変更される(垂直感度・水平時間軸・トリガが自動調整され、
+        調整前の設定は失われる)ため確認フローが必要:
+        1回目は実行されず confirm_token が返るので、人間の利用者に実行可否を
+        確認したうえで confirm_token を添えて再度呼ぶこと。
+        実行後は変更された主要設定を state で返す。
+        """
+        with manager.lock:
+            return control.autoset(
+                manager.require_scope(), manager.generation, confirm_token
+            )
 
     return server
 

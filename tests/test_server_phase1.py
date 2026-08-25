@@ -98,14 +98,16 @@ def connected(server) -> None:
 
 
 def test_list_tools_exposes_all_phase1_tools(server) -> None:
+    """Phase 1 のToolが揃っていること(全体の顔ぶれは phase2 側で固定する)。"""
+
     async def main() -> list[str]:
         async with create_connected_server_and_client_session(server) as client:
             return [tool.name for tool in (await client.list_tools()).tools]
 
     names = anyio.run(main)
 
-    assert set(names) == PHASE1_TOOLS
-    assert len(names) == len(PHASE1_TOOLS)
+    assert PHASE1_TOOLS <= set(names)
+    assert len(names) == len(set(names))
 
 
 def test_tool_descriptions_guide_the_llm(server) -> None:
