@@ -72,7 +72,7 @@ def test_inline_time_metadata(driver: ScopeDriver, config: Config) -> None:
     assert result["sample_interval_s"] == XINCREMENT
     assert result["time_origin_s"] == XORIGIN
     assert result["effective_sample_rate_sa_per_s"] == 500000.0
-    assert "間引き" in result["note"]
+    assert "decimated" in result["note"]
 
 
 def test_inline_has_no_file_reference(driver: ScopeDriver, config: Config) -> None:

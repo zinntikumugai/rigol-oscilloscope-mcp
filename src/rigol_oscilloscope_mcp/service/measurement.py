@@ -18,7 +18,7 @@ VALID_QUALITY = "valid"
 
 
 def _warning(name: str) -> str:
-    return f"{name} の測定値は無効です(no signal / 未安定の可能性)"
+    return f"{name} measurement is invalid (possibly no signal or not yet settled)"
 
 
 def measure(driver: ScopeDriver, channel: str, measurements: list[str]) -> dict:
@@ -28,7 +28,7 @@ def measure(driver: ScopeDriver, channel: str, measurements: list[str]) -> dict:
     if not names:
         raise ScopeError(
             ErrorCode.INVALID_PARAMETER,
-            "measurements が空です(測定項目を1つ以上指定してください)",
+            "measurements is empty (specify at least one measurement item)",
             {"measurements": measurements},
         )
 

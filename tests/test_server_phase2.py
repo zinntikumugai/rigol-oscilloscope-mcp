@@ -144,8 +144,8 @@ def test_write_tool_descriptions_warn_about_confirmation(server) -> None:
     descriptions = anyio.run(main)
 
     assert "50" in descriptions["configure_channel"]
-    assert "確認" in descriptions["configure_channel"]
-    assert "確認" in descriptions["autoset"]
+    assert "confirm" in descriptions["configure_channel"]
+    assert "confirm" in descriptions["autoset"]
 
 
 # --------------------------------------------------------------------------
@@ -221,7 +221,7 @@ def test_50ohm_requires_confirmation_then_succeeds(server) -> None:
     assert first["code"] == ErrorCode.USER_CONFIRMATION_REQUIRED
     token = first["detail"]["confirm_token"]
     assert token
-    assert "人間" in first["detail"]["instruction"]
+    assert "human" in first["detail"]["instruction"]
     assert first["detail"]["expires_in_s"] > 0
     # 承認前に機器へ書き込んでいないこと
     assert data(server, "get_channel", {"channel": "CH1"})["impedance"] == "1M"
@@ -285,7 +285,7 @@ def test_autoset_requires_confirmation_then_returns_state(server) -> None:
     assert first["error"] is True
     assert first["code"] == ErrorCode.USER_CONFIRMATION_REQUIRED
     token = first["detail"]["confirm_token"]
-    assert "人間" in first["detail"]["instruction"]
+    assert "human" in first["detail"]["instruction"]
 
     second = data(server, "autoset", {"confirm_token": token})
 

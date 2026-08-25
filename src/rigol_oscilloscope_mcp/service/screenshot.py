@@ -26,7 +26,7 @@ DEFAULT_STEM_PREFIX = "scope_"
 # ミリ秒まで含める(同一秒内の連続撮影でデフォルト名が衝突しないように)
 TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S_%f"
 _MISMATCH_HINT = (
-    "formatとpathの拡張子を一致させるか、どちらか一方のみ指定してください"
+    "Make the format and the path extension match, or specify only one of them"
 )
 
 # "jpg" は "jpeg" に正規化する(返却する format / mime を一意にするため)
@@ -63,7 +63,7 @@ def _normalized(requested: str) -> str:
     if normalized not in SUPPORTED_FORMATS:
         raise ScopeError(
             ErrorCode.INVALID_PARAMETER,
-            f"未対応の画像形式です: {requested}",
+            f"Unsupported image format: {requested}",
             {"format": requested, "supported": list(SUPPORTED_FORMATS)},
         )
     return normalized
@@ -84,7 +84,7 @@ def _requested_format(path: str | None, format: str | None) -> str:
     if suffix and _CANONICAL[_normalized(suffix)] != _CANONICAL[normalized]:
         raise ScopeError(
             ErrorCode.INVALID_PARAMETER,
-            f"format と path の拡張子が一致しません: {format} / {suffix}",
+            f"format and the path extension do not match: {format} / {suffix}",
             {
                 "format": format,
                 "path_extension": suffix.lstrip("."),

@@ -146,7 +146,7 @@ def test_measure_invalid_value_is_none_with_warning(
     assert result["values"]["vpp_v"] is None
     assert result["quality"]["vpp"] == "unknown"
     assert result["warnings"] == [
-        "vpp の測定値は無効です(no signal / 未安定の可能性)"
+        "vpp measurement is invalid (possibly no signal or not yet settled)"
     ]
 
 

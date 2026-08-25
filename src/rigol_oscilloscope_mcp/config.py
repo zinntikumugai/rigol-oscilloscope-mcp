@@ -48,21 +48,21 @@ class Config:
 def _invalid(key: str, value: Any, reason: str) -> ScopeError:
     return ScopeError(
         ErrorCode.INVALID_PARAMETER,
-        f"設定 {key} の値が不正です: {reason}",
+        f"Invalid value for setting {key}: {reason}",
         {"key": key, "value": repr(value)},
     )
 
 
 def _read_toml(path: Path) -> dict:
     if not path.is_file():
-        raise _invalid("config", str(path), "設定ファイルが見つかりません")
+        raise _invalid("config", str(path), "Config file not found")
     try:
         with path.open("rb") as fp:
             data = tomllib.load(fp)
     except tomllib.TOMLDecodeError as exc:
-        raise _invalid("config", str(path), f"TOMLの解析に失敗しました: {exc}") from exc
+        raise _invalid("config", str(path), f"Failed to parse TOML: {exc}") from exc
     if not isinstance(data, dict):  # pragma: no cover - tomllibは常にdictを返す
-        raise _invalid("config", str(path), "トップレベルがテーブルではありません")
+        raise _invalid("config", str(path), "Top level is not a table")
     return data
 
 
@@ -88,7 +88,7 @@ def _as_str(src: _Source, key: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise _invalid(key, value, "文字列である必要があります")
+        raise _invalid(key, value, "must be a string")
     return value.strip()
 
 
@@ -97,15 +97,15 @@ def _as_int(src: _Source, key: str) -> int | None:
     if value is None:
         return None
     if isinstance(value, bool):
-        raise _invalid(key, value, "整数である必要があります")
+        raise _invalid(key, value, "must be an integer")
     if isinstance(value, int):
         return value
     if isinstance(value, str):
         try:
             return int(value.strip())
         except ValueError as exc:
-            raise _invalid(key, value, "整数として解釈できません") from exc
-    raise _invalid(key, value, "整数である必要があります")
+            raise _invalid(key, value, "cannot be interpreted as an integer") from exc
+    raise _invalid(key, value, "must be an integer")
 
 
 def _as_float(src: _Source, key: str) -> float | None:
@@ -113,15 +113,15 @@ def _as_float(src: _Source, key: str) -> float | None:
     if value is None:
         return None
     if isinstance(value, bool):
-        raise _invalid(key, value, "数値である必要があります")
+        raise _invalid(key, value, "must be a number")
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, str):
         try:
             return float(value.strip())
         except ValueError as exc:
-            raise _invalid(key, value, "数値として解釈できません") from exc
-    raise _invalid(key, value, "数値である必要があります")
+            raise _invalid(key, value, "cannot be interpreted as a number") from exc
+    raise _invalid(key, value, "must be a number")
 
 
 def _as_bool(src: _Source, key: str) -> bool | None:
@@ -136,8 +136,8 @@ def _as_bool(src: _Source, key: str) -> bool | None:
             return True
         if lowered in _FALSE_VALUES:
             return False
-        raise _invalid(key, value, "真偽値として解釈できません")
-    raise _invalid(key, value, "真偽値である必要があります")
+        raise _invalid(key, value, "cannot be interpreted as a boolean")
+    raise _invalid(key, value, "must be a boolean")
 
 
 def _as_path(src: _Source, key: str) -> Path | None:
@@ -161,11 +161,11 @@ def _as_path_list(src: _Source, key: str) -> tuple[Path, ...]:
         parts = []
         for item in value:
             if not isinstance(item, str):
-                raise _invalid(key, item, "パス文字列である必要があります")
+                raise _invalid(key, item, "must be a path string")
             if item.strip():
                 parts.append(item.strip())
     else:
-        raise _invalid(key, value, "パスのリストである必要があります")
+        raise _invalid(key, value, "must be a list of paths")
     return tuple(_resolve_path(part) for part in parts)
 
 
@@ -174,7 +174,7 @@ def _choice(key: str, value: str | None, allowed: tuple[str, ...]) -> str | None
         return None
     lowered = value.lower()
     if lowered not in allowed:
-        raise _invalid(key, value, f"{' / '.join(allowed)} のいずれかである必要があります")
+        raise _invalid(key, value, f"must be one of {' / '.join(allowed)}")
     return lowered
 
 
@@ -245,16 +245,16 @@ def load_config(
 
     port = _as_int(src, "port")
     if port is not None and not (1 <= port <= 65535):
-        raise _invalid("port", port, "1〜65535 の範囲である必要があります")
+        raise _invalid("port", port, "must be in the range 1-65535")
 
     timeout_s = _as_float(src, "timeout_s")
     if timeout_s is not None and timeout_s <= 0:
-        raise _invalid("timeout_s", timeout_s, "正の数である必要があります")
+        raise _invalid("timeout_s", timeout_s, "must be a positive number")
 
     waveform_max_points = _as_int(src, "waveform_max_points")
     if waveform_max_points is not None and waveform_max_points <= 0:
         raise _invalid(
-            "waveform_max_points", waveform_max_points, "正の整数である必要があります"
+            "waveform_max_points", waveform_max_points, "must be a positive integer"
         )
 
     raw_scpi = _as_bool(src, "raw_scpi")

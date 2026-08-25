@@ -62,14 +62,14 @@ def _validate(sections: list[str]) -> None:
     if not sections:
         raise ScopeError(
             ErrorCode.INVALID_PARAMETER,
-            f"sections が空です(省略すると全セクション。指定可能: {list(VALID_SECTIONS)})",
+            f"sections is empty (omit it for all sections; valid: {list(VALID_SECTIONS)})",
             {"invalid_sections": [], "valid": list(VALID_SECTIONS)},
         )
     invalid = [s for s in sections if s not in _SECTION_GETTERS]
     if invalid:
         raise ScopeError(
             ErrorCode.INVALID_PARAMETER,
-            f"未知のセクションです: {invalid}(指定可能: {list(VALID_SECTIONS)})",
+            f"Unknown section: {invalid} (valid: {list(VALID_SECTIONS)})",
             {"invalid_sections": invalid, "valid": list(VALID_SECTIONS)},
         )
 

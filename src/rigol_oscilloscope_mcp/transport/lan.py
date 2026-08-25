@@ -59,7 +59,7 @@ class LanTransport:
         except OSError as exc:  # gaierror / timeout / ConnectionRefusedError を含む
             raise ScopeError(
                 ErrorCode.DEVICE_NOT_FOUND,
-                f"{self.host}:{self.port} に接続できません: {exc}",
+                f"cannot connect to {self.host}:{self.port}: {exc}",
                 {"host": self.host, "port": self.port},
             ) from exc
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -69,7 +69,7 @@ class LanTransport:
             sock.close()
             raise ScopeError(
                 ErrorCode.DEVICE_NOT_FOUND,
-                f"{self.host}:{self.port} へ接続直後の空行を送信できません: {exc}",
+                f"cannot send the post-connect blank line to {self.host}:{self.port}: {exc}",
                 {"host": self.host, "port": self.port},
             ) from exc
         self._sock = sock
@@ -114,7 +114,7 @@ class LanTransport:
         if tail != b"\n":
             raise ScopeError(
                 ErrorCode.WAVEFORM_TRANSFER_FAILED,
-                f"バイナリブロックの直後が改行ではありません: {tail!r}",
+                f"the byte after the binary block is not a newline: {tail!r}",
                 {"command": command, "trailing": tail.decode("latin-1")},
             )
         return payload
@@ -128,7 +128,7 @@ class LanTransport:
         if self._sock is None:
             raise ScopeError(
                 ErrorCode.DEVICE_DISCONNECTED,
-                "接続されていません(open() が必要です)",
+                "Not connected (open() is required)",
                 {"host": self.host, "port": self.port},
             )
         return self._sock
@@ -144,7 +144,7 @@ class LanTransport:
         self.close()
         return ScopeError(
             ErrorCode.TIMEOUT,
-            f"応答がタイムアウトしました: {command}",
+            f"response timed out: {command}",
             {"command": command},
         )
 
@@ -153,7 +153,7 @@ class LanTransport:
         self.close()
         return ScopeError(
             ErrorCode.DEVICE_DISCONNECTED,
-            f"接続が切断されました({reason}): {command}",
+            f"connection was closed ({reason}): {command}",
             {"command": command, "host": self.host, "port": self.port},
         )
 

@@ -67,9 +67,9 @@ def test_confirm_request_is_frozen() -> None:
 def test_instruction_requires_human_confirmation() -> None:
     """文言退行ガード: LLMへ人間への確認を必須と指示していること(6.2)。"""
     req = _issue(_store())
-    assert "人間" in req.instruction
-    assert "確認" in req.instruction
-    assert "同意" in req.instruction
+    assert "human" in req.instruction
+    assert "ask" in req.instruction
+    assert "consent" in req.instruction
 
 
 def test_instruction_is_constant_across_issues() -> None:

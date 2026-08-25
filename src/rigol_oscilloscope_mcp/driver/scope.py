@@ -117,7 +117,7 @@ class WaveformPreamble:
         if len(parts) != PREAMBLE_FIELDS:
             raise ScopeError(
                 ErrorCode.SCPI_ERROR,
-                f"プリアンブルの要素数が {PREAMBLE_FIELDS} ではありません: {len(parts)}",
+                f"preamble does not have {PREAMBLE_FIELDS} fields: {len(parts)}",
                 {"raw": text, "count": len(parts)},
             )
         try:
@@ -125,7 +125,7 @@ class WaveformPreamble:
         except ValueError:
             raise ScopeError(
                 ErrorCode.SCPI_ERROR,
-                f"プリアンブルを数値として解釈できません: {text!r}",
+                f"cannot interpret preamble as numbers: {text!r}",
                 {"raw": text},
             ) from None
         return cls(
@@ -168,18 +168,18 @@ class ScopeDriver:
     def _channel_number(self, channel: str) -> int:
         """`CH1` / `CHANnel1` / `1` → 1。プロファイルのチャンネル数で範囲検証する。"""
         if not isinstance(channel, str):
-            raise _invalid(f"チャンネル名が文字列ではありません: {channel!r}", {"channel": channel})
+            raise _invalid(f"channel name is not a string: {channel!r}", {"channel": channel})
         match = _CHANNEL_RE.match(channel.strip())
         if match is None:
             raise _invalid(
-                f"チャンネル名を解釈できません: {channel!r}(例: 'CH1')",
+                f"cannot interpret channel name: {channel!r} (e.g. 'CH1')",
                 {"channel": channel},
             )
         number = int(match.group(1))
         available = self.analog_channels
         if not 1 <= number <= available:
             raise _invalid(
-                f"チャンネル {channel} は存在しません(この機種は CH1〜CH{available})",
+                f"channel {channel} does not exist (this model has CH1-CH{available})",
                 {"channel": channel, "analog_channels": available},
             )
         return number
@@ -187,7 +187,7 @@ class ScopeDriver:
     def _require(self, capability: str, what: str) -> None:
         if not self.profile.supports(capability):
             raise _unsupported(
-                f"この機種のプロファイルは{what}に対応していません",
+                f"this model's profile does not support {what}",
                 {"capability": capability, "profile": self.profile.name},
             )
 
@@ -200,7 +200,7 @@ class ScopeDriver:
         value = self.profile.dialect.get(key)
         if not isinstance(value, str) or not value:
             raise _unsupported(
-                f"この機種のプロファイルは{what}に用いる値を宣言していません",
+                f"this model's profile does not declare a value to use for {what}",
                 {"dialect": key, "profile": self.profile.name},
             )
         return value
@@ -214,7 +214,7 @@ class ScopeDriver:
         if len(parts) != 4:
             raise ScopeError(
                 ErrorCode.SCPI_ERROR,
-                f"*IDN? の応答が4要素ではありません: {response!r}",
+                f"*IDN? response does not have 4 fields: {response!r}",
                 {"raw": response},
             )
         return IdnInfo(
@@ -285,14 +285,14 @@ class ScopeDriver:
         受理し、往復(読んだ設定の書き戻し)が成立する。
         """
         if not isinstance(source, str):
-            raise _invalid(f"トリガソースが文字列ではありません: {source!r}", {"source": source})
+            raise _invalid(f"trigger source is not a string: {source!r}", {"source": source})
         token = self._normalize_source(source)
         if _CHANNEL_RE.match(token):
             return f"CHANnel{self._channel_number(token)}"
         if _NON_CHANNEL_SOURCE_RE.match(token):
             return token
         raise _invalid(
-            f"トリガソースを解釈できません: {source!r}(例: 'CH1', 'EXT', 'ACLINE', 'D0')",
+            f"cannot interpret trigger source: {source!r} (e.g. 'CH1', 'EXT', 'ACLINE', 'D0')",
             {"source": source},
         )
 
@@ -309,7 +309,7 @@ class ScopeDriver:
             key = MEASUREMENT_KEYS.get(name)
             if mnemonic is None or key is None:
                 raise _unsupported(
-                    f"測定項目 '{name}' はこの機種のプロファイルで未確認です",
+                    f"measurement item '{name}' is unverified in this model's profile",
                     {"measurement": name, "profile": self.profile.name},
                 )
             plan.append((name, key, mnemonic))
@@ -329,14 +329,14 @@ class ScopeDriver:
     # -- 画面・波形 -------------------------------------------------------
 
     def capture_screenshot_bytes(self) -> bytes:
-        self._require("screenshot", "画面キャプチャ")
+        self._require("screenshot", "screen capture")
         command = self._dialect("screenshot_command", DEFAULT_SCREENSHOT_COMMAND)
         # 画像は約97KB。通常の問い合わせ用タイムアウトでは足りず接続破棄になる。
         timeout_s = self.profile.dialect.get("screenshot_timeout_s", DEFAULT_SCREENSHOT_TIMEOUT_S)
         return self.session.query_binary(command, timeout_s=float(timeout_s))
 
     def read_waveform(self, channel: str, max_points: int | None = None) -> WaveformRaw:
-        self._require("waveform_download", "波形データの取得")
+        self._require("waveform_download", "waveform data download")
         number = self._channel_number(channel)
 
         self.session.write_checked(f":WAVeform:SOURce CHANnel{number}")
@@ -348,7 +348,7 @@ class ScopeDriver:
         if max_points is not None:
             if max_points < 1:
                 raise _invalid(
-                    f"max_points は1以上である必要があります: {max_points}",
+                    f"max_points must be 1 or greater: {max_points}",
                     {"max_points": max_points},
                 )
             stop = min(preamble.points, max_points)
@@ -385,7 +385,7 @@ class ScopeDriver:
 
     def set_channel_coupling(self, channel: str, coupling: str) -> str:
         number = self._channel_number(channel)
-        value = self._validate_choice(coupling, COUPLINGS, "カップリング")
+        value = self._validate_choice(coupling, COUPLINGS, "coupling")
         readback = self.session.set_and_verify(
             f":CHANnel{number}:COUPling {value}", f":CHANnel{number}:COUPling?"
         )
@@ -406,14 +406,14 @@ class ScopeDriver:
             return
         if not any(float(item) == float(ratio) for item in allowed):
             raise _invalid(
-                f"プローブ減衰比 {ratio} はこの機種で選択できません",
+                f"probe attenuation ratio {ratio} is not selectable on this model",
                 {"probe_ratio": ratio, "allowed": allowed},
             )
 
     def set_channel_bwlimit(self, channel: str, enabled: bool) -> bool:
         number = self._channel_number(channel)
         # OFF は全機種共通。ON 側の値は機種依存なので宣言が無ければ送らない。
-        value = self._required_dialect("bwlimit_on", "帯域制限の有効化") if enabled else BWLIMIT_OFF
+        value = self._required_dialect("bwlimit_on", "enabling the bandwidth limit") if enabled else BWLIMIT_OFF
         readback = self.session.set_and_verify(
             f":CHANnel{number}:BWLimit {value}", f":CHANnel{number}:BWLimit?"
         )
@@ -421,11 +421,11 @@ class ScopeDriver:
 
     def set_channel_impedance(self, channel: str, impedance: str) -> str:
         number = self._channel_number(channel)
-        value = self._validate_choice(impedance, IMPEDANCES, "入力インピーダンス")
+        value = self._validate_choice(impedance, IMPEDANCES, "input impedance")
         # IMPedance ニモニック自体が未確認なら "1M" でも送らない
-        self._require("impedance_control", "入力インピーダンスの設定")
+        self._require("impedance_control", "setting the input impedance")
         if value == "50":
-            self._require("impedance_50ohm", "50Ω入力")
+            self._require("impedance_50ohm", "50 ohm input")
         readback = self.session.set_and_verify(
             f":CHANnel{number}:IMPedance {to_scpi_impedance(value)}",
             f":CHANnel{number}:IMPedance?",
@@ -435,11 +435,11 @@ class ScopeDriver:
     @staticmethod
     def _validate_choice(value: str, allowed: tuple[str, ...], what: str) -> str:
         if not isinstance(value, str):
-            raise _invalid(f"{what}が文字列ではありません: {value!r}", {"value": value})
+            raise _invalid(f"{what} is not a string: {value!r}", {"value": value})
         token = value.strip().upper()
         if token not in allowed:
             raise _invalid(
-                f"{what}の値が不正です: {value!r}(許容値: {list(allowed)})",
+                f"invalid {what} value: {value!r} (allowed: {list(allowed)})",
                 {"value": value, "allowed": list(allowed)},
             )
         return token

@@ -118,7 +118,7 @@ def test_tool_descriptions_guide_the_llm(server) -> None:
     descriptions = anyio.run(main)
 
     assert "sections" in descriptions["get_state"]
-    assert "ユーザー" in descriptions["connect"]
+    assert "ask the user" in descriptions["connect"]
 
 
 # --------------------------------------------------------------------------
@@ -151,7 +151,7 @@ def test_connect_without_address_asks_the_user(server) -> None:
 
     assert data["error"] is True
     assert data["code"] == ErrorCode.INVALID_PARAMETER
-    assert "ユーザー" in data["message"]
+    assert "Ask the user" in data["message"]
 
 
 def test_disconnect_is_idempotent(server) -> None:

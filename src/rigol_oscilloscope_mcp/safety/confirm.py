@@ -28,8 +28,8 @@ CONFIRM_TOKEN_KEY = "confirm_token"
 
 #: LLMへの固定指示文言(Requirements.md 6.2)。文言の変更は安全要件の変更にあたる。
 CONFIRM_INSTRUCTION = (
-    "このトークンを使う前に、必ず人間の利用者へこの操作を実行してよいか確認してください。"
-    "利用者の明示的な同意なしにトークンを使用してはいけません。"
+    "Before using this token, you must ask the human user whether this operation "
+    "may be performed. Do not use the token without the user's explicit consent."
 )
 
 
@@ -142,29 +142,29 @@ class ConfirmTokenStore:
 
         if entry is None:
             raise _rejected(
-                "unknown_token", tool, "confirm_token が無効か、既に使用されています"
+                "unknown_token", tool, "confirm_token is invalid or has already been used"
             )
         if entry.expires_at <= now:
             raise _rejected(
-                "expired", tool, "confirm_token の有効期限が切れています"
+                "expired", tool, "confirm_token has expired"
             )
         if entry.tool != tool:
             raise _rejected(
                 "tool_mismatch",
                 tool,
-                f"confirm_token は別の操作({entry.tool})に対して発行されています",
+                f"confirm_token was issued for a different operation ({entry.tool})",
             )
         if entry.generation != generation:
             raise _rejected(
                 "generation_mismatch",
                 tool,
-                "confirm_token の発行後に接続が切り替わっています",
+                "the connection changed after confirm_token was issued",
             )
         if entry.args_digest != _args_digest(args):
             raise _rejected(
                 "args_mismatch",
                 tool,
-                "confirm_token の発行時と引数が異なります",
+                "the arguments differ from those confirm_token was issued for",
             )
 
     def _purge_expired(self, now: float | None = None) -> None:

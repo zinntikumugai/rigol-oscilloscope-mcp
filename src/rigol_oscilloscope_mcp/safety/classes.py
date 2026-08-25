@@ -72,6 +72,6 @@ def classify(tool: str) -> OperationClass:
     except KeyError:
         raise ScopeError(
             ErrorCode.INVALID_PARAMETER,
-            f"未知のTool名です: {tool}",
+            f"Unknown tool name: {tool}",
             {"tool": tool},
         ) from None

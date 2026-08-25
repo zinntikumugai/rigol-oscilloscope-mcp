@@ -329,7 +329,7 @@ def test_50ohm_confirmation_detail_carries_token_and_instruction(
     detail = request_50ohm(service, driver).detail
 
     assert isinstance(detail["confirm_token"], str) and detail["confirm_token"]
-    assert "人間" in detail["instruction"]
+    assert "human" in detail["instruction"]
     assert detail["description"]
     assert detail["risk"]
     assert detail["expires_in_s"] > 0
@@ -342,7 +342,7 @@ def test_50ohm_message_explains_damage_risk(
     error = request_50ohm(service, driver)
 
     assert "50" in error.message
-    assert "破損" in error.message
+    assert "damage" in error.message
 
 
 def test_50ohm_without_token_sends_no_impedance_command(
@@ -802,7 +802,7 @@ def test_autoset_confirmation_detail_carries_token_and_instruction(
     detail = request_autoset(service, driver).detail
 
     assert isinstance(detail["confirm_token"], str) and detail["confirm_token"]
-    assert "人間" in detail["instruction"]
+    assert "human" in detail["instruction"]
     assert detail["expires_in_s"] > 0
 
 
@@ -811,8 +811,8 @@ def test_autoset_risk_mentions_setting_change(
 ) -> None:
     detail = request_autoset(service, driver).detail
 
-    assert "設定" in detail["risk"]
-    assert "変更" in detail["risk"]
+    assert "settings" in detail["risk"]
+    assert "changed" in detail["risk"]
 
 
 def test_autoset_without_token_sends_nothing(
@@ -856,7 +856,7 @@ def test_autoset_note_states_settings_changed(
     note = service.autoset(driver, 0, confirm_token=token)["note"]
 
     assert "Auto Setup" in note
-    assert "設定" in note
+    assert "settings" in note
 
 
 def test_autoset_returns_state_sections(

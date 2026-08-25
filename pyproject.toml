@@ -1,7 +1,7 @@
 [project]
 name = "rigol-oscilloscope-mcp"
 version = "0.1.0"
-description = "Rigol製オシロスコープをSCPI経由で操作するMCPサーバー"
+description = "MCP server for controlling Rigol oscilloscopes over SCPI"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -29,6 +29,6 @@ packages = ["src/rigol_oscilloscope_mcp"]
 addopts = "-p no:cacheprovider"
 testpaths = ["tests"]
 markers = [
-    "device: 実機が必要なテスト",
-    "device_write: 実機に書き込むテスト",
+    "device: test that requires real hardware",
+    "device_write: test that writes to real hardware",
 ]

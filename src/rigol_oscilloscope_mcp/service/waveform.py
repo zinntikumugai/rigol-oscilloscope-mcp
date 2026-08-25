@@ -23,8 +23,8 @@ from ..errors import ErrorCode, ScopeError
 INLINE_POINTS_LIMIT = 10000
 
 NOTE = (
-    "画面表示データは間引きされている場合があります"
-    "(実効レートは sample_interval_s の逆数)。"
+    "Screen data may be decimated "
+    "(the effective sample rate is the reciprocal of sample_interval_s)."
 )
 
 FILE_PREFIX = "rigol_waveform_"
@@ -64,7 +64,7 @@ def capture_waveform(
     if limit <= 0:
         raise ScopeError(
             ErrorCode.INVALID_PARAMETER,
-            f"max_points は1以上である必要があります: {limit}",
+            f"max_points must be 1 or greater: {limit}",
             {"max_points": limit},
         )
 

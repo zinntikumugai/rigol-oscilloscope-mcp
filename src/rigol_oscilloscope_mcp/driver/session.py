@@ -82,7 +82,7 @@ class ScpiSession:
             drained.append(response.strip())
         raise ScopeError(
             ErrorCode.SCPI_ERROR,
-            f"エラーキューが {max_iter} 回読んでも空になりません",
+            f"error queue is still not empty after {max_iter} reads",
             {"max_iter": max_iter, "drained": drained},
         )
 
@@ -93,7 +93,7 @@ class ScpiSession:
             return
         raise ScopeError(
             ErrorCode.SCPI_ERROR,
-            f"機器がコマンドを受理しませんでした: {command} ({response.strip()})",
+            f"the device did not accept the command: {command} ({response.strip()})",
             {"command": command, "scpi_error": response.strip()},
         )
 

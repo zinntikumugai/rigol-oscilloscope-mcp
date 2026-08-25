@@ -27,20 +27,23 @@ from .state import get_channel_dict, get_state, get_timebase_dict, get_trigger_d
 RESTRICTED_IMPEDANCE = "50"
 
 #: autoset 実行後、返却に必ず添える注記(tools.md 4章)
-AUTOSET_NOTE = "Auto Setupを実行しました。設定が大きく変更されています。"
+AUTOSET_NOTE = "Auto Setup was executed. The settings have been changed substantially."
 
 #: autoset 実行後に返す状態のセクション
 AUTOSET_SECTIONS = ["channels", "timebase", "trigger"]
 
 _50OHM_RISK = (
-    "50Ω入力は耐圧が低く、過大入力(高電圧・大振幅)を加えると機器が破損します。"
-    "信号源の出力レベルと接続先を人間の利用者に確認してください。"
+    "The 50 ohm input has a low voltage rating; an excessive input "
+    "(high voltage or large amplitude) will damage the device. "
+    "Confirm the signal source output level and what is connected "
+    "with the human user."
 )
 
-_AUTOSET_DESCRIPTION = "Auto Setup(オートスケール)を実行します"
+_AUTOSET_DESCRIPTION = "Run Auto Setup (autoscale)"
 _AUTOSET_RISK = (
-    "現在の設定が大きく変更されます。"
-    "垂直感度・水平時間軸・トリガが自動調整され、調整前の設定は失われます。"
+    "The current settings will be changed substantially. "
+    "Vertical scale, timebase and trigger are auto-adjusted, and the previous "
+    "settings are lost."
 )
 
 
@@ -104,9 +107,9 @@ class ControlService:
         )
         if not requested:
             raise _invalid(
-                "変更する項目が1つも指定されていません"
-                "(enabled / scale_v_per_div / offset_v / coupling / probe_ratio / "
-                "bandwidth_limit / impedance のいずれかを指定してください)",
+                "No item to change was specified "
+                "(specify at least one of enabled / scale_v_per_div / offset_v / "
+                "coupling / probe_ratio / bandwidth_limit / impedance)",
                 {"channel": channel},
             )
 
@@ -117,7 +120,7 @@ class ControlService:
                 args,
                 generation,
                 confirm_token,
-                description=f"{channel} の入力インピーダンスを50Ωに変更します",
+                description=f"Change the input impedance of {channel} to 50 ohm",
                 risk=_50OHM_RISK,
             )
 
@@ -159,8 +162,8 @@ class ControlService:
         )
         if not requested:
             raise _invalid(
-                "変更する項目が1つも指定されていません"
-                "(scale_s_per_div / position_s のいずれかを指定してください)",
+                "No item to change was specified "
+                "(specify at least one of scale_s_per_div / position_s)",
                 {},
             )
 
@@ -202,8 +205,8 @@ class ControlService:
         )
         if not requested:
             raise _invalid(
-                "変更する項目が1つも指定されていません"
-                "(source / level_v / slope / sweep_mode のいずれかを指定してください)",
+                "No item to change was specified "
+                "(specify at least one of source / level_v / slope / sweep_mode)",
                 {},
             )
 
@@ -305,7 +308,7 @@ class ControlService:
             self._audit.record_confirm("issued", tool, token_digest(request.token))
             raise ScopeError(
                 ErrorCode.USER_CONFIRMATION_REQUIRED,
-                f"{description}。{risk}",
+                f"{description}. {risk}",
                 {
                     "confirm_token": request.token,
                     "description": request.description,

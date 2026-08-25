@@ -24,7 +24,7 @@ from ..errors import ErrorCode, ScopeError
 _SEPARATORS = tuple(sep for sep in (os.sep, os.altsep) if sep)
 
 _ALLOWED_DIRS_ENV = "RIGOL_MCP_ALLOWED_DIRS"
-_HINT = f"許可ルートを追加するには環境変数 {_ALLOWED_DIRS_ENV} を設定してください"
+_HINT = f"To add an allowed root, set the {_ALLOWED_DIRS_ENV} environment variable"
 
 
 def _temp_roots() -> tuple[Path, ...]:
@@ -61,7 +61,7 @@ def _check_allowed(resolved: Path, config: Config) -> None:
         return
     raise ScopeError(
         ErrorCode.INVALID_PARAMETER,
-        f"保存先が許可ルートの外です: {resolved}({_HINT})",
+        f"Destination is outside the allowed roots: {resolved} ({_HINT})",
         {
             "path": str(resolved),
             "allowed_roots": [str(root) for root in roots],

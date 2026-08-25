@@ -45,24 +45,24 @@ def _from_scpi(
 ) -> str:
     """短形式/長形式のどちらでも受理して内部表現へ変換する。"""
     if not isinstance(text, str):
-        raise _scpi_error(text, f"{what}の応答が文字列ではありません")
+        raise _scpi_error(text, f"{what} response is not a string")
     token = text.strip().upper()
     for short, long, value in table:
         if token in (short, long):
             return value
-    raise _scpi_error(text, f"{what}の応答を解釈できません: {text!r}")
+    raise _scpi_error(text, f"cannot interpret {what} response: {text!r}")
 
 
 def _to_scpi(value: str, table: dict[str, str], what: str, *, upper: bool) -> str:
     if not isinstance(value, str):
-        raise _invalid_parameter(value, f"{what}が文字列ではありません")
+        raise _invalid_parameter(value, f"{what} is not a string")
     key = value.strip()
     key = key.upper() if upper else key.lower()
     try:
         return table[key]
     except KeyError:
         raise _invalid_parameter(
-            value, f"{what}の値が不正です: {value!r}(許容値: {sorted(table)})"
+            value, f"invalid {what} value: {value!r} (allowed: {sorted(table)})"
         ) from None
 
 
@@ -73,63 +73,63 @@ def parse_nr3(text: str) -> float:
     受理するため特別扱いは不要。
     """
     if not isinstance(text, str):
-        raise _scpi_error(text, "数値応答が文字列ではありません")
+        raise _scpi_error(text, "numeric response is not a string")
     try:
         return float(text.strip())
     except ValueError:
-        raise _scpi_error(text, f"数値応答を解釈できません: {text!r}") from None
+        raise _scpi_error(text, f"cannot interpret numeric response: {text!r}") from None
 
 
 def parse_bool(text: str) -> bool:
     """`ON`/`1` → True、`OFF`/`0` → False(大文字小文字不問)。"""
     if not isinstance(text, str):
-        raise _scpi_error(text, "ブール応答が文字列ではありません")
+        raise _scpi_error(text, "boolean response is not a string")
     token = text.strip().upper()
     if token in ("ON", "1"):
         return True
     if token in ("OFF", "0"):
         return False
-    raise _scpi_error(text, f"ブール応答を解釈できません: {text!r}")
+    raise _scpi_error(text, f"cannot interpret boolean response: {text!r}")
 
 
 def parse_coupling(text: str) -> str:
     """`DC`/`AC`/`GND` を正規化(大文字化)して返す。"""
     if not isinstance(text, str):
-        raise _scpi_error(text, "カップリング応答が文字列ではありません")
+        raise _scpi_error(text, "coupling response is not a string")
     token = text.strip().upper()
     if token in ("DC", "AC", "GND"):
         return token
-    raise _scpi_error(text, f"カップリング応答を解釈できません: {text!r}")
+    raise _scpi_error(text, f"cannot interpret coupling response: {text!r}")
 
 
 def from_scpi_impedance(text: str) -> str:
     """`OMEG` → `1M`、`FIFT` → `50`。"""
-    return _from_scpi(text, _IMPEDANCE, "入力インピーダンス")
+    return _from_scpi(text, _IMPEDANCE, "input impedance")
 
 
 def to_scpi_impedance(value: str) -> str:
     """`1M` → `OMEG`、`50` → `FIFT`。"""
-    return _to_scpi(value, _TO_SCPI_IMPEDANCE, "入力インピーダンス", upper=True)
+    return _to_scpi(value, _TO_SCPI_IMPEDANCE, "input impedance", upper=True)
 
 
 def from_scpi_slope(text: str) -> str:
     """`POS` → `rising`、`NEG` → `falling`、`RFAL` → `either`。"""
-    return _from_scpi(text, _SLOPE, "トリガスロープ")
+    return _from_scpi(text, _SLOPE, "trigger slope")
 
 
 def to_scpi_slope(value: str) -> str:
     """`rising` → `POSitive`、`falling` → `NEGative`、`either` → `RFALl`。"""
-    return _to_scpi(value, _TO_SCPI_SLOPE, "トリガスロープ", upper=False)
+    return _to_scpi(value, _TO_SCPI_SLOPE, "trigger slope", upper=False)
 
 
 def from_scpi_sweep(text: str) -> str:
     """`AUTO` → `auto`、`NORM` → `normal`、`SING` → `single`。"""
-    return _from_scpi(text, _SWEEP, "トリガスイープモード")
+    return _from_scpi(text, _SWEEP, "trigger sweep mode")
 
 
 def to_scpi_sweep(value: str) -> str:
     """`auto` → `AUTO`、`normal` → `NORMal`、`single` → `SINGle`。"""
-    return _to_scpi(value, _TO_SCPI_SWEEP, "トリガスイープモード", upper=False)
+    return _to_scpi(value, _TO_SCPI_SWEEP, "trigger sweep mode", upper=False)
 
 
 def format_number(value: float) -> str:
@@ -137,7 +137,7 @@ def format_number(value: float) -> str:
     try:
         number = float(value)
     except (TypeError, ValueError):
-        raise _invalid_parameter(value, f"数値に変換できません: {value!r}") from None
+        raise _invalid_parameter(value, f"cannot convert to a number: {value!r}") from None
     if not math.isfinite(number):
-        raise _invalid_parameter(value, f"有限の数値ではありません: {value!r}")
+        raise _invalid_parameter(value, f"not a finite number: {value!r}")
     return repr(number)

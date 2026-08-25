@@ -37,11 +37,11 @@ _BOOTSTRAP_PROFILE = Profile(name="unknown", confidence="generic")
 VISA_SEPARATOR = "::"
 
 NO_ADDRESS_MESSAGE = (
-    "接続先が未指定です。オシロスコープのIPアドレス"
-    "(またはVISAリソース)をユーザーに確認してください。"
+    "No device address specified. Ask the user for the oscilloscope's IP address "
+    "(or VISA resource)."
 )
 DISCONNECTED_MESSAGE = (
-    "未接続です。connect Toolで接続してください(接続先が不明ならユーザーに確認)。"
+    "Not connected. Use the connect tool (ask the user if you do not know the address)."
 )
 
 
@@ -85,7 +85,7 @@ def _default_transport_factory(
         return UsbTransport(address, timeout_s)
     raise ScopeError(
         ErrorCode.INVALID_PARAMETER,
-        f"未知のトランスポートです: {transport!r}",
+        f"Unknown transport: {transport!r}",
         {"transport": transport},
     )
 
@@ -193,7 +193,7 @@ class ConnectionManager:
                 unsupported_vendor=resolved.unsupported_vendor,
             )
             logger.info(
-                "接続しました: %s (profile=%s/%s)",
+                "connected: %s (profile=%s/%s)",
                 idn.model,
                 resolved.profile.name,
                 resolved.profile.confidence,
@@ -226,7 +226,7 @@ class ConnectionManager:
             {"address": previous.address, "transport": previous.transport},
         ):
             link.close()
-        logger.info("切断しました (%s)", previous.transport)
+        logger.info("disconnected (%s)", previous.transport)
 
     def status(self) -> ConnectionStatus:
         """接続状態を返す。未接続はエラーではなく connected=False。"""
@@ -255,7 +255,7 @@ class ConnectionManager:
             self.disconnect()
             raise ScopeError(
                 ErrorCode.DEVICE_DISCONNECTED,
-                f"接続が失われ、再接続にも失敗しました: {exc.message}",
+                f"Connection lost and reconnection failed: {exc.message}",
                 {"address": previous.address, "cause": exc.to_dict()},
             ) from exc
         if self._scope is None:  # pragma: no cover - _establish 成功時は必ず設定される

@@ -108,8 +108,8 @@ def test_connect_without_address_asks_the_user(manager: ConnectionManager) -> No
 
     error = excinfo.value
     assert error.code == ErrorCode.INVALID_PARAMETER
-    assert "ユーザー" in error.message
-    assert "確認" in error.message
+    assert "user" in error.message
+    assert "Ask" in error.message
     assert error.detail["missing"] == "address"
 
 
@@ -305,7 +305,7 @@ def test_require_scope_when_disconnected(manager: ConnectionManager) -> None:
 
     error = excinfo.value
     assert error.code == ErrorCode.DEVICE_DISCONNECTED
-    assert "未接続" in error.message
+    assert "Not connected" in error.message
     assert "connect" in error.message
 
 

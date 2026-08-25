@@ -42,19 +42,19 @@ def _read_raw(directory: Any, name: str) -> dict:
     entry = directory.joinpath(f"{name}{SUFFIX}")
     if not entry.is_file():
         raise _invalid(
-            f"プロファイル '{name}' が見つかりません",
+            f"profile '{name}' not found",
             name=name,
             available=_available_profiles_from(directory),
         )
     try:
         data = yaml.safe_load(entry.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
-        raise _invalid(f"プロファイル '{name}' のYAMLが不正です: {exc}", name=name)
+        raise _invalid(f"profile '{name}' has invalid YAML: {exc}", name=name)
     if data is None:
         data = {}
     if not isinstance(data, dict):
         raise _invalid(
-            f"プロファイル '{name}' のトップレベルはマッピングである必要があります",
+            f"the top level of profile '{name}' must be a mapping",
             name=name,
         )
     return data
@@ -77,7 +77,7 @@ def _merged_raw(directory: Any, name: str, chain: tuple[str, ...] = ()) -> dict:
     if name in chain:
         cycle = " -> ".join([*chain, name])
         raise _invalid(
-            f"プロファイルの継承が循環しています: {cycle}", name=name, cycle=cycle
+            f"profile inheritance is circular: {cycle}", name=name, cycle=cycle
         )
 
     raw = _read_raw(directory, name)
@@ -86,7 +86,7 @@ def _merged_raw(directory: Any, name: str, chain: tuple[str, ...] = ()) -> dict:
         return raw
     if not isinstance(parent, str):
         raise _invalid(
-            f"プロファイル '{name}' の inherits はプロファイル名(文字列)である必要があります",
+            f"inherits of profile '{name}' must be a profile name (string)",
             name=name,
         )
     base = _merged_raw(directory, parent, (*chain, name))
@@ -101,7 +101,7 @@ def _to_profile(name: str, raw: dict) -> Profile:
             value = {}
         if not isinstance(value, dict):
             raise _invalid(
-                f"プロファイル '{name}' の {block} はマッピングである必要があります",
+                f"{block} of profile '{name}' must be a mapping",
                 name=name,
             )
         blocks[block] = value
@@ -109,7 +109,7 @@ def _to_profile(name: str, raw: dict) -> Profile:
     confidence = raw.get("confidence", "generic")
     if not isinstance(confidence, str):
         raise _invalid(
-            f"プロファイル '{name}' の confidence は文字列である必要があります",
+            f"confidence of profile '{name}' must be a string",
             name=name,
         )
     return Profile(name=name, confidence=confidence, **blocks)
@@ -133,14 +133,14 @@ def _matches(profile_name: str, pattern: Any, model: str) -> bool:
         return False  # match を持たないプロファイルはフォールバック専用
     if not isinstance(pattern, str):
         raise _invalid(
-            f"プロファイル '{profile_name}' の match は正規表現文字列である必要があります",
+            f"match of profile '{profile_name}' must be a regular expression string",
             name=profile_name,
         )
     try:
         return re.search(pattern, model) is not None
     except re.error as exc:
         raise _invalid(
-            f"プロファイル '{profile_name}' の match が不正な正規表現です: {exc}",
+            f"match of profile '{profile_name}' is an invalid regular expression: {exc}",
             name=profile_name,
         )
 

@@ -68,7 +68,7 @@ class FakeTransport:
         if not self._open:
             raise ScopeError(
                 ErrorCode.DEVICE_DISCONNECTED,
-                "トランスポートが未接続です",
+                "transport is not connected",
                 {"command": command},
             )
 
@@ -80,7 +80,7 @@ class FakeTransport:
             raise self._timeout(command, timeout_s, str(exc)) from exc
         if response is None:
             # 応答を返さないコマンドを問い合わせた場合、実機は無応答のまま。
-            raise self._timeout(command, timeout_s, "応答のないコマンドです")
+            raise self._timeout(command, timeout_s, "command produces no response")
         return response
 
     def _timeout(
@@ -88,6 +88,6 @@ class FakeTransport:
     ) -> ScopeError:
         return ScopeError(
             ErrorCode.TIMEOUT,
-            f"機器が応答しませんでした: {command}",
+            f"the device did not respond: {command}",
             {"command": command, "timeout_s": timeout_s, "reason": reason},
         )

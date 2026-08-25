@@ -26,8 +26,8 @@ BACKEND = "@py"
 _VI_ERROR_TMO = -1073807339
 
 PYVISA_MISSING_MESSAGE = (
-    "PyVISAが利用できません。USB接続には pyvisa と pyvisa-py が必要です"
-    "(LAN接続は追加依存なしで利用できます)。"
+    "PyVISA is not available. USB connections require pyvisa and pyvisa-py "
+    "(LAN connections work without extra dependencies)."
 )
 
 
@@ -99,7 +99,7 @@ class UsbTransport:
                 _close_quietly(rm)
             raise ScopeError(
                 ErrorCode.DEVICE_NOT_FOUND,
-                f"VISAリソースを開けません: {self.resource} ({exc})",
+                f"cannot open VISA resource: {self.resource} ({exc})",
                 {"resource": self.resource},
             ) from exc
 
@@ -188,7 +188,7 @@ class UsbTransport:
         if self._instrument is None:
             raise ScopeError(
                 ErrorCode.DEVICE_DISCONNECTED,
-                "接続されていません(open() が必要です)",
+                "Not connected (open() is required)",
                 {"command": command, "resource": self.resource},
             )
         return self._instrument
@@ -201,7 +201,7 @@ class UsbTransport:
         self.close()
         return ScopeError(
             ErrorCode.DEVICE_DISCONNECTED,
-            f"USB接続が切断されました({exc}): {command}",
+            f"the USB connection was closed ({exc}): {command}",
             {"command": command, "resource": self.resource},
         )
 
@@ -217,7 +217,7 @@ class UsbTransport:
         self.close()
         return ScopeError(
             ErrorCode.TIMEOUT,
-            f"応答がタイムアウトしました: {command}",
+            f"response timed out: {command}",
             {"command": command, "resource": self.resource},
         )
 
@@ -249,7 +249,7 @@ def _parse_block_message(raw: bytes, command: str) -> bytes:
     if trailing not in (b"", b"\n"):
         raise ScopeError(
             ErrorCode.WAVEFORM_TRANSFER_FAILED,
-            f"バイナリブロックの後ろに余剰バイトがあります: {trailing!r}",
+            f"extra bytes after the binary block: {trailing!r}",
             {"command": command, "trailing": trailing.decode("latin-1")},
         )
     return payload

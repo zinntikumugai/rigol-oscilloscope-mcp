@@ -41,10 +41,10 @@ from .service.connection import DISCONNECTED_MESSAGE
 SERVER_NAME = "rigol-oscilloscope-mcp"
 
 INSTRUCTIONS = (
-    "Rigol製オシロスコープをSCPI経由で操作するサーバーです。"
-    "まず connect で接続し(接続先はユーザーに確認)、"
-    "操作前に get_state で現在の設定を確認してください。"
-    "数値は capture_screenshot の画像ではなく measure の結果を優先します。"
+    "Server for controlling Rigol oscilloscopes over SCPI. "
+    "Connect first with connect (ask the user for the device address), "
+    "then check the current settings with get_state before operating. "
+    "For numeric readings, prefer measure over the capture_screenshot image."
 )
 
 # errors.ErrorCode は機器由来のコード集合。想定外の例外はそれと区別する。
@@ -170,7 +170,8 @@ def _checked_tool(
             if "confirm_token" not in inspect.signature(fn).parameters:
                 raise ScopeError(
                     ErrorCode.SAFETY_POLICY_DENIED,
-                    f"{fn.__name__} は承認必須の操作クラスですが confirm_token 引数がありません",
+                    f"{fn.__name__} requires confirmation for its operation class "
+                    f"but has no confirm_token parameter",
                     {"tool": fn.__name__},
                 )
         return server.tool()(_tool_result(_locked(lock)(fn)))
@@ -238,34 +239,34 @@ def create_server(
         transport: str | None = None,
         port: int | None = None,
     ) -> dict:
-        """オシロスコープへ接続する。
+        """Connect to the oscilloscope.
 
-        接続先はユーザーの指示(IPアドレス等)を address に渡すこと。
-        分からなければ推測せずユーザーに確認する。transport は省略時に
-        address の形式から推定("lan" / "usb")、port は省略時にプロファイル既定。
-        既存の接続がある場合は置き換わる。
+        Pass the address the user gave you (IP address etc.) as address.
+        If you do not know it, ask the user instead of guessing. When omitted,
+        transport is inferred from the address format ("lan" / "usb") and port
+        falls back to the profile default. Any existing connection is replaced.
         """
         return _status_dict(manager.connect(address=address, transport=transport, port=port))
 
     @_register
     def disconnect() -> dict:
-        """現在の接続を閉じる(未接続でもエラーにならない)。"""
+        """Close the current connection (not an error if not connected)."""
         manager.disconnect()
         return _status_dict(manager.status())
 
     @_register
     def scope_identify() -> dict:
-        """接続状態と機器の識別情報(*IDN?・プロファイル)を返す。
+        """Return the connection state and device identity (*IDN?, profile).
 
-        未接続でもエラーにはならず connected: false を返す。
+        Not an error when disconnected; returns connected: false instead.
         """
         return _status_dict(manager.status())
 
     @_register
     def get_capabilities() -> dict:
-        """接続中の機器で利用できる機能(チャンネル数・対応機能)を返す。
+        """Return the features available on the connected device (channel count, supported features).
 
-        プロファイルの信頼度が generic の場合、未検証の機能は制限される。
+        When the profile confidence is generic, unverified features are restricted.
         """
         driver = manager.require_scope()
         status = manager.status()
@@ -279,52 +280,53 @@ def create_server(
 
     @_register
     def get_state(sections: list[str] | None = None) -> dict:
-        """主要設定(channels / timebase / trigger / acquisition)を一括取得する。
+        """Get the main settings (channels / timebase / trigger / acquisition) in one call.
 
-        目的が明確なら sections で絞ると高速(全取得は約39クエリ・数秒かかること
-        がある)。省略時は全セクション。
+        When you know what you need, narrowing with sections is much faster
+        (a full read is about 39 queries and can take several seconds).
+        Omitting sections returns every section.
         """
         return service.get_state(manager.require_scope(), sections)
 
     @_register
     def get_channel(channel: str) -> dict:
-        """1チャンネルの状態("CH1"〜"CH4")を返す。"""
+        """Return the state of one channel ("CH1" to "CH4")."""
         return service.get_channel_dict(manager.require_scope(), channel)
 
     @_register
     def get_timebase() -> dict:
-        """水平軸(時間軸)の状態を返す。"""
+        """Return the horizontal (timebase) state."""
         return service.get_timebase_dict(manager.require_scope())
 
     @_register
     def get_trigger() -> dict:
-        """トリガの設定と状態を返す。"""
+        """Return the trigger settings and status."""
         return service.get_trigger_dict(manager.require_scope())
 
     @_register
     def get_acquisition_state() -> dict:
-        """波形取り込みの状態(実行中かどうか・トリガ状態)を返す。"""
+        """Return the acquisition state (whether it is running, and the trigger status)."""
         return service.get_acquisition_dict(manager.require_scope())
 
     # -- 測定・データ取得 -------------------------------------------------
 
     @_register
     def measure(channel: str, measurements: list[str]) -> dict:
-        """指定チャンネルを測定する。
+        """Measure the given channel.
 
-        measurements は frequency / period / vpp / vmax / vmin / vavg / rms /
-        duty / rise_time / fall_time から選ぶ。返却値はSI単位
-        (frequency_hz, vpp_v など)で、quality が valid でない値は信用しない。
+        Choose measurements from frequency / period / vpp / vmax / vmin / vavg /
+        rms / duty / rise_time / fall_time. Returned values use SI-suffixed keys
+        (frequency_hz, vpp_v, ...); do not trust a value whose quality is not valid.
         """
         return service.measure(manager.require_scope(), channel, measurements)
 
     @_register
     def capture_waveform(channel: str, max_points: int | None = None) -> dict:
-        """波形データを取得し、電圧(V)へ変換して返す。
+        """Capture waveform data and return it converted to volts (V).
 
-        点数が多い場合はCSVファイルへ退避し、そのパスを data_file で返す。
-        画面表示データは間引きされていることがあるため、実効レートは
-        sample_interval_s の逆数を見る。
+        When there are many points the data is written to a CSV file and its
+        path is returned in data_file. Screen data may be decimated, so read the
+        effective sample rate as the reciprocal of sample_interval_s.
         """
         return service.capture_waveform(
             manager.require_scope(), resolved_config, channel, max_points
@@ -336,15 +338,15 @@ def create_server(
         format: str | None = None,
         return_image: bool = True,
     ) -> Any:
-        """画面をキャプチャして保存し、画像も返す(波形の目視確認用)。
+        """Capture the screen, save it, and also return the image (for visual checks).
 
-        path は保存先のディレクトリまたはファイル(省略時は設定の既定ディレクトリ)。
-        path の相対パスは実行ディレクトリ(デフォルト保存先)基準で解決される。
-        許可ルート外への保存は拒否される(RIGOL_MCP_ALLOWED_DIRS で許可ルートを
-        追加可能)。
-        format は png / jpg / jpeg / bmp / webp。return_image=false にすると
-        画像を返さずメタデータのみになる(トークン節約)。
-        数値の読み取りはこの画像ではなく measure を使うこと。
+        path is the destination directory or file (defaults to the configured
+        default directory). A relative path is resolved against the invocation
+        directory (the default save location). Saving outside the allowed roots
+        is rejected (add roots with RIGOL_MCP_ALLOWED_DIRS).
+        format is png / jpg / jpeg / bmp / webp. With return_image=false only the
+        metadata is returned, without the image (saves tokens).
+        For numeric readings use measure, not this image.
         """
         shot = service.capture_screenshot(
             manager.require_scope(), resolved_config, path=path, format=format
@@ -373,16 +375,16 @@ def create_server(
         impedance: str | None = None,
         confirm_token: str | None = None,
     ) -> dict:
-        """垂直軸(チャンネル)を設定する。未指定の項目は変更しない。
+        """Configure the vertical axis (a channel). Omitted items are left unchanged.
 
-        channel は "CH1"〜"CH4"、coupling は DC / AC / GND、
-        impedance は "1M" / "50"。変更する項目を最低1つ指定すること。
-        機器が値をスナップすることがあるため、結果は requested ではなく
-        applied(read-back値)を信頼する。
+        channel is "CH1" to "CH4", coupling is DC / AC / GND, impedance is
+        "1M" / "50". Specify at least one item to change. The device may snap
+        values, so trust applied (the read-back value), not requested.
 
-        impedance="50" は機器破損リスクがあるため確認フローが必要:
-        1回目は実行されず confirm_token が返るので、人間の利用者に実行可否を
-        確認したうえで、同じ引数に confirm_token を添えて再度呼ぶこと。
+        impedance="50" risks damaging the device and needs the confirmation flow:
+        the first call does not execute and returns a confirm_token, so ask the
+        human user whether to proceed and then call again with the same
+        arguments plus that confirm_token.
         """
         return control.configure_channel(
             manager.require_scope(),
@@ -403,10 +405,10 @@ def create_server(
         scale_s_per_div: float | None = None,
         position_s: float | None = None,
     ) -> dict:
-        """水平軸(時間軸)を設定する。未指定の項目は変更しない。
+        """Configure the horizontal axis (timebase). Omitted items are left unchanged.
 
-        変更する項目を最低1つ指定すること。機器が値をスナップすることがあるため、
-        結果は applied(read-back値)を信頼する。
+        Specify at least one item to change. The device may snap values, so trust
+        applied (the read-back value).
         """
         return control.configure_timebase(
             manager.require_scope(),
@@ -421,10 +423,10 @@ def create_server(
         slope: str | None = None,
         sweep_mode: str | None = None,
     ) -> dict:
-        """エッジトリガを設定する。未指定の項目は変更しない。
+        """Configure the edge trigger. Omitted items are left unchanged.
 
-        source は "CH1"〜"CH4"、slope は rising / falling / either、
-        sweep_mode は auto / normal / single。変更する項目を最低1つ指定すること。
+        source is "CH1" to "CH4", slope is rising / falling / either, and
+        sweep_mode is auto / normal / single. Specify at least one item to change.
         """
         return control.configure_trigger(
             manager.require_scope(),
@@ -438,28 +440,29 @@ def create_server(
 
     @_register
     def run() -> dict:
-        """波形取り込みを開始する(連続実行)。"""
+        """Start waveform acquisition (continuous run)."""
         return control.run(manager.require_scope())
 
     @_register
     def stop() -> dict:
-        """波形取り込みを停止する(画面の波形を固定する)。"""
+        """Stop waveform acquisition (freezes the waveform on screen)."""
         return control.stop(manager.require_scope())
 
     @_register
     def single() -> dict:
-        """シングルショット取り込みを行う(1回トリガして停止する)。"""
+        """Perform a single-shot acquisition (triggers once, then stops)."""
         return control.single(manager.require_scope())
 
     @_register
     def autoset(confirm_token: str | None = None) -> dict:
-        """Auto Setup(オートスケール)を実行する。
+        """Run Auto Setup (autoscale).
 
-        現在の設定が大きく変更される(垂直感度・水平時間軸・トリガが自動調整され、
-        調整前の設定は失われる)ため確認フローが必要:
-        1回目は実行されず confirm_token が返るので、人間の利用者に実行可否を
-        確認したうえで confirm_token を添えて再度呼ぶこと。
-        実行後は変更された主要設定を state で返す。
+        This changes the current settings substantially (vertical scale,
+        timebase and trigger are auto-adjusted and the previous settings are
+        lost), so it needs the confirmation flow: the first call does not
+        execute and returns a confirm_token, so ask the human user whether to
+        proceed and then call again with that confirm_token.
+        After execution the changed main settings are returned in state.
         """
         return control.autoset(
             manager.require_scope(), manager.generation, confirm_token
