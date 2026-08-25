@@ -54,7 +54,7 @@
 | `measurement_items` | 意味的測定名 → SCPIニモニック対応表 | `vavg` → `VAVG`(`VAVerage` は**不可**、無応答+`-222`) |
 | `screenshot_command` | スクリーンショット取得コマンドと引数形式 | `:DISPlay:DATA?`(引数なし、PNG返却) |
 | `screenshot_format` | 機器が返す画像形式 | PNG(実測 約97KB) |
-| `waveform_preamble` | プリアンブル解釈規約 | `yorigin=0, yreference=128`、`volts=(raw-yorigin-yref)*yinc` |
+| `waveform_preamble` | プリアンブル解釈規約 | `yreference=128`、`volts=(raw-yorigin-yref)*yinc`。**yorigin はプロファイルに持たない**(定数ではなくチャンネルoffsetの生カウント換算で決まる動的値。実測: offset −0.064 V のとき `yorigin=-9.0`)。変換には必ずライブの `:WAVeform:PREamble?` の値を使う |
 | `nr3_quirks` | 数値応答の非標準形式 | 指数部1桁(`1.000000E+1`)を許容すること |
 | `snaps_to_125` | scale設定値の1-2-5スナップ有無 | **false**(3 V/div、0.3 ms/div がそのまま適用される) |
 | `invalid_query_behavior` | 不正ニモニック送信時の挙動 | **無応答**(クライアント側タイムアウト)+ エラーキューに `-100,"Command err"` |
@@ -112,7 +112,9 @@ dialect:
     rise_time: RTIMe
     fall_time: FTIMe
   waveform_preamble:
-    yorigin: 0
+    # yorigin は定数ではなく設定依存の動的値(= offset / yincrement の生カウント換算。
+    # 実測: offset -0.064 V で yorigin=-9.0)のためプロファイルには持たせない。
+    # 電圧変換には必ずライブの :WAVeform:PREamble? の値を使うこと。
     yreference: 128
   nr3_single_digit_exponent: true
   snaps_to_125: false

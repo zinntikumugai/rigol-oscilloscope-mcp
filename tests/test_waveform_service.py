@@ -91,6 +91,56 @@ def test_result_is_json_serializable(driver: ScopeDriver, config: Config) -> Non
 
 
 # --------------------------------------------------------------------------
+# yorigin(設定依存の動的値)
+# --------------------------------------------------------------------------
+
+
+def test_default_offset_gives_zero_yorigin(driver: ScopeDriver) -> None:
+    assert driver.read_waveform("CH1").preamble.yorigin == 0.0
+
+
+def test_yorigin_follows_channel_offset(
+    driver: ScopeDriver, config: Config, scope: FakeScope
+) -> None:
+    """yorigin はプロファイルの定数ではなくチャンネルoffsetの生カウント換算。
+
+    実機MHO98でも offset -0.064 V のとき yorigin=-9.0(= offset/yincrement)を観測。
+    """
+    baseline = capture_waveform(driver, config, "CH1")["samples_v"]
+
+    scope.handle(":CHANnel1:OFFSet -1.0")  # 実機同様、書き込み経由で変える
+    result = capture_waveform(driver, config, "CH1")
+
+    expected_yorigin = round(-1.0 / YINCREMENT)
+    assert expected_yorigin == -15
+    assert driver.read_waveform("CH1").preamble.yorigin == expected_yorigin
+
+    raws = driver.read_waveform("CH1").data
+    expected = [
+        (raw - expected_yorigin - YREFERENCE) * YINCREMENT for raw in raws
+    ]
+    assert result["samples_v"] == pytest.approx(expected, rel=1e-9)
+    # 生データは変わらず、全点が -yorigin*yincrement だけ一様にシフトする
+    shifts = [new - old for new, old in zip(result["samples_v"], baseline, strict=True)]
+    assert shifts == pytest.approx(
+        [-expected_yorigin * YINCREMENT] * POINTS, rel=1e-9
+    )
+
+
+def test_yorigin_is_per_source_channel(
+    driver: ScopeDriver, config: Config, scope: FakeScope
+) -> None:
+    """波形ソースのチャンネルのoffsetだけが yorigin に効く。"""
+    scope.handle(":CHANnel2:OFFSet -1.0")
+
+    result = capture_waveform(driver, config, "CH1")
+
+    assert result["samples_v"] == pytest.approx(
+        [volts(raw) for raw in driver.read_waveform("CH1").data], rel=1e-9
+    )
+
+
+# --------------------------------------------------------------------------
 # max_points
 # --------------------------------------------------------------------------
 

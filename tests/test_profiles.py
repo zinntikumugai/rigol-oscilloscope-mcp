@@ -88,7 +88,9 @@ def test_load_mho98_profile_fields() -> None:
     assert p.capabilities["impedance_50ohm"] is True
     assert p.dialect["screenshot_command"] == ":DISPlay:DATA?"
     assert p.dialect["screenshot_format"] == "png"
-    assert p.dialect["waveform_preamble"] == {"yorigin": 0, "yreference": 128}
+    # yorigin は定数ではなく設定依存の動的値のためプロファイルには持たせない
+    # (実測: offset -0.064 V で yorigin=-9.0)。ライブのプリアンブルを使うこと。
+    assert p.dialect["waveform_preamble"] == {"yreference": 128}
     assert p.dialect["nr3_single_digit_exponent"] is True
     assert p.dialect["snaps_to_125"] is False
     assert p.dialect["invalid_query_behavior"] == "silent_timeout"

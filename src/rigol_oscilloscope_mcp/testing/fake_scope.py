@@ -30,12 +30,16 @@ NO_ERROR = '0,"No error"'
 COMMAND_ERROR = '-100,"Command err"'
 OUT_OF_RANGE = '-222,"Data out of range"'
 
-# phase0実測のプリアンブル(yorigin=0 / yreference=128)
-PREAMBLE = "0,0,1000,1,2.000000E-6,-1.000000E-3,0.000000,6.8267E-02,0,128"
+# phase0実測のプリアンブル。yorigin(第9要素)だけは定数ではなく、
+# チャンネルoffsetの生カウント換算(= offset / yincrement)で動的に決まる。
+# 実機MHO98でも offset -0.064 V のとき yorigin=-9.0 を観測している。
+PREAMBLE_HEAD = "0,0,1000,1,2.000000E-6,-1.000000E-3,0.000000,6.8267E-02"
+YINCREMENT = 6.8267e-02
+YREFERENCE = 128
 
 WAVEFORM_POINTS = 1000
-RAW_MIN = 127  # volts = (127-0-128)*6.8267e-2 = -0.068 V
-RAW_MAX = 174  # volts = (174-0-128)*6.8267e-2 =  3.140 V
+RAW_MIN = 127  # offset=0(yorigin=0)で volts = (127-0-128)*6.8267e-2 = -0.068 V
+RAW_MAX = 174  # offset=0(yorigin=0)で volts = (174-0-128)*6.8267e-2 =  3.140 V
 
 SRATE = "5.0000E+06"
 MDEPTH = "1.0000E+04"
@@ -424,7 +428,7 @@ class FakeScope:
             ),
             (
                 rf"{waveform}:{_mn('PREamble')}\?",
-                lambda m: PREAMBLE.encode("ascii"),
+                lambda m: self._preamble(),
             ),
             (
                 rf"{waveform}:{_mn('DATA')}\?",
@@ -486,6 +490,17 @@ class FakeScope:
         elif key == "impedance":
             state["impedance"] = self._enum(token, _IMPEDANCES)
         return None
+
+    def _preamble(self) -> bytes:
+        """プリアンブルを組み立てる。yorigin は波形ソースのoffset依存。
+
+        yorigin は「垂直リファレンス位置からのずれ」を生カウントで表した動的値で、
+        `offset / yincrement` に等しい(実機実測: offset -0.064 V → yorigin -9.0)。
+        生波形データ自体は offset を変えても変化しない。
+        """
+        number = int(str(self.waveform["source"]).removeprefix("CHAN"))
+        yorigin = round(float(self.channels[number]["offset"]) / YINCREMENT)
+        return f"{PREAMBLE_HEAD},{yorigin},{YREFERENCE}".encode("ascii")
 
     def _timebase_scale_query(self, match: re.Match[str]) -> bytes:
         return _nr3(self.timebase["scale"]).encode("ascii")

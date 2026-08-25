@@ -32,7 +32,10 @@ dialect:
     rise_time: RTIMe
     fall_time: FTIMe
   waveform_preamble:
-    yorigin: 0
+    # yorigin はここに持たない。定数ではなく設定依存の動的値であり、
+    # チャンネルoffsetの生カウント換算(= offset / yincrement)で決まる
+    # (実測: offset -0.064 V のとき yorigin=-9.0)。
+    # 電圧変換には必ずライブの :WAVeform:PREamble? の値を使うこと。
     yreference: 128
   nr3_single_digit_exponent: true
   snaps_to_125: false

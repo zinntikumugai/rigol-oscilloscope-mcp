@@ -11,6 +11,7 @@ import socket
 import threading
 import time
 from collections.abc import Callable, Iterator
+from weakref import WeakKeyDictionary
 
 import pytest
 
@@ -62,15 +63,28 @@ class StubServer:
         self._thread.join(timeout=0.5)
 
 
+_BUFFERS: WeakKeyDictionary[socket.socket, bytearray] = WeakKeyDictionary()
+
+
 def recv_command(conn: socket.socket) -> str:
-    """'\\n' 終端のコマンドを1つ受信する(終端は除去して返す)。"""
-    buf = bytearray()
-    while not buf.endswith(b"\n"):
-        chunk = conn.recv(4096)
-        if not chunk:
-            raise AssertionError(f"コマンド受信中に切断されました: {bytes(buf)!r}")
-        buf.extend(chunk)
-    return bytes(buf).decode("ascii").rstrip("\n")
+    """'\\n' 終端のコマンドを1つ受信する(終端は除去して返す)。
+
+    `open()` が送る回復用の空行は読み飛ばす。空行と後続コマンドは1回のrecvへ
+    合流しうるため、接続ごとの受信バッファで行単位に切り出す。
+    """
+    buf = _BUFFERS.setdefault(conn, bytearray())
+    while True:
+        index = buf.find(b"\n")
+        while index < 0:
+            chunk = conn.recv(4096)
+            if not chunk:
+                raise AssertionError(f"コマンド受信中に切断されました: {bytes(buf)!r}")
+            buf.extend(chunk)
+            index = buf.find(b"\n")
+        line = bytes(buf[:index])
+        del buf[: index + 1]
+        if line.strip():  # 空行(回復フラッシュ)は無視する
+            return line.decode("ascii")
 
 
 def wait_close(conn: socket.socket) -> None:
@@ -365,6 +379,47 @@ def test_open_connection_refused_maps_to_device_not_found() -> None:
     assert exc.value.code == ErrorCode.DEVICE_NOT_FOUND
     assert exc.value.detail == {"host": "127.0.0.1", "port": port}
     assert transport.is_open is False
+
+
+def test_open_sends_recovery_newline_first() -> None:
+    """open() 直後に空行1本を送る(wedge状態の機器を回復させる)。
+
+    実機MHO98は未定義ヘッダのクエリ1回でSCPIサーバー全体が沈黙し、空行の送信で
+    回復することが確認されている(接続・プロセス再起動では回復しない)。
+    """
+    first: list[bytes] = []
+
+    def handler(conn: socket.socket) -> None:
+        first.append(conn.recv(4096))
+        wait_close(conn)
+
+    with StubServer(handler) as server:
+        transport = LanTransport("127.0.0.1", port=server.port, timeout_s=1.0)
+        transport.open()
+        transport.close()
+
+    assert first and first[0].startswith(b"\n")
+
+
+def test_recovery_newline_does_not_disturb_following_query() -> None:
+    """回復用の空行のあとも、コマンドと応答の対応が崩れないこと。"""
+    received: list[bytes] = []
+
+    def handler(conn: socket.socket) -> None:
+        buf = bytearray()
+        while buf.count(b"\n") < 2:  # 回復用の空行 + '*IDN?'
+            chunk = conn.recv(4096)
+            if not chunk:
+                raise AssertionError(f"切断されました: {bytes(buf)!r}")
+            buf.extend(chunk)
+        received.append(bytes(buf))
+        conn.sendall(IDN.encode("ascii") + b"\n")
+        wait_close(conn)
+
+    with stub(handler) as transport:
+        assert transport.query("*IDN?") == IDN
+
+    assert received == [b"\n*IDN?\n"]
 
 
 def test_open_unresolvable_host_maps_to_device_not_found() -> None:

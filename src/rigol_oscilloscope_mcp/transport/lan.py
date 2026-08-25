@@ -20,6 +20,9 @@ from .blocks import parse_block
 DEFAULT_PORT = 5555
 _RECV_CHUNK = 65536
 
+# 接続直後に送る回復用の空行(理由は `LanTransport.open` を参照)
+_RECOVERY_FLUSH = b"\n"
+
 
 class LanTransport:
     """raw socket(TCP)によるSCPIトランスポート。"""
@@ -36,7 +39,17 @@ class LanTransport:
     # --- 接続管理 ---------------------------------------------------------
 
     def open(self) -> None:
-        """接続する。接続済みなら何もしない。"""
+        """接続し、回復用の空行を1本送る。接続済みなら何もしない。
+
+        実機MHO98では、未定義ヘッダのクエリ(例 `:MEASure:VPP?`)を1回送ると
+        SCPIサーバー全体が沈黙し、以後 `*IDN?` にも応答しなくなる。TCP接続だけは
+        成功し続け、プロセス再起動・再接続でも回復しないが、**空行 `\\n` を1本
+        送ると即座に回復する**ことを実機で確認している。そのため接続のたびに
+        空行を送り、wedge状態のまま使い始めることを防ぐ。
+
+        健全な機器には無害である(空コマンドはSCPIパーサに無視されるか、
+        エラーになっても接続シーケンスのエラーキューdrainで掃除される)。
+        """
         if self._sock is not None:
             return
         try:
@@ -50,6 +63,15 @@ class LanTransport:
                 {"host": self.host, "port": self.port},
             ) from exc
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        try:
+            sock.sendall(_RECOVERY_FLUSH)
+        except OSError as exc:
+            sock.close()
+            raise ScopeError(
+                ErrorCode.DEVICE_NOT_FOUND,
+                f"{self.host}:{self.port} へ接続直後の空行を送信できません: {exc}",
+                {"host": self.host, "port": self.port},
+            ) from exc
         self._sock = sock
         self._buf.clear()
 
