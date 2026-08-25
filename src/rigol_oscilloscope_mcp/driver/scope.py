@@ -242,11 +242,17 @@ class ScopeDriver:
         そのままキャッシュ無効化になる。
         """
         if self._options is not None:
-            return self._options
+            # 呼び出し側の変更がキャッシュへ波及しないようコピーを返す
+            return dict(self._options)
 
         query = self._required_dialect("option_query", "querying installed options")
         types = self.profile.dialect.get("option_types")
-        if not isinstance(types, dict) or not types:
+        if (
+            not isinstance(types, dict)
+            or not types
+            or not all(isinstance(t, str) and t.strip() for t in types.values())
+        ):
+            # 不正なトークンを機器へ送らない(送信前検証)
             raise _unsupported(
                 "this model's profile does not declare a value to use for "
                 "querying installed options",
@@ -257,12 +263,16 @@ class ScopeDriver:
         for name, token in types.items():
             try:
                 response = self.session.query(f"{query} {token}").strip()
-            except ScopeError:
-                # 1件の失敗で他の結果まで失わない(不明は None)
+            except ScopeError as exc:
+                # 想定内の個別失敗(応答timeout)だけ None に降格する。切断等は
+                # 全体の失敗なので伝播させる(全Noneをキャッシュして成功に
+                # 見せない)
+                if exc.code != ErrorCode.TIMEOUT:
+                    raise
                 response = ""
             options[name] = {"1": True, "0": False}.get(response)
         self._options = options
-        return options
+        return dict(options)
 
     # -- 取得(READ_ONLY)-------------------------------------------------
 

@@ -769,6 +769,33 @@ def test_installed_options_isolates_a_broken_type(response: bytes | None) -> Non
     assert len(options) == len(OPTION_TYPES)
 
 
+class _DisconnectingOptionScope(FakeScope):
+    """BND の照会で切断相当の失敗を起こすフェイク。"""
+
+    def handle(self, command: str) -> bytes | None:
+        if command.strip().upper().endswith(" BND"):
+            raise ScopeError(ErrorCode.DEVICE_DISCONNECTED, "link lost", {})
+        return super().handle(command)
+
+
+def test_installed_options_propagates_disconnection() -> None:
+    """切断はNoneに降格せず伝播する(全Noneをキャッシュして成功に見せない)。"""
+    driver = make_driver(_DisconnectingOptionScope())
+
+    with pytest.raises(ScopeError) as exc_info:
+        driver.installed_options()
+
+    assert exc_info.value.code == ErrorCode.DEVICE_DISCONNECTED
+
+
+def test_installed_options_cache_returns_a_copy(driver: ScopeDriver) -> None:
+    """返却dictを書き換えてもキャッシュへ波及しない。"""
+    first = driver.installed_options()
+    first["bundle"] = None
+
+    assert driver.installed_options()["bundle"] is True
+
+
 # --------------------------------------------------------------------------
 # シリアルデコード(docs/verification/mho98-unlicensed.md 3章)
 # --------------------------------------------------------------------------
