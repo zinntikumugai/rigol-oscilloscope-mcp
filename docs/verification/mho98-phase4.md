@@ -51,7 +51,37 @@ Time,Tx/Rx,Data,Error,
 
 - read-onlyスイート(`-m device`): **11 passed**(`test_get_decode_result_parses_or_warns` 含む)
 
-## 3. 未実施・今後の予定
+## 3. ライセンス(MHO900-BND)適用後の再検証(2026-08-26)
+
+ユーザーが本体でバンドルライセンスを手動適用・再起動した後、`installed_options()`(`get_capabilities` と同経路)で再照会した。
+
+### オプション状態の before / after
+
+| オプション | 未適用([mho98-unlicensed.md](mho98-unlicensed.md))| 適用後 |
+|---|---|---|
+| bundle (BND) | 0 | **1** |
+| afg_100mhz / audio_i2s / can_fd / flexray / mil_std_1553 | 0 | **1**(バンドルの内容どおり) |
+| afg_50mhz / memory_500mpts | 1(工場出荷) | 1 |
+| bandwidth_350_to_500 / _350_to_800 / _500_to_800 | 0 | 0(帯域アップグレードはバンドル対象外=妥当) |
+
+→ オプション照会の実装がライセンス適用を正しく反映することを確認。**ファームウェア再起動後も照会コマンド・トークンの挙動に変化なし**(00.01.00)。
+
+### `:BUS1:CAN:FDBaud?`(オプションゲート済みニモニック)の before / after
+
+| 時点 | 応答 | エラーキュー |
+|---|---|---|
+| 未適用(2026-08-25、初回) | `1000000` | `-222,"Data out of range"` |
+| 未適用(2026-08-26、再測定) | `1000000` | `0,"No error"` |
+| **適用後(2026-08-26)** | `1000000` | `0,"No error"` |
+
+- 適用前後とも**沈黙しない**(mho98-unlicensed.md 4章の結論を維持: 送信前ライセンスゲートは不要)
+- ただし未適用時のエラーキュー挙動には**揺らぎがある**(-222が積まれる場合と積まれない場合を観測)。エラーキューだけで「未ライセンス」を判定するのは不可で、判定には `:SYSTem:OPTion:STATus?` を使うこと
+
+### スイート実行
+
+- read-onlyスイート(`-m device`): **11 passed**(適用後。`test_installed_options_answer` は「boolであること」のみを検証する設計のため適用前後どちらでもパス)
+
+## 4. 未実施・今後の予定
 
 - RS232以外(I2C/SPI/CAN/LIN/Parallel)のイベントテーブル列構成は該当信号源を接続した際に本書へピン留めする(パーサーはスキーマ非依存のためコード変更不要)
-- ライセンス適用後の再検証(options全True化、`:BUS1:CAN:FDBaud?` のbefore/after)は Phase 4 完了時に本書へ追記
+- ライセンス解放済みとなったオプション機能(CAN-FD / FlexRay / I2S / MIL-STD-1553デコード、AFG 100MHz)の対応は roadmap 2章の対象(着手時に要件へ昇格)
