@@ -24,7 +24,7 @@ GUI自動操作は使わない。
 
 ## インストール・起動
 
-GitHubリポジトリからの `uvx` 起動を標準とする(PyPI公開はしていない)。
+GitHubリポジトリからの `uvx` 起動を標準とする。
 
 ```bash
 uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.0 rigol-oscilloscope-mcp
