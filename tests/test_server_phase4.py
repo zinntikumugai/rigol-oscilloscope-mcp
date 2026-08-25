@@ -389,12 +389,10 @@ def test_disable_afg_turns_the_output_off_in_one_call(server, scope: FakeScope) 
 
 
 def test_enable_afg_unknown_channel_returns_error_dict(server) -> None:
+    """不正channelはトークン発行前(設定スナップショット取得時)に拒否される。"""
     connected(server)
 
-    issued = data(server, "enable_afg", {"channel": 3})
-    result = data(
-        server, "enable_afg", {"channel": 3, "confirm_token": issued["detail"]["confirm_token"]}
-    )
+    result = data(server, "enable_afg", {"channel": 3})
 
     assert result["error"] is True
     assert result["code"] == ErrorCode.INVALID_PARAMETER

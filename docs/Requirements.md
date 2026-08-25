@@ -23,7 +23,7 @@
 
 想定する利用者の指示の例:
 
-> 「Rigol MHO98を接続している。IPは192.168.1.120。」
+> 「Rigol MHO98を接続している。IPは192.0.2.10。」
 > 「x10プローブで、1kHz 3Vの波形を見えるようにしてほしい」
 > 「現在の波形をスクショして ~/captures に保存して」
 
@@ -179,10 +179,10 @@ Transport(LAN raw socket / USB USBTMC)
 
 **例1: 接続(会話指示ベース)**
 
-> 「Rigol MHO98を接続している。IPは192.168.1.120。」
+> 「Rigol MHO98を接続している。IPは192.0.2.10。」
 
 ```text
-connect(address="192.168.1.120")
+connect(address="192.0.2.10")
 → { connected: true, model: "MHO98", profile: { name: "mho98", confidence: "verified" } }
 ```
 
