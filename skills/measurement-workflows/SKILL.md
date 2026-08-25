@@ -60,7 +60,7 @@ Never change everything at once. Narrow down step by step:
 
 1. `get_state`, then set a coarse timebase (1 ms/div) and vertical scale (per the table)
 2. `analyze_waveform` (stats + fft) — it reports min/max/mean/vpp and the dominant frequencies without shipping raw samples; use `stats.vpp_v` to set the vertical scale and `fft.dominant_frequency_hz` to pick the timebase (mind `frequency_resolution_hz`: a coarse record gives a coarse estimate)
-3. Narrow `scale_s_per_div` until individual periods are visible; `capture_screenshot` when you need to see the wave shape
+3. Narrow `scale_s_per_div` until individual periods are visible; `capture_screenshot` when you need to see the wave shape (`capture_waveform` when you need the raw samples themselves)
 4. Set the trigger (edge, half the observed amplitude), re-acquire
 5. `measure` frequency and vpp to confirm; if the signal looks like a serial protocol, follow the decode step from the UART workflow
 
