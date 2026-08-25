@@ -27,7 +27,9 @@ class ChannelState:
     scale_v_per_div: float
     offset_v: float
     coupling: str  # "DC" | "AC" | "GND"
-    impedance: str  # "1M" | "50"
+    # プロファイルが impedance_control を宣言しない機種では、:IMPedance? を
+    # 送らない(未対応機では無応答タイムアウトになる)ため "unknown" となる。
+    impedance: str  # "1M" | "50" | "unknown"
     probe_ratio: float
     bandwidth_limit: bool
 

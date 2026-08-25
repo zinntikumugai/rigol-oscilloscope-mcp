@@ -76,6 +76,14 @@ def test_get_state_channel_values_match_fake_defaults(driver: ScopeDriver) -> No
     assert ch1["bandwidth_limit"] is False
 
 
+def test_get_state_channels_skip_impedance_without_capability(scope: FakeScope) -> None:
+    """impedance_control 未宣言のプロファイルでは :IMPedance? を一切送らない。"""
+    channels = get_state(make_driver(scope, "rigol-generic"))["channels"]
+
+    assert all(ch["impedance"] == "unknown" for ch in channels.values())
+    assert sent(scope, ":IMPEDANCE") == []
+
+
 def test_get_state_timebase_values_match_fake_defaults(driver: ScopeDriver) -> None:
     timebase = get_state(driver)["timebase"]
 

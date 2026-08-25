@@ -54,9 +54,13 @@ COUPLINGS = ("DC", "AC", "GND")
 IMPEDANCES = ("1M", "50")
 
 DEFAULT_SCREENSHOT_COMMAND = ":DISPlay:DATA?"
-# 帯域制限の「入」に用いる値は機種依存(MHO98は OFF/20M/100M/250M)
-DEFAULT_BWLIMIT_ON = "20M"
+# 帯域制限の「入」に用いる値は機種依存(MHO98は OFF/20M/100M/250M)。
+# 既定値は置かない: プロファイルが宣言していない値を実機へ送らない。
 BWLIMIT_OFF = "OFF"
+
+# `:CHANnel<n>:IMPedance` 非対応機では問い合わせが無応答タイムアウトになるため、
+# capability 未宣言のプロファイルでは送らず「不明」とする。
+IMPEDANCE_UNKNOWN = "unknown"
 
 DEFAULT_ANALOG_CHANNELS = 4
 PREAMBLE_FIELDS = 10
@@ -176,6 +180,16 @@ class ScopeDriver:
         value = self.profile.dialect.get(key, default)
         return value if isinstance(value, str) else default
 
+    def _required_dialect(self, key: str, what: str) -> str:
+        """プロファイル未宣言のニモニック/引数は実機へ送らない。"""
+        value = self.profile.dialect.get(key)
+        if not isinstance(value, str) or not value:
+            raise _unsupported(
+                f"この機種のプロファイルは{what}に用いる値を宣言していません",
+                {"dialect": key, "profile": self.profile.name},
+            )
+        return value
+
     # -- 識別 -------------------------------------------------------------
 
     def identify(self) -> IdnInfo:
@@ -203,7 +217,11 @@ class ScopeDriver:
             scale_v_per_div=parse_nr3(query(f":CHANnel{number}:SCALe?")),
             offset_v=parse_nr3(query(f":CHANnel{number}:OFFSet?")),
             coupling=parse_coupling(query(f":CHANnel{number}:COUPling?")),
-            impedance=from_scpi_impedance(query(f":CHANnel{number}:IMPedance?")),
+            impedance=(
+                from_scpi_impedance(query(f":CHANnel{number}:IMPedance?"))
+                if self.profile.supports("impedance_control")
+                else IMPEDANCE_UNKNOWN
+            ),
             probe_ratio=parse_nr3(query(f":CHANnel{number}:PROBe?")),
             bandwidth_limit=self._parse_bwlimit(query(f":CHANnel{number}:BWLimit?")),
         )
@@ -358,7 +376,8 @@ class ScopeDriver:
 
     def set_channel_bwlimit(self, channel: str, enabled: bool) -> bool:
         number = self._channel_number(channel)
-        value = self._dialect("bwlimit_on", DEFAULT_BWLIMIT_ON) if enabled else BWLIMIT_OFF
+        # OFF は全機種共通。ON 側の値は機種依存なので宣言が無ければ送らない。
+        value = self._required_dialect("bwlimit_on", "帯域制限の有効化") if enabled else BWLIMIT_OFF
         readback = self.session.set_and_verify(
             f":CHANnel{number}:BWLimit {value}", f":CHANnel{number}:BWLimit?"
         )
@@ -367,6 +386,8 @@ class ScopeDriver:
     def set_channel_impedance(self, channel: str, impedance: str) -> str:
         number = self._channel_number(channel)
         value = self._validate_choice(impedance, IMPEDANCES, "入力インピーダンス")
+        # IMPedance ニモニック自体が未確認なら "1M" でも送らない
+        self._require("impedance_control", "入力インピーダンスの設定")
         if value == "50":
             self._require("impedance_50ohm", "50Ω入力")
         readback = self.session.set_and_verify(

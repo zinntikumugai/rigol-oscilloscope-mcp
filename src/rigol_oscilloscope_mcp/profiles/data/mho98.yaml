@@ -12,6 +12,7 @@ capabilities:
   protocol_decode: true
   waveform_download: true
   screenshot: true
+  impedance_control: true # :CHANnel<n>:IMPedance が使える(問い合わせ含む)
   impedance_50ohm: true
   measurements:
     [frequency, period, vpp, vmax, vmin, vavg, rms, duty, rise_time, fall_time]
@@ -20,6 +21,7 @@ dialect:
   scpi_port: 5555
   screenshot_command: ":DISPlay:DATA?"
   screenshot_format: png
+  bwlimit_on: "20M" # 帯域制限「入」の値(選択肢 OFF/20M/100M/250M は要実機確認)
   measurement_items:
     frequency: FREQuency
     period: PERiod

@@ -79,6 +79,16 @@ def test_get_channel_disabled(driver: ScopeDriver) -> None:
     assert driver.get_channel("CH2").enabled is False
 
 
+def test_get_channel_skips_impedance_without_capability(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """impedance_control 未宣言なら :IMPedance? を送らない(未対応機で5秒タイムアウト)。"""
+    state = generic_driver.get_channel("CH1")
+
+    assert state.impedance == "unknown"
+    assert sent(scope, ":IMPEDANCE") == []
+
+
 def test_get_channel_uses_long_form_commands(driver: ScopeDriver, scope: FakeScope) -> None:
     driver.get_channel("CH1")
 
@@ -414,10 +424,36 @@ def test_set_channel_bwlimit(driver: ScopeDriver, scope: FakeScope) -> None:
     assert scope.channels[1]["bwlimit"] == "OFF"
 
 
+def test_set_channel_bwlimit_uses_profile_token(driver: ScopeDriver, scope: FakeScope) -> None:
+    driver.set_channel_bwlimit("CH1", True)
+
+    assert ":CHANnel1:BWLimit 20M" in scope.command_log
+
+
 def test_set_channel_bwlimit_reflected_in_channel_state(driver: ScopeDriver) -> None:
     driver.set_channel_bwlimit("CH1", True)
 
     assert driver.get_channel("CH1").bandwidth_limit is True
+
+
+def test_set_channel_bwlimit_on_undeclared_is_not_sent(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """帯域制限の「入」の値は機種依存。dialect 未宣言なら送らない。"""
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.set_channel_bwlimit("CH1", True)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert excinfo.value.detail["dialect"] == "bwlimit_on"
+    assert scope.command_log == []
+
+
+def test_set_channel_bwlimit_off_allowed_without_dialect(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`OFF` は全機種共通ニモニックなので未宣言でも送れる。"""
+    assert generic_driver.set_channel_bwlimit("CH1", False) is False
+    assert ":CHANnel1:BWLimit OFF" in scope.command_log
 
 
 def test_set_channel_impedance(driver: ScopeDriver, scope: FakeScope) -> None:
@@ -436,8 +472,16 @@ def test_set_channel_impedance_50_unsupported_by_profile(
     assert scope.command_log == []
 
 
-def test_set_channel_impedance_1m_allowed_on_generic(generic_driver: ScopeDriver) -> None:
-    assert generic_driver.set_channel_impedance("CH1", "1M") == "1M"
+def test_set_channel_impedance_1m_unsupported_without_capability(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`:CHANnel<n>:IMPedance` 自体が未確認の機種には "1M" も送らない。"""
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.set_channel_impedance("CH1", "1M")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert excinfo.value.detail["capability"] == "impedance_control"
+    assert scope.command_log == []
 
 
 def test_set_channel_impedance_rejects_unknown(driver: ScopeDriver) -> None:
