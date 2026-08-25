@@ -30,6 +30,15 @@ uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp rigol-osc
 
 タグ付きリリースには `@<tag>` を付けてバージョンを固定できる。
 
+### Claude Code — プラグイン(推奨)
+
+本リポジトリはClaudeプラグインを兼ねており、MCPサーバーに加えて測定ワークフロースキル
+(信号種別ごとの推奨設定・UART/未知信号の測定手順・安全プロンプト)が同時に導入される。
+
+```
+/plugin install rigol-oscilloscope@zinntikumugai/rigol-oscilloscope-mcp
+```
+
 ### Claude Code(`.mcp.json` または `claude mcp add`)
 
 ```json
@@ -43,6 +52,17 @@ uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp rigol-osc
   }
 }
 ```
+
+### Codex — プラグイン
+
+Codexプラグイン(`.codex-plugin/` + マーケットプレイス定義)も同梱しており、MCPサーバーと測定ワークフロースキルを一括導入できる。
+
+```bash
+codex plugin marketplace add zinntikumugai/rigol-oscilloscope-mcp
+codex plugin install rigol-oscilloscope
+```
+
+(プラグインを使わない場合、スキルだけなら `skills/measurement-workflows` を `~/.agents/skills/` へコピーしても認識される。MCPサーバーだけなら次の `config.toml` 設定で足りる)
 
 ### Codex(`~/.codex/config.toml`)
 

@@ -384,9 +384,18 @@ args = ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp",
 RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 ```
 
-### 10.3 Claudeプラグイン化(将来)
+### 10.3 プラグイン(Claude / Codex)
 
-MCPサーバー本体に加え、測定ワークフロー(段階的な未知信号探索、UART確認手順など)と安全プロンプト(物理確認の促し、商用電源測定の拒否)をスキルとして同梱するClaudeプラグインを提供する。旧v0.1の操作例(UART測定、Unknown Signal探索)や測定反復の上限ガイダンス(旧 `max_iterations`)は、サーバー要件ではなくこのスキルの素材とする。
+リポジトリルートをプラグインルートとし、ClaudeとCodexの両プラグインを同梱する。スキル(`skills/`)とMCPサーバー起動定義(10.1の `uvx` 標準形)は両者で共有し、マニフェストのみホストごとに持つ:
+
+- `.claude-plugin/plugin.json` — Claude用マニフェスト(MCPサーバー定義をインラインで含む。`skills/` は自動発見)
+- `.codex-plugin/plugin.json` — Codex用マニフェスト(`skills` は `./skills/` を、`mcpServers` は `./.codex-plugin/mcp.json` を参照)
+- `.agents/plugins/marketplace.json` — Codexのマーケットプレイス定義(Codexはプラグイン導入がマーケットプレイス経由のため単一プラグインでも必要)
+- `skills/measurement-workflows/SKILL.md` — 測定ワークフロースキル(1本に統合、Agent Skillsオープン標準形式で両ホスト共通)。信号種別→推奨設定の対応表、UART測定・未知信号探索のワークフロー、安全プロンプト(物理確認の促し、商用電源測定の拒否)、測定反復の上限ガイダンス(目安5回)を含む
+
+スキルは実行時にLLMホストへ渡る文字列のため**英語**で記述する(実行時に外部へ出る文字列は英語、という言語方針に従う)。旧v0.1の操作例・`max_iterations` はサーバー要件ではなくこのスキルへ吸収した。整合は `tests/test_plugin.py` が検証する(各マニフェストの妥当性、両マニフェストとpyprojectのname/version/起動列の一致、スキルが実在Tool名を参照していること)。
+
+**Codex側の未検証事項**(公式ドキュメント準拠で作成したが実CLIでの動作確認は未実施): (1) `mcpServers` にプラグインルート直下以外の相対パス(`./.codex-plugin/mcp.json`)を指定できること、(2) マーケットプレイスのsource `path: "./"` でプラグインルート=リポジトリルートを表現できること。Codex CLIでの実確認は [roadmap.md](roadmap.md) 3章へ。
 
 ## 11. 開発フェーズと受入基準
 
@@ -395,7 +404,7 @@ MCPサーバー本体に加え、測定ワークフロー(段階的な未知信�
 - **Phase 0 — SCPI検証: 完了。** 結果は [verification/mho98-phase0.md](verification/mho98-phase0.md)
 - **Phase 1 — Read Only MCP: 完了。** `connect` / `disconnect` / `scope_identify` / `get_capabilities` / `get_state` / `get_*` / `measure` / `capture_waveform` / `capture_screenshot`。機器を変更できない状態でMCP連携とプロファイル機構を検証
 - **Phase 2 — Basic Control: 完了。** `configure_*` / `run` / `stop` / `single` / `autoset`。Safety Layer(操作クラス・confirmトークン)導入。MVPの実機検証結果は [verification/mho98-mvp.md](verification/mho98-mvp.md)
-- **Phase 3 — Measurement Assistant:** スキル(または `recommend_setup`)による測定目的→設定の実用化
+- **Phase 3 — Measurement Assistant: 完了。** 同梱スキル(`skills/measurement-workflows/`)による測定目的→設定の実用化とClaudeプラグイン化(10.3)。サーバー側Tool `recommend_setup` は実装せず、スキルで精度不足が実証された場合のフォールバックとして据え置き([tools.md](tools.md) 6章)
 - **Phase 4 — Advanced:** シリアルデコード、Logic Analyzer、AFG、高度解析
 
 ### 11.2 受入基準(MVP = Phase 1 + 2)
@@ -438,9 +447,18 @@ MCPサーバー本体に加え、測定ワークフロー(段階的な未知信�
 
 - [ ] 1.1の3つの利用例(接続指示 / x10プローブで1kHz 3V波形表示 / スクショ保存)がLLMからMCP経由で完遂できる — **LLMホストからの通し確認は未実施**。構成要素は分割して担保済み(MCPプロトコル経由のTool呼び出し: tests/test_server_phase1.py / tests/test_server_phase2.py、FakeScope / 機器操作そのもの: tests/device/ 18件、実機PASS)
 
+### 11.3 受入基準(Phase 3)
+
+消化状況(2026-08-25)。Phase 3はサーバーコードに触れないため実機検証は不要(機器通信ゼロ)。
+
+- [x] プラグインマニフェスト(`.claude-plugin/plugin.json`)が有効なJSONで、10.1の標準形によるMCPサーバー起動定義を含む(tests/test_plugin.py::test_plugin_manifest_is_valid)
+- [x] Codexプラグイン(`.codex-plugin/` + `.agents/plugins/marketplace.json`)がClaude側とname/version/MCP起動列で一致し、同じ `skills/` を共有する(tests/test_plugin.py::test_codex_manifest_is_valid / ::test_manifests_agree / ::test_codex_marketplace_references_the_plugin)— **Codex CLIでの実動作確認は未実施**(10.3の未検証事項、[roadmap.md](roadmap.md) 3章)
+- [x] 同梱スキルに信号種別→推奨設定の対応表、UART・未知信号ワークフロー、安全プロンプト(物理確認・AC mains拒否)、反復上限ガイダンスを記載(tests/test_plugin.py::test_skill_frontmatter)
+- [x] スキルが参照するTool名がすべて実在する(tests/test_plugin.py::test_skill_references_real_tools、Tool改名時の乖離ガード)
+
 ## 12. 未決事項
 
-以下は実装・追加検証の中で決定する(Phase 0で解決済みの項目は削除済み):
+以下は実装・追加検証の中で決定する(解決済みの項目は削除済み。直近ではPhase 3でスキル構成を「1本に統合」で解決):
 
 1. USB(USBTMC)接続の実機検証と、VISAリソース文字列の推奨形式
 2. RAWモード波形ダウンロードのチャンク処理・上限(実機未検証)
@@ -449,4 +467,3 @@ MCPサーバー本体に加え、測定ワークフロー(段階的な未知信�
 5. `AUToset` 書き込みの実機確認(`RUN` / `STOP` / `SINGle` はMVPで確認済み。`:RUN` 直後の `:TRIGger:STATus?` は約0.2秒 `STOP` を返すためポーリングが必要 → [verification/mho98-mvp.md](verification/mho98-mvp.md))
 6. MHO98以外の最初の対応機種と、ファミリプロファイルの括り出し時期
 7. 波形一時ファイルの受け渡し方式(保存場所・寿命・クリーンアップ)
-8. Claudeプラグインに同梱するスキルの構成(測定ワークフロー・安全プロンプトの分割)

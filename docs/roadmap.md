@@ -7,14 +7,11 @@ MVP(Phase 1 + 2 = Read Only + Basic Control)完了後に対応する機能と、
 
 ---
 
-## 1. Phase 3 — Measurement Assistant
+## 1. Phase 3 — Measurement Assistant(完了・要件へ昇格)
 
-測定目的(「UARTを見たい」)から設定を導く支援層。
+**同梱スキルで実現し完了**(2026-08-25)。信号種別10種の推奨設定表・ワークフロー・安全プロンプトは `skills/measurement-workflows/SKILL.md`、プラグイン構成は [Requirements.md](Requirements.md) 10.3、受入基準は同 11.3 を参照。
 
-- **第一候補: 配布スキルでの実現。** 推奨ロジック(信号種別→設定の対応)はLLM自身の知識+スキルのワークフロー記述で賄えれば、サーバー側実装は不要
-- サーバー側Tool `recommend_setup`([tools.md](tools.md) 6章)は、スキルで精度が不足する場合のフォールバックとして実装を検討する(機器設定は変更しない読み取り専用Tool)
-- 旧v0.1の推奨プリセット案(スキル/実装の素材として保持):
-  `digital / uart / i2c / spi / pwm / clock / power_ripple / switching_power_supply / audio / unknown_signal`
+- サーバー側Tool `recommend_setup`([tools.md](tools.md) 6章)は**実装せず据え置き**。スキルで精度不足が実証された場合のフォールバックとして仕様のみ残す
 
 ## 2. Phase 4 — 機器の高度機能
 
@@ -47,18 +44,11 @@ MHO98は2ch・100 MHz・1 GSa/s のAFGを搭載する。
 - `capture_waveform` の生データ(または一時ファイル)を入力とする解析Tool群として設計する
 - NumPy/SciPy依存が増えるため、optional dependency(extras)化を検討する
 
-## 3. Claudeプラグイン化
+## 3. プラグイン化(完了・要件へ昇格)
 
-MCPサーバー本体+スキルを同梱するプラグインとして配布する([Requirements.md](Requirements.md) 10.3)。
+**完了**(2026-08-25)。Claude(`.claude-plugin/plugin.json`)・Codex(`.codex-plugin/plugin.json` + `.agents/plugins/marketplace.json`)の両プラグインとして実装し、[Requirements.md](Requirements.md) 10.3 へ昇格した。スキル(`skills/measurement-workflows/SKILL.md`、Agent Skillsオープン標準)とMCP起動定義は両ホストで共有。旧v0.1のスキル素材(UART測定・Unknown Signal探索・安全プロンプト・反復上限)はすべてスキル本文へ吸収済み。
 
-同梱するスキルの素材(旧v0.1の操作例より):
-
-- **UART測定ワークフロー:** get_state → (推奨設定の決定) → configure_channel(DC, 1V/div程度) → configure_timebase → configure_trigger(rising, 閾値の半分) → single → measure → capture_screenshot → 解析
-- **Unknown Signal探索ワークフロー:** 一度に大きく設定を変えず、状態確認 → 粗いTimebase → 波形取得 → 振幅確認 → Timebase調整 → Trigger設定 → 再取得 → Frequency/Vpp測定、と段階的に絞り込む
-- **安全プロンプト:** 物理接続確認の促し、商用電源(AC mains)測定の拒否と絶縁プローブ案内
-- **反復上限ガイダンス:** 設定変更→再測定のフィードバックループは目安5回まで(旧 `max_iterations` はサーバー強制でなくスキル側ガイダンスとする)
-
-Codex対応はMCPサーバーの `config.toml` 設定([Requirements.md](Requirements.md) 10.2)で完結する。プロンプト相当を配る仕組みはCodex側の機能(AGENTS.md等)を踏まえて別途検討する。
+**残タスク: Codex CLIでの実動作確認**(公式ドキュメント準拠で作成、実CLI未確認)。確認対象は Requirements.md 10.3 の未検証事項2点(`mcpServers` の相対パス指定、マーケットプレイスsource `path: "./"`)と、`codex plugin marketplace add zinntikumugai/rigol-oscilloscope-mcp` → install → スキル発見・MCPサーバー起動の通し。なおCodexはMCPサーバー単体なら `config.toml`([Requirements.md](Requirements.md) 10.2)、スキル単体なら `~/.agents/skills/` へのコピーでもプラグインなしで利用できる。
 
 ## 4. 機種プロファイルの拡充
 
