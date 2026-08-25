@@ -1,6 +1,10 @@
-"""ホスト側の波形解析(取得済みサンプル列だけで完結し、機器へは何も送らない)。
+"""ホスト側の波形解析。
 
 規範: tools.md 5章 `analyze_waveform` / roadmap.md 2.4。
+
+統計・FFTの計算自体はホスト側の純関数(`waveform_stats` / `waveform_fft`)で、
+機器へは何も送らない。Toolの入口 `analyze_waveform` だけは `read_samples` で
+波形取得(capture_waveformと同じ読み取り)を行ってから解析する。
 
 - 統計とFFTはサーバー側で計算し、LLMには要約(数値)だけを返す。生の配列は
   `capture_waveform` の責務であり、ここでは決して返さない(トークン浪費の防止)
