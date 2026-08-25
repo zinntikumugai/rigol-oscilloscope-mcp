@@ -336,6 +336,64 @@ def test_query_binary_deadline_covers_whole_operation() -> None:
     assert elapsed < 0.5
 
 
+# --- タイムアウト後の切断(desync防止) --------------------------------------
+
+
+def test_query_timeout_closes_connection() -> None:
+    """TIMEOUT後は接続を破棄する(遅延応答を次のqueryが読まないため)。"""
+
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        wait_close(conn)
+
+    with stub(handler, timeout_s=0.2) as transport:
+        with pytest.raises(ScopeError) as exc:
+            transport.query("*IDN?")
+        assert exc.value.code == ErrorCode.TIMEOUT
+        assert transport.is_open is False
+
+
+def test_query_after_timeout_does_not_read_delayed_response() -> None:
+    """タイムアウト後に機器が遅延応答を送っても、次のqueryはそれを読まない。
+
+    接続ごと破棄されるため、同一transportでの次のqueryは DEVICE_DISCONNECTED
+    になる(上位の ConnectionManager.require_scope() が再接続を担う)。
+    """
+
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        time.sleep(0.3)  # timeout_s=0.1 を大きく超えてから遅延応答を送る
+        with contextlib.suppress(OSError):  # 既に切断済みなら送信は失敗してよい
+            conn.sendall(b"STALE\n")
+        wait_close(conn)
+
+    with stub(handler, timeout_s=0.1) as transport:
+        with pytest.raises(ScopeError) as first:
+            transport.query("FIRST?")
+        assert first.value.code == ErrorCode.TIMEOUT
+
+        time.sleep(0.3)  # 遅延応答が届きうる時間だけ待つ
+
+        with pytest.raises(ScopeError) as second:
+            transport.query("SECOND?")
+        assert second.value.code == ErrorCode.DEVICE_DISCONNECTED
+
+
+def test_query_binary_timeout_closes_connection() -> None:
+    """query_binary のタイムアウト経路でも接続を破棄する。"""
+
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        conn.sendall(b"#41000")  # ヘッダだけ送り、本体を送らない
+        wait_close(conn)
+
+    with stub(handler, timeout_s=0.2) as transport:
+        with pytest.raises(ScopeError) as exc:
+            transport.query_binary(":WAVeform:DATA?")
+        assert exc.value.code == ErrorCode.TIMEOUT
+        assert transport.is_open is False
+
+
 # --- 接続断 -----------------------------------------------------------------
 
 

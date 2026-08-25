@@ -134,6 +134,14 @@ class LanTransport:
         return self._sock
 
     def _timeout(self, command: str) -> ScopeError:
+        """タイムアウト。接続と受信バッファを破棄する。
+
+        機器が遅延して応答を返すと(実機MHO98では負荷時に0.9〜3.0秒の遅延応答を
+        実測)、次のqueryが前問の応答を読むdesyncが起きる。接続ごと捨てれば
+        次回は `ConnectionManager.require_scope()` の再接続(=回復用の空行+drain)
+        からやり直せる。
+        """
+        self.close()
         return ScopeError(
             ErrorCode.TIMEOUT,
             f"応答がタイムアウトしました: {command}",

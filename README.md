@@ -69,7 +69,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 | `RIGOL_MCP_SCREENSHOT_DIR` | スクリーンショットの既定保存先 | カレントディレクトリ |
 | `RIGOL_MCP_ALLOWED_DIRS` | 書き込み許可ルート(パス区切りで複数) | 既定保存先 + カレント |
 | `RIGOL_MCP_WAVEFORM_MAX_POINTS` | 波形取得の既定上限 | 100000 |
-| `RIGOL_MCP_RAW_SCPI` | `raw_scpi` Toolの有効化 | false |
+| `RIGOL_MCP_RAW_SCPI` | `raw_scpi` Toolの有効化(予約: Tool自体が未実装) | false |
 | `RIGOL_MCP_LOG_LEVEL` | ログレベル(error / warn / info / debug) | info |
 | `RIGOL_MCP_AUDIT_LOG` | 監査ログの出力先 | 有効(既定パス) |
 | `RIGOL_MCP_CONFIG` | TOML設定ファイルのパス | なし |

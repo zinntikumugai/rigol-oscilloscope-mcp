@@ -67,6 +67,7 @@ Codex対応はMCPサーバーの `config.toml` 設定([Requirements.md](Requirem
 - **表示OFFチャンネルへの書き込みが無視される件への対策検討**([verification/mho98-mvp.md](verification/mho98-mvp.md) 3.3): 表示OFFのCHへ `:SCALe` / `:OFFSet` を送るとエラーなく無視される。`configure_channel` で自動的に `enabled=True` にするか、requested/applied の不一致を警告として返すに留めるか、要検討(暗黙に表示をONにするのは利用者の画面を勝手に変える副作用でもある)
 - MHO98以外の対応機種の追加(DHO800/900系などを候補に、実機が用意でき次第)
 - ファミリプロファイルの括り出し(同系2機種以上の検証が揃った段階で)
+- **`raw_scpi` Tool は未実装**(configの `RIGOL_MCP_RAW_SCPI` は将来用の予約。[tools.md](tools.md) 7章の仕様で実装する際に使用する)
 
 ## 5. 検討事項(方針未定)
 
