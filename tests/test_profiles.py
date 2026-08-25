@@ -97,6 +97,26 @@ def test_load_mho98_profile_fields() -> None:
     assert p.limits["probe_ratio"] == [0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000]
 
 
+def test_mho98_declares_option_query() -> None:
+    """オプション照会はMHO900専用(docs/verification/mho98-unlicensed.md)。"""
+    p = load_profile("mho98")
+
+    assert p.dialect["option_query"] == ":SYSTem:OPTion:STATus?"
+    types = p.dialect["option_types"]
+    assert types["bundle"] == "BND"
+    assert types["afg_50mhz"] == "AFG50"
+    assert types["memory_500mpts"] == "RLU-05"
+    assert len(types) == 11
+
+
+def test_generic_does_not_declare_option_query() -> None:
+    """DHO800/900 には `:SYSTem:OPTion:*` が無い。宣言の不在がゲートになる。"""
+    p = load_profile(GENERIC)
+
+    assert "option_query" not in p.dialect
+    assert "option_types" not in p.dialect
+
+
 def test_mho98_inherits_generic_and_overrides() -> None:
     generic = load_profile(GENERIC)
     mho98 = load_profile("mho98")

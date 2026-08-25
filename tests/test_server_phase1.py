@@ -18,6 +18,7 @@ from mcp.types import CallToolResult, ImageContent, TextContent
 
 from rigol_oscilloscope_mcp.config import Config
 from rigol_oscilloscope_mcp.errors import ErrorCode
+from rigol_oscilloscope_mcp.profiles import load_profile
 from rigol_oscilloscope_mcp.server import create_server
 from rigol_oscilloscope_mcp.service import ConnectionManager
 from rigol_oscilloscope_mcp.testing import FakeScope, FakeTransport
@@ -172,6 +173,27 @@ def test_get_capabilities_reports_profile(server) -> None:
     assert data["profile"] == {"name": "mho98", "confidence": "verified"}
     assert data["capabilities"]["analog_channels"] == 4
     assert data["unsupported_vendor"] is False
+
+
+def test_get_capabilities_reports_installed_options(server) -> None:
+    connected(server)
+
+    options = payload(call(server, "get_capabilities"))["options"]
+
+    assert options["bundle"] is True  # FakeScopeの既定は全導入済み
+    assert len(options) == 11
+
+
+def test_get_capabilities_options_is_null_when_unsupported(
+    server, manager: ConnectionManager
+) -> None:
+    """genericプロファイル(オプション照会なし)では options は null。"""
+    connected(server)
+    manager.require_scope().profile = load_profile("rigol-generic")
+
+    data = payload(call(server, "get_capabilities"))
+
+    assert data["options"] is None
 
 
 # --------------------------------------------------------------------------

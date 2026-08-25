@@ -109,6 +109,7 @@ LLMに `:CHAN1:SCAL 1` のようなSCPI文字列を直接生成・送信させ�
 ### 3.4 非対象
 
 - Firmware Update、Calibration、Factory Service操作、ネットワーク/Wi-Fi設定変更、ライセンス管理、機器内ファイルの任意操作
+  - ライセンスの**適用・解除**が非対象であり、読み取り専用の**導入済みオプション検出**(`:SYSTem:OPTion:STATus?`、`get_capabilities` の `options`)は対象に含む
 - 任意SCPIの無制限実行、電源ON/OFFの外部制御
 - プローブ・DUTの物理接続、電気的安全性の自動保証(人間の責務)
 - 複数台の同時接続(単一アクティブ接続のみ。将来拡張の余地は残す)

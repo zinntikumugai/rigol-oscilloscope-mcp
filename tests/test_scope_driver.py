@@ -671,3 +671,126 @@ def test_set_trigger_edge_sends_ext_source(driver: ScopeDriver, scope: FakeScope
         driver.set_trigger_edge(source="ext")
 
     assert ":TRIGger:EDGE:SOURce EXT" in scope.command_log
+
+
+# --------------------------------------------------------------------------
+# オプション照会(docs/verification/mho98-unlicensed.md)
+# --------------------------------------------------------------------------
+
+OPTION_QUERY = ":SYSTem:OPTion:STATus?"
+OPTION_TYPES = load_profile("mho98").dialect["option_types"]
+
+
+class _BrokenOptionScope(FakeScope):
+    """BND だけ壊れた応答をするフェイク(部分失敗が他を巻き込まない検証用)。"""
+
+    def __init__(self, response: bytes | None) -> None:
+        super().__init__()
+        self.response = response
+
+    def handle(self, command: str) -> bytes | None:
+        if command.strip().upper().endswith(" BND"):
+            self.command_log.append(command)
+            if self.response is None:  # 無応答(実機の沈黙)
+                raise self._silent(fake_scope_module.COMMAND_ERROR)
+            return self.response
+        return super().handle(command)
+
+
+def test_installed_options_queries_every_declared_type(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    options = driver.installed_options()
+
+    assert set(options) == set(OPTION_TYPES)
+    assert all(value is True for value in options.values())  # FakeScopeの既定
+    sent_queries = sent(scope, OPTION_QUERY.upper())
+    assert len(sent_queries) == len(OPTION_TYPES)
+    assert sorted(c.split(" ", 1)[1] for c in sent_queries) == sorted(
+        OPTION_TYPES.values()
+    )
+
+
+def test_installed_options_reports_missing_licenses() -> None:
+    """未ライセンス実機相当(AFG50 / RLU-05 のみ導入済み)。"""
+    scope = FakeScope(options={"AFG50": True, "RLU-05": True})
+    driver = make_driver(scope)
+
+    options = driver.installed_options()
+
+    assert options["afg_50mhz"] is True
+    assert options["memory_500mpts"] is True
+    assert options["bundle"] is False
+    assert options["can_fd"] is False
+
+
+def test_installed_options_is_cached(driver: ScopeDriver, scope: FakeScope) -> None:
+    """ライセンスは接続中に変わらない。2回目は1コマンドも送らない。"""
+    first = driver.installed_options()
+    count = len(scope.command_log)
+
+    assert driver.installed_options() == first
+    assert len(scope.command_log) == count
+
+
+def test_installed_options_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """genericプロファイルは `:SYSTem:OPTion:*` を宣言しない → 送信ゼロ。"""
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.installed_options()
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_installed_options_without_type_table_sends_nothing(scope: FakeScope) -> None:
+    profile = Profile(
+        name="x", confidence="generic", dialect={"option_query": OPTION_QUERY}
+    )
+    driver = ScopeDriver(ScpiSession(FakeTransport(scope)), profile)
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.installed_options()
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+@pytest.mark.parametrize("response", [b"YES", None])
+def test_installed_options_isolates_a_broken_type(response: bytes | None) -> None:
+    """1件が解釈不能/無応答でも、残りの結果は失われない。"""
+    driver = make_driver(_BrokenOptionScope(response))
+
+    options = driver.installed_options()
+
+    assert options["bundle"] is None
+    assert options["afg_50mhz"] is True
+    assert len(options) == len(OPTION_TYPES)
+
+
+class _DisconnectingOptionScope(FakeScope):
+    """BND の照会で切断相当の失敗を起こすフェイク。"""
+
+    def handle(self, command: str) -> bytes | None:
+        if command.strip().upper().endswith(" BND"):
+            raise ScopeError(ErrorCode.DEVICE_DISCONNECTED, "link lost", {})
+        return super().handle(command)
+
+
+def test_installed_options_propagates_disconnection() -> None:
+    """切断はNoneに降格せず伝播する(全Noneをキャッシュして成功に見せない)。"""
+    driver = make_driver(_DisconnectingOptionScope())
+
+    with pytest.raises(ScopeError) as exc_info:
+        driver.installed_options()
+
+    assert exc_info.value.code == ErrorCode.DEVICE_DISCONNECTED
+
+
+def test_installed_options_cache_returns_a_copy(driver: ScopeDriver) -> None:
+    """返却dictを書き換えてもキャッシュへ波及しない。"""
+    first = driver.installed_options()
+    first["bundle"] = None
+
+    assert driver.installed_options()["bundle"] is True

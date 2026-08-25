@@ -76,6 +76,44 @@ def test_unknown_command_still_logged(scope: FakeScope) -> None:
 
 
 # --------------------------------------------------------------------------
+# オプション照会(docs/verification/mho98-unlicensed.md 1章)
+# --------------------------------------------------------------------------
+
+
+def test_option_status_defaults_to_installed(scope: FakeScope) -> None:
+    assert scope.handle(":SYSTem:OPTion:STATus? BND") == b"1"
+    assert scope.handle(":SYSTem:OPTion:STATus? CAN-FD") == b"1"
+
+
+def test_option_status_reflects_configured_options() -> None:
+    """明示したトークンだけが導入済み(未ライセンス実機は AFG50 / RLU-05 が1)。"""
+    scope = FakeScope(options={"AFG50": True, "RLU-05": True})
+
+    assert scope.handle(":SYSTem:OPTion:STATus? AFG50") == b"1"
+    assert scope.handle(":SYSTem:OPTion:STATus? RLU-05") == b"1"
+    assert scope.handle(":SYSTem:OPTion:STATus? BND") == b"0"
+
+
+def test_option_valid_is_answered_like_status(scope: FakeScope) -> None:
+    """`:VALid?`(後方互換形)も `:STATus?` と同一応答(実機実測)。"""
+    assert scope.handle(":SYSTem:OPTion:VALid? BND") == scope.handle(
+        ":SYSTem:OPTion:STATus? BND"
+    )
+
+
+def test_unknown_option_type_is_silent(scope: FakeScope) -> None:
+    """リスト外トークンでもSCPIサーバーが沈黙する(実機実測: AUTOA)。"""
+    with pytest.raises(SilentTimeout):
+        scope.handle(":SYSTem:OPTion:STATus? AUTOA")
+
+
+def test_opt_query_is_silent(scope: FakeScope) -> None:
+    """`*OPT?` はRigol全シリーズで未定義ヘッダ。送れば沈黙する。"""
+    with pytest.raises(SilentTimeout):
+        scope.handle("*OPT?")
+
+
+# --------------------------------------------------------------------------
 # チャンネル
 # --------------------------------------------------------------------------
 

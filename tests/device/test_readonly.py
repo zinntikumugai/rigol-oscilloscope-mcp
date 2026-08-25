@@ -355,6 +355,25 @@ def test_capture_screenshot_jpg(driver: ScopeDriver, tmp_path: Path) -> None:
     assert result.format == "jpeg"
 
 
+# -- 8. オプション照会 -----------------------------------------------------
+
+
+def test_installed_options_answer(driver: ScopeDriver) -> None:
+    """全 `<type>` が 0/1 で応答すること(ライセンス適用後も通る検証)。
+
+    値そのものは資産状態に依存するためレポートのみ(未ライセンス時の実測は
+    docs/verification/mho98-unlicensed.md)。
+    """
+    started = time.perf_counter()
+    options = driver.installed_options()
+    elapsed = time.perf_counter() - started
+    _report(f"[options] {len(options)}件所要 {elapsed:.3f}s")
+
+    for name, installed in sorted(options.items()):
+        _report(f"[options] {name}: {installed!r}")
+    assert all(isinstance(v, bool) for v in options.values()), options
+
+
 # -- 8. レイテンシ観測(assertなし)----------------------------------------
 
 
