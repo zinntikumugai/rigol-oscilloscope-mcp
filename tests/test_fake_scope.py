@@ -264,7 +264,7 @@ def test_trigger_writes(scope: FakeScope) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_run_stop_single_autoscale(scope: FakeScope) -> None:
+def test_run_stop_single_autoset(scope: FakeScope) -> None:
     assert scope.handle(":STOP") is None
     assert scope.handle(":TRIGger:STATus?") == b"STOP"
     assert scope.handle(":RUN") is None
