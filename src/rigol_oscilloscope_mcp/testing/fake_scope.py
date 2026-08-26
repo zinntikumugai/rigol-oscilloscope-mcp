@@ -560,9 +560,10 @@ class FakeScope:
                 rf":?{_mn('MEASure')}:{_mn('ITEM')}\?\s+(\w+)\s*,\s*{_VALUE}",
                 self._measure_item,
             ),
-            # 実機仕様: 有効化済みの全測定項目をResultビューから消す(引数なし)
+            # 実機仕様: 有効化済みの全測定項目をResultビューから消す(引数なし)。
+            # ニモニックはファミリで分岐する(MHO900: DELete / DHO800系: CLEar)
             (
-                rf":?{_mn('MEASure')}:{_mn('DELete')}",
+                rf":?{_mn('MEASure')}:(?:{_mn('DELete')}|{_mn('CLEar')})",
                 self._measure_delete,
             ),
             # 波形
@@ -618,9 +619,9 @@ class FakeScope:
                 rf"{waveform}:{_mn('DATA')}\?",
                 lambda m: _block(self._waveform_payload),
             ),
-            # スクリーンショット
+            # スクリーンショット。DHO800/900は形式引数を取る(既定BMP、ガイド3.9.7)
             (
-                rf":?{_mn('DISPlay')}:{_mn('DATA')}\?",
+                rf":?{_mn('DISPlay')}:{_mn('DATA')}\?(?:\s+(?:BMP|PNG|JPG))?",
                 lambda m: _block(self._screenshot_png),
             ),
         ]

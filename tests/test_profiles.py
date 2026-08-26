@@ -198,6 +198,101 @@ def test_mho98_inherits_generic_and_overrides() -> None:
     ]
 
 
+# --- ガイドベースプロファイル: DHO800 / DHO900 --------------------------------
+
+
+def test_available_profiles_contains_dho_profiles() -> None:
+    names = available_profiles()
+    assert "dho800" in names
+    assert "dho900" in names
+
+
+def test_load_dho800_profile_fields() -> None:
+    """公式プログラミングガイドの逐語解読のみ(実機未検証 = confidence: guide)。"""
+    p = load_profile("dho800")
+
+    assert p.name == "dho800"
+    assert p.confidence == "guide"
+    # DHO802/812 は2chだが、機種内の差はスキーマ未対応(機器側が拒否する)
+    assert p.capabilities["analog_channels"] == 4
+    assert p.capabilities["digital_channels"] == 0
+    assert p.capabilities["afg_channels"] == 0
+    assert p.capabilities["protocol_decode"] is False
+    assert p.capabilities["impedance_control"] is False
+    assert p.capabilities["impedance_50ohm"] is False
+    assert p.capabilities["waveform_download"] is True
+    assert p.capabilities["screenshot"] is True
+    assert p.capabilities["measurements"] == load_profile("mho98").capabilities[
+        "measurements"
+    ]
+    assert p.dialect["waveform_preamble"] == {"yreference": 128}
+    assert len(p.limits["probe_ratio"]) == 24
+    assert p.limits["probe_ratio"][0] == 0.001
+    assert p.limits["probe_ratio"][-1] == 50000
+
+
+def test_dho900_inherits_dho800() -> None:
+    dho800 = load_profile("dho800")
+    dho900 = load_profile("dho900")
+
+    assert dho900.confidence == "guide"
+    assert set(dho800.dialect) == set(dho900.dialect)
+    assert dho900.dialect["measurement_items"] == dho800.dialect["measurement_items"]
+    # LA は DHO900 シリーズ全体で D0-D15
+    assert dho900.capabilities["digital_channels"] == 16
+    assert dho900.capabilities["analog_channels"] == 4
+
+
+@pytest.mark.parametrize("name", ["dho800", "dho900"])
+def test_dho_profiles_declare_in_scope_dialect(name: str) -> None:
+    """ガイド解読で確定した範囲(コア読み書き+画面+測定消去+autoset)のみ。"""
+    p = load_profile(name)
+
+    # ガイド 3.9.7: [<type>]={BMP|PNG|JPG}、既定はBMP → PNG引数が必須
+    assert p.dialect["screenshot_command"] == ":DISPlay:DATA? PNG"
+    assert p.dialect["screenshot_timeout_s"] == 30
+    assert p.dialect["autoset_command"] == ":AUToset"  # ガイド 3.2.1
+    assert p.dialect["measurement_clear"] == ":MEASure:CLEar"  # ガイド 3.17.3
+    assert p.dialect["bwlimit_on"] == "20M"  # ガイド 3.6.1(選択肢は OFF|20M のみ)
+    assert p.measurement_mnemonic("vavg") == "VAVG"
+    assert p.measurement_mnemonic("duty") == "PDUTy"
+
+
+@pytest.mark.parametrize("name", ["dho800", "dho900"])
+def test_dho_profiles_do_not_declare_unverified_features(name: str) -> None:
+    """デコード/AFG/オプション照会は実機検証まで未宣言 — 不在がそのままゲート。"""
+    p = load_profile(name)
+
+    for key in (
+        "decode_protocols",
+        "decode_formats",
+        "afg_prefix",
+        "afg_waveforms",
+        "afg_impedances",
+        "option_query",
+        "option_types",
+    ):
+        assert key not in p.dialect
+    assert "decode_buses" not in p.capabilities
+    assert p.supports("protocol_decode") is False
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("DHO802", "dho800"),
+        ("DHO814", "dho800"),
+        ("DHO924S", "dho900"),
+        ("DHO914", "dho900"),
+        ("MHO98", "mho98"),
+        ("DS1054Z", GENERIC),
+    ],
+)
+def test_resolve_dho_models(model: str, expected: str) -> None:
+    """DHO9xx と MHO9xx は先頭文字が異なるため衝突しない。"""
+    assert resolve_profile(idn(model)).profile.name == expected
+
+
 def test_load_profile_unknown_name_raises() -> None:
     with pytest.raises(ScopeError) as exc:
         load_profile("no-such-scope")
@@ -241,7 +336,7 @@ def test_resolve_matches_by_regex_family_of_model_string() -> None:
 
 
 def test_resolve_unknown_rigol_model_falls_back_to_generic() -> None:
-    r = resolve_profile(idn("DHO814"))
+    r = resolve_profile(idn("DS1054Z"))
     assert r.profile.name == GENERIC
     assert r.profile.confidence == "generic"
     assert r.unsupported_vendor is False
@@ -339,6 +434,30 @@ def test_resolution_priority_verified_over_family(tmp_path: Path) -> None:
 
     assert _resolve_profile_from(tmp_path, idn("XX10")).profile.name == "exact"
     assert _resolve_profile_from(tmp_path, idn("XX20")).profile.name == "fam"
+    assert _resolve_profile_from(tmp_path, idn("ZZ1")).profile.name == "rigol-generic"
+
+
+def test_resolution_priority_guide_between_family_and_generic(tmp_path: Path) -> None:
+    """guide(ガイド解読のみ・実機未検証)は family に負け、generic に勝つ。"""
+    write_yaml(tmp_path, "rigol-generic", "confidence: generic\n")
+    write_yaml(
+        tmp_path,
+        "guided",
+        'confidence: guide\nmatch: "^XX"\ninherits: rigol-generic\n',
+    )
+    write_yaml(
+        tmp_path,
+        "fam",
+        'confidence: family\nmatch: "^XX10"\ninherits: rigol-generic\n',
+    )
+    write_yaml(
+        tmp_path,
+        "loose",
+        'confidence: generic\nmatch: "^XX"\ninherits: rigol-generic\n',
+    )
+
+    assert _resolve_profile_from(tmp_path, idn("XX10")).profile.name == "fam"
+    assert _resolve_profile_from(tmp_path, idn("XX20")).profile.name == "guided"
     assert _resolve_profile_from(tmp_path, idn("ZZ1")).profile.name == "rigol-generic"
 
 

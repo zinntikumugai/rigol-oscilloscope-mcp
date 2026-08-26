@@ -23,8 +23,9 @@ SUFFIX = ".yaml"
 GENERIC_PROFILE = "rigol-generic"
 VENDOR_KEYWORD = "RIGOL"
 
-# 解決の優先順位(小さいほど優先)
-_CONFIDENCE_ORDER = {"verified": 0, "family": 1, "generic": 2}
+# 解決の優先順位(小さいほど優先)。guide は「公式プログラミングガイドの
+# 逐語解読のみで実機未検証」の層(docs/device-profiles.md 1章)
+_CONFIDENCE_ORDER = {"verified": 0, "family": 1, "guide": 2, "generic": 3}
 _BLOCKS = ("capabilities", "dialect", "limits")
 
 

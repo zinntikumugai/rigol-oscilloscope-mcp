@@ -14,7 +14,7 @@ class Profile:
     """継承解決済みの機種プロファイル。"""
 
     name: str  # プロファイル名(YAMLのファイル名。例 "mho98")
-    confidence: str  # "verified" | "family" | "generic"
+    confidence: str  # "verified" | "family" | "guide" | "generic"
     capabilities: dict = field(default_factory=dict)
     dialect: dict = field(default_factory=dict)
     limits: dict = field(default_factory=dict)

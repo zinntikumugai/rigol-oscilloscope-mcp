@@ -26,7 +26,7 @@ server.py(FastMCP、27 Tool、同期def+lock直列化)
   → safety/(操作クラス表 / confirmトークン / 監査ログJSONL)
   → driver/(session: drain・set_and_verify / scope: プロファイル対応SCPI生成 / decode: :BUS変換表)
   → transport/(lan: raw socket 5555 / usb: PyVISA / blocks: IEEE488.2ブロック)
-profiles/(YAML機種プロファイル: verified→family→generic の3層解決)
+profiles/(YAML機種プロファイル: verified→family→guide→generic の解決順。guide=ガイド逐語解読のみ・実機未検証)
 testing/(FakeScope: MHO98方言のフェイク機器。Transport層に差し込む)
 skills/ + .claude-plugin/ + .codex-plugin/ + .agents/(Claude/Codex両プラグイン: 共有スキル+ホスト別マニフェスト。tests/test_plugin.py が整合を検証)
 ```
@@ -54,6 +54,6 @@ skills/ + .claude-plugin/ + .codex-plugin/ + .agents/(Claude/Codex両プラグ�
 
 ## 検証(タスク完了の条件)
 
-1. `uv run pytest` 全件グリーン(現在1102件+device 26件skip)
+1. `uv run pytest` 全件グリーン(現在1120件+device 26件skip)
 2. `git grep "172\.16\."` が空
 3. 機器通信に触れた変更は実機スモーク(`-m device` のread-onlyスイート)を実行し、結果を `docs/verification/`(IP・シリアル非記載)に記録する

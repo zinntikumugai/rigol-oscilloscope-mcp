@@ -9,6 +9,7 @@ LLM(Claude / Codex 等)がMCP Tool呼び出しへ変換し、本サーバーがS
 GUI自動操作は使わない。
 
 - **RIGOL MHO98 で実機検証済み**(→ [docs/verification/mho98-mvp.md](docs/verification/mho98-mvp.md))
+- **DHO800/900 系はガイドベースのベストエフォート対応**(公式プログラミングガイドのみを根拠とする `guide` プロファイル。実機未検証で、デコード / AFG / LA / オプション照会は未対応 → [docs/device-profiles.md](docs/device-profiles.md) 6章)
 - 他のRIGOL機種は機種プロファイルによるベストエフォート対応(未知の機種は generic プロファイルで動作し、その旨を明示する)
 - RIGOL以外のベンダーは対象外(接続時に警告を返すが拒否はしない)
 
@@ -18,7 +19,7 @@ GUI自動操作は使わない。
 - **27個のMCP Tool** — 接続 / 識別 / 状態取得 / 測定(Resultビューのクリア含む)/ 波形 / 解析(統計・FFT)/ スクリーンショット / チャンネル・タイムベース・トリガ設定 / Run・Stop・Single・Autoset / シリアルデコード設定・結果取得 / 信号発生(AFG)設定・状態取得・出力制御(出力ONは確認フロー付き)。SCPI文字列をLLMに書かせず、意味的Toolのみを公開する
 - **4クラスの安全ポリシー + confirmトークン** — 全操作を READ_ONLY / SAFE_WRITE / RESTRICTED_WRITE / DANGEROUS_WRITE に分類。50Ω入力やAuto SetupはホストUI非依存の2段階確認(confirmトークン)を必須とする
 - **スクリーンショット保存** — png / jpg / bmp / webp で指定パスへ保存し、画像そのものもLLMへ返す(書き込み先は許可ルートで制限)
-- **機種プロファイル** — SCPI方言・機能有無・パラメータ範囲を同梱YAMLで宣言し、モデル完全一致 → ファミリ → 汎用RIGOL の3層で解決する
+- **機種プロファイル** — SCPI方言・機能有無・パラメータ範囲を同梱YAMLで宣言し、モデル完全一致(verified) → ファミリ(family) → ガイドベース(guide) → 汎用RIGOL(generic) の順で解決する
 - **requested / applied の両値返却** — 機器が設定値をスナップするかは機種依存のため、要求値とread-back値を両方返す
 - **監査ログ** — 書き込み操作を Before / Action / After 付きでJSONLに記録する
 

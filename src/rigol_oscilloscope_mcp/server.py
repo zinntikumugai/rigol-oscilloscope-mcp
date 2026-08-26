@@ -266,7 +266,9 @@ def create_server(
     def get_capabilities() -> dict:
         """Return the features available on the connected device (channel count, supported features).
 
-        When the profile confidence is generic, unverified features are restricted.
+        Profile confidence is verified, family, guide (decoded from the official
+        programming guide only, not confirmed on real hardware), or generic.
+        Below verified, unverified features are restricted.
         options reports the installed license options, and is null when this
         model does not support option queries.
         """

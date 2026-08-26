@@ -1,0 +1,82 @@
+# ガイドベースプロファイル: DHO800シリーズ(docs/device-profiles.md 6章)
+# 出典: DHO800/DHO900 Programming Guide PGA39106-1110
+#       https://download.rigol.com/en/Manual/Digital%20Oscilloscope/DHO800/DHO800900_ProgrammingGuide_EN.pdf
+# **実機未検証**(confidence: guide)。ガイドに逐語で載っているニモニックだけを
+# 宣言し、quirk(沈黙挙動・スナップ・NR3形式)は未確認のため rigol-generic の
+# 保守的な既定を継承する。デコード / AFG / LA / オプション照会は意図的に未宣言
+# — 不在がそのままゲートで UNSUPPORTED_FEATURE になる(4.2の原則)
+model: DHO800 # ラインナップ: DHO802 / DHO804 / DHO812 / DHO814
+match: "^DHO8[0-9]{2}"
+inherits: rigol-generic
+confidence: guide
+
+capabilities:
+  # 既知の制限: DHO802/812 は2ch(+EXT)だが、機種内のch数差はプロファイル
+  # スキーマが未対応。範囲外のCH3/4は機器側が拒否する前提で4を宣言する
+  analog_channels: 4
+  digital_channels: 0
+  afg_channels: 0
+  protocol_decode: false # :BUS はガイドにあるが実機未検証のため意図的に無効
+  waveform_download: true
+  screenshot: true
+  impedance_control: false # DHO800/900の入力は1MΩ固定(:IMPedance なし)
+  impedance_50ohm: false
+  # ガイド3.17.2の :MEASure:ITEM 項目(VAVGの綴りもMHO900と同一)
+  measurements:
+    [frequency, period, vpp, vmax, vmin, vavg, rms, duty, rise_time, fall_time]
+
+dialect:
+  # ガイド3.9.7: `:DISPlay:DATA? [<type>]`、<type>={BMP|PNG|JPG}で既定はBMP。
+  # PNGで受け取るには引数が必須(引数付きのままバイナリ問い合わせへ渡す)
+  screenshot_command: ":DISPlay:DATA? PNG"
+  screenshot_timeout_s: 30 # 画像転送の猶予(MHO98実測と同じ根拠。DHOでは要実機確認)
+  autoset_command: ":AUToset" # ガイド3.2.1
+  measurement_clear: ":MEASure:CLEar" # ガイド3.17.3(引数なし・全消し)
+  bwlimit_on: "20M" # ガイド3.6.1(選択肢は OFF|20M のみ)
+  measurement_items:
+    frequency: FREQuency
+    period: PERiod
+    vpp: VPP
+    vmax: VMAX
+    vmin: VMIN
+    vavg: VAVG
+    rms: VRMS
+    duty: PDUTy # 返却単位は比率(MHO900と同じ想定。要実機確認)
+    rise_time: RTIMe
+    fall_time: FTIMe
+  waveform_preamble:
+    # ガイドのプリアンブル例も末尾が `...,0,128`(BYTE時のyreference)。
+    # yorigin は設定依存の動的値なのでプロファイルには持たせず、
+    # 変換には必ずライブの :WAVeform:PREamble? を使う
+    yreference: 128
+
+limits:
+  # ガイド3.6.8 の :CHANnel<n>:PROBe が取る24値。要実機検証
+  probe_ratio:
+    [
+      0.001,
+      0.002,
+      0.005,
+      0.01,
+      0.02,
+      0.05,
+      0.1,
+      0.2,
+      0.5,
+      1,
+      2,
+      5,
+      10,
+      20,
+      50,
+      100,
+      200,
+      500,
+      1000,
+      2000,
+      5000,
+      10000,
+      20000,
+      50000,
+    ]
+  # vertical_scale / timebase_scale 等は未検証 → 実機read-backフォールバック
