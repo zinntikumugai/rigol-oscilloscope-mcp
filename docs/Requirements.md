@@ -359,7 +359,7 @@ Tool引数(会話でのユーザー指示) > 環境変数 > 設定ファイル >
 - GitHubリポジトリからの `uvx` 起動を標準とする:
 
 ```bash
-uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.3 rigol-oscilloscope-mcp
+uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.4 rigol-oscilloscope-mcp
 ```
 
 - タグ付きリリースを行い、配布物(プラグインマニフェスト・設定例)は `@<tag>` でバージョンを固定する(supply-chain対策。未ピンのmain追従は開発時のみ)
@@ -374,7 +374,7 @@ uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.3 ri
   "mcpServers": {
     "rigol-oscilloscope": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.3", "rigol-oscilloscope-mcp"],
+      "args": ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.4", "rigol-oscilloscope-mcp"],
       "env": { "RIGOL_MCP_SCREENSHOT_DIR": "~/scope-captures" }
     }
   }
@@ -386,7 +386,7 @@ uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.3 ri
 ```toml
 [mcp_servers.rigol-oscilloscope]
 command = "uvx"
-args = ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.3", "rigol-oscilloscope-mcp"]
+args = ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.4", "rigol-oscilloscope-mcp"]
 
 [mcp_servers.rigol-oscilloscope.env]
 RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
