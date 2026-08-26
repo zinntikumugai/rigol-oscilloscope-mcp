@@ -566,6 +566,8 @@ def create_server(
         duty_percent: float | None = None,
         symmetry_percent: float | None = None,
         impedance: str | None = None,
+        arb_file: str | None = None,
+        modulation: dict | None = None,
     ) -> dict:
         """Configure the built-in function generator (AFG). Omitted items are left unchanged.
 
@@ -596,6 +598,25 @@ def create_server(
         (no error is reported): always compare applied (the read-back value)
         against requested. Writing a frequency while the waveform is dc or noise
         is rejected by the instrument.
+
+        arb_file selects an existing arbitrary waveform file already stored on
+        the instrument (local C:/... or USB D:/...), e.g. arb_file="D:/my.csv"
+        together with waveform="arb". This server never creates, uploads or
+        deletes instrument files - it only selects one that is already there.
+
+        modulation configures AM/FM/PM (internal source only; there is no
+        external modulation input). Give a dict with any of: enabled (bool),
+        type ("am"/"fm"/"pm"), am_depth_percent (0-120), fm_deviation_hz (>0),
+        pm_deviation_deg (0-360), frequency_hz (the MODULATING frequency, not
+        the carrier - 2 mHz to 1 MHz), waveform (sine/square/triangle/upramp/
+        dnramp/noise, the modulating waveform). frequency_hz and waveform are
+        routed to the type given in the same call, or otherwise to whatever
+        type is currently set on the instrument. The instrument silently
+        ignores modulation parameter writes while modulation is off, so pass
+        enabled=true together with the parameters (the server sends the
+        enable before the parameters); parameters alone are rejected while
+        modulation is off. Enabling modulation does NOT turn the output on,
+        but if the output is already on, modulation takes effect immediately.
         """
         return control.configure_afg(
             manager.require_scope(),
@@ -608,6 +629,8 @@ def create_server(
             duty_percent=duty_percent,
             symmetry_percent=symmetry_percent,
             impedance=impedance,
+            arb_file=arb_file,
+            modulation=modulation,
         )
 
     @_register
@@ -621,8 +644,9 @@ def create_server(
         the channel number as a string: {"channels": {"1": {...}, "2": {...}}}.
 
         output tells whether the generator is currently driving its connector.
-        Reading never changes it. This is read-only: it costs about 9 queries
-        per channel.
+        Reading never changes it. modulation reports the modulation settings
+        (enabled, type, the effective type's depth/deviation, frequency_hz,
+        waveform). This is read-only: it costs about 14 queries per channel.
         """
         driver = manager.require_scope()
         if channel is not None:
@@ -673,6 +697,19 @@ def create_server(
         Returns the settings of the channel in state, with output false.
         """
         return control.disable_afg(manager.require_scope(), channel)
+
+    @_register
+    def sync_afg_phase(channel: int = 1) -> dict:
+        """Align the phase of both function generator channels to their preset settings.
+
+        This re-applies both AFG channels' preset frequency and phase so their
+        phases line up; it only has a visible effect when the two channels'
+        frequencies are identical or one is an integer multiple of the other.
+        It does not touch amplitude or output state (no confirmation needed).
+        channel selects which channel's SCPI prefix issues the command, but
+        both generator channels are affected.
+        """
+        return control.sync_afg_phase(manager.require_scope(), channel)
 
     # -- Acquisition(tools.md 4章)-----------------------------------------
 

@@ -31,6 +31,7 @@ PHASE4_TOOLS = {
     "get_afg_state",
     "enable_afg",
     "disable_afg",
+    "sync_afg_phase",
 }
 
 
@@ -400,3 +401,109 @@ def test_enable_afg_unknown_channel_returns_error_dict(server) -> None:
 
 def test_afg_output_tools_while_disconnected(server) -> None:
     assert data(server, "disable_afg", {})["code"] == ErrorCode.DEVICE_DISCONNECTED
+
+
+# --------------------------------------------------------------------------
+# configure_afg — modulation / arb_file
+# --------------------------------------------------------------------------
+
+
+def test_configure_afg_end_to_end_with_modulation(server, scope: FakeScope) -> None:
+    connected(server)
+
+    result = data(
+        server,
+        "configure_afg",
+        {
+            "channel": 1,
+            "modulation": {
+                "enabled": True,
+                "type": "am",
+                "am_depth_percent": 50.0,
+                "frequency_hz": 1000.0,
+                "waveform": "sine",
+            },
+        },
+    )
+
+    assert result["applied"]["modulation"] == {
+        "type": "am",
+        "am_depth_percent": 50.0,
+        "frequency_hz": 1000.0,
+        "waveform": "sine",
+        "enabled": True,
+    }
+    assert result["changed"] is True
+
+    state = data(server, "get_afg_state", {"channel": 1})
+    assert state["modulation"]["enabled"] is True
+    assert state["modulation"]["type"] == "am"
+
+
+def test_configure_afg_modulation_unknown_key_returns_error_dict(server) -> None:
+    connected(server)
+
+    result = data(server, "configure_afg", {"modulation": {"depth": 50.0}})
+
+    assert result["error"] is True
+    assert result["code"] == ErrorCode.INVALID_PARAMETER
+
+
+def test_configure_afg_arb_file_end_to_end(server) -> None:
+    connected(server)
+
+    result = data(
+        server,
+        "configure_afg",
+        {"channel": 1, "waveform": "arb", "arb_file": "D:/test.csv"},
+    )
+
+    assert result["applied"]["arb_file"] == "D:/test.csv"
+
+
+def test_configure_afg_arb_file_invalid_path_returns_error_dict(server) -> None:
+    connected(server)
+
+    result = data(server, "configure_afg", {"arb_file": "no-prefix.csv"})
+
+    assert result["error"] is True
+    assert result["code"] == ErrorCode.INVALID_PARAMETER
+
+
+# --------------------------------------------------------------------------
+# sync_afg_phase
+# --------------------------------------------------------------------------
+
+
+def test_sync_afg_phase_description_explains_the_effect(server) -> None:
+    description = descriptions(server)["sync_afg_phase"].lower()
+
+    assert "phase" in description
+    assert "frequencies" in description
+
+
+def test_sync_afg_phase_round_trip(server, scope: FakeScope) -> None:
+    connected(server)
+
+    result = data(server, "sync_afg_phase", {"channel": 1})
+
+    assert result["result"] == "ok"
+    assert [c for c in scope.command_log if "?" not in c] == [
+        ":SOURce1:PHASe:SYNChronize"
+    ]
+
+
+def test_sync_afg_phase_unknown_channel_returns_error_dict(server) -> None:
+    connected(server)
+
+    result = data(server, "sync_afg_phase", {"channel": 3})
+
+    assert result["error"] is True
+    assert result["code"] == ErrorCode.INVALID_PARAMETER
+
+
+def test_sync_afg_phase_while_disconnected(server) -> None:
+    result = data(server, "sync_afg_phase", {})
+
+    assert result["error"] is True
+    assert result["code"] == ErrorCode.DEVICE_DISCONNECTED

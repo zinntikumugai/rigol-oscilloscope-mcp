@@ -453,6 +453,7 @@ def test_afg_state_answers(driver: ScopeDriver) -> None:
         "output",
         "waveform",
         "impedance",
+        "modulation",
         "frequency_hz",
         "amplitude_vpp",
         "offset_v",

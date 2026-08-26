@@ -26,7 +26,7 @@
 
 ## MHO900シリーズ(MHO98 ほか)
 
-**プロファイル:** `mho98`(confidence: **verified**)— 全27 Tool対応
+**プロファイル:** `mho98`(confidence: **verified**)— 全28 Tool対応
 **ガイド:** [MHO900 Programming Guide](https://www.rigol.com/dam/global/downloads/brochures/en/program-guide/oscilloscopes/MHO900-ProgrammingGuide.pdf)
 **実機検証:** [verification/](verification/) 一式(MHO98、firmware 00.01.00)
 
@@ -38,7 +38,7 @@
 | Autoset | ✅ | ○ | `:AUToset`(サブツリーを読み取りプローブで確認) |
 | シリアルデコード(標準6種) | ✅ | ○ | `:BUS<n>`×4。opt4種(I2S/FlexRay/M1553/CAN-FD)は未実装 |
 | オプション照会 | ✅ | ○ | `:SYSTem:OPTion:STATus?` |
-| AFG(2ch・13波形) | ✅ | ○ | 出力ONはDANGEROUS_WRITE |
+| AFG(2ch・13波形・変調AM/FM/PM・ARB選択・位相同期) | ✅ | ○ | 出力ONはDANGEROUS_WRITE |
 | 入力50Ω | ✅ | ○ | RESTRICTED_WRITE(confirm必須) |
 | Logic Analyzer | ❌ | ○ | 機器はD0-D15搭載、サーバー側未実装 |
 

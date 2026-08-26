@@ -1428,6 +1428,93 @@ def test_afg_output_error_is_audited(
 
 
 # ==========================================================================
+# configure_afg — modulation / arb_file
+# ==========================================================================
+
+
+def test_configure_afg_modulation_returns_requested_and_applied(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    modulation = {"enabled": True, "type": "am", "am_depth_percent": 50.0}
+
+    result = service.configure_afg(driver, 1, modulation=modulation)
+
+    assert result["requested"] == {"modulation": modulation}
+    assert result["applied"]["modulation"] == {
+        "type": "am",
+        "am_depth_percent": 50.0,
+        "enabled": True,
+    }
+    assert result["changed"] is True
+
+
+def test_configure_afg_modulation_is_audited(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    service.configure_afg(driver, 1, modulation={"enabled": True})
+
+    row = operations(audit_path)[0]
+    assert row["tool"] == "configure_afg"
+    assert row["result"] == "success"
+    assert row["before"]["modulation"]["enabled"] is False
+    assert row["after"]["modulation"]["enabled"] is True
+
+
+def test_configure_afg_arb_file_returns_requested_and_applied(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    result = service.configure_afg(driver, 1, arb_file="D:/test.csv")
+
+    assert result["requested"] == {"arb_file": "D:/test.csv"}
+    assert result["applied"] == {"channel": 1, "arb_file": "D:/test.csv"}
+
+
+# ==========================================================================
+# sync_afg_phase
+# ==========================================================================
+
+
+def test_sync_afg_phase_returns_ok(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    assert service.sync_afg_phase(driver) == {"result": "ok"}
+    assert [c for c in scope.command_log if "?" not in c] == [
+        ":SOURce1:PHASe:SYNChronize"
+    ]
+
+
+def test_sync_afg_phase_is_audited(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    service.sync_afg_phase(driver, 2)
+
+    ops = operations(audit_path)
+    assert len(ops) == 1
+    assert ops[0]["tool"] == "sync_afg_phase"
+    assert ops[0]["result"] == "success"
+    assert ops[0]["requested"] == {}
+
+
+def test_sync_afg_phase_needs_no_confirmation(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    service.sync_afg_phase(driver)
+
+    assert confirms(audit_path) == []
+
+
+def test_sync_afg_phase_error_is_audited(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    with pytest.raises(ScopeError):
+        service.sync_afg_phase(driver, 3)  # :SOURce3 は存在しない
+
+    row = operations(audit_path)[0]
+    assert row["result"] == "error"
+    assert row["detail"]["error"]["code"] == ErrorCode.INVALID_PARAMETER
+
+
+# ==========================================================================
 # パッケージ公開
 # ==========================================================================
 

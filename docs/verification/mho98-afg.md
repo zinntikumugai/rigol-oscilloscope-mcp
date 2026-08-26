@@ -61,6 +61,91 @@
 - `test_configure_afg_set_and_readback`: PASS(継続)
 - `test_afg_loopback_fft`: **SKIP**(`RIGOL_TEST_AFG_LOOPBACK` 未設定 — 意図どおり)
 
-## 5. 未実施・今後の予定
+## 5. ループバックFFT・フィードバック検査(2026-08-26、BNCプローブ結線)
 
-- **ループバックFFT検証**: BNCケーブル入手後に実施(`RIGOL_TEST_AFG_LOOPBACK=1` を追加指定。AFG出力→CH1接続、1 kHz正弦を `analyze_waveform` のFFTで突合。テストは timebase 5 ms/div で分解能≈20 Hzを確保し、分解能アサート付き)。**現在ケーブル不足のため未実施**。実施後は本章へ結果を追記する
+**物理結線:** CH1=プローブ補償 / **CH2=G1(AFG1)/ CH3=G2(AFG2)**(10xプローブ経由)/ CH4=未接続。
+出力ONはユーザー承認のもと実施し、終了時に両ch出力OFF・全設定復元を確認済み。
+
+### 公式テスト
+
+`RIGOL_TEST_ALLOW_WRITE=1 RIGOL_TEST_ALLOW_AFG_OUTPUT=1 RIGOL_TEST_AFG_LOOPBACK=1 uv run pytest -m device_write -k afg` → **3件PASS**(`test_afg_loopback_fft` 含む。受信chは物理結線に合わせCH2へ変更)
+
+- 実行前、本体操作で両AFG出力がONのままだったため**スイートの安全ガード(出力ON時はSKIP)が正しく発動**することも副次確認できた。`disable_afg` でOFF化後にPASS
+
+### フィードバック検査スイープ(G1→CH2 / G2→CH3、各8点)
+
+周波数(カウンタ+FFT)・デューティは全点で良好:
+
+| 項目 | 結果 |
+|---|---|
+| 周波数 | 設定1k/100k/1MHzの全点で±1%以内(square 1k/100kは誤差ゼロ)。FFTも分解能内一致 |
+| duty | 50%設定→実測50.0%、60%設定→59.94%(両ch) |
+| 波形 | sine / square / ramp とも復号・測定に問題なし |
+| G1/G2差 | なし |
+
+振幅は当初「約1/9」で観測されたが、**原因は結線が10xプローブ経由**だったこと(probe_ratio=1.0で測定していたため)。`probe_ratio=10` で再検査した結果:
+
+| 設定Vpp | G1→CH2 実測 | G2→CH3 実測 |
+|---|---|---|
+| 0.2 | 0.216(+8%) | 0.210(+5%) |
+| 1.0 | 1.002(+0.2%) | 0.996(−0.4%) |
+| 5.0 | 4.996(−0.1%) | 4.985(−0.3%) |
+
+- **HighZ(OMEG)設定時の振幅マッピングを実測確認**: 設定Vpp = 1MΩ入力での実測Vpp(換算不要)
+- 0.2 Vppの+5〜8%はプローブの小信号誤差の範囲
+- 教訓: ループバック検証時は**受け側チャンネルの probe_ratio を物理経路に一致させる**こと(発生器+取得+FFT+measureの三位一体検証はこれで完結)
+
+### 全13波形の実機検査(2026-08-26 追補)
+
+**① FUNCtion往復(出力OFF)**: 13種全トークン(sine/square/ramp/noise/dc/arb/exp_rise/exp_fall/ecg/gaussian/lorentz/haversine/sinc)が受理され、readbackが一致。プロファイル `afg_waveforms` の全宣言が実機裏取り済みとなった。
+
+**② ループバック実測(G1→CH2、1 kHz / 1 Vpp設定)**:
+
+| 波形 | FFT支配ピーク | 所見 |
+|---|---|---|
+| exp_rise / exp_fall / gaussian / lorentz / haversine | ≈1 kHz(分解能内) | 基本波が支配。周期性◎ |
+| ecg | ≈2 kHz(第2高調波) | パルス的波形の正常なスペクトル形状 |
+| sinc / arb(内蔵既定) | 高域(87〜96 kHz) | 広帯域波形の特性どおり(基本波が支配的でない) |
+| noise | 意味のあるピークなし | std 0.31 V・広帯域。ランダム波形として妥当 |
+| dc(offset 1.0 V) | — | mean 0.948 V で追従(プローブ誤差内) |
+
+- 特殊波形ではエッジカウンタの `frequency` が無効値 → measureのquality設計どおり `null` になることを確認(FFTが代替手段)
+- 特殊波形のVpp実測は 1.36〜1.58 V(設定1 Vpp)— 波形ごとの振幅定義差・リンギングを含む観測値として記録(sine系の±0.4%一致とは性質が異なる)
+
+## 6. 変調・ARB選択・位相同期の実機検証(2026-08-27)
+
+### 実機quirk: MOD:STATe OFF中のパラメータ書き込みは黙って無視される
+
+`:SOURce1:MOD:AM:DEPTh 50` を `MOD:STATe` OFFの状態で送るとエラーキューは `No error` のまま readback は既定値100(無視)。STATe ONにしてから送ると正常適用。**表示OFFチャンネルへの書き込み無視(mho98-mvp.md 3.3)と同族のquirk**。また `MOD:STATe ON` にしても `OUTPut:STATe` はOFFのまま(=変調有効化だけでは信号は出ない)ことも確認。
+
+→ 実装は送信順を状態依存に変更(有効化はパラメータより先/無効化は最後)、パラメータのみ指定+OFF時は送信前拒否。FakeScopeにも同quirkをモデル化。
+
+### 変調(AM)の実測 — ループバックFFTでサイドバンド確認
+
+G1: キャリア sine 100 kHz / 1 Vpp、AM depth 100% / 変調周波数 10 kHz → CH2で取得(分解能5 kHz):
+
+- ピーク: キャリア 97.7 kHz(0.225 V)、**下側波帯 87.9 kHz(0.117 V)**
+- **側波帯/キャリア比 0.52 ≒ 理論値 0.5(depth 100%)** — AM変調が定量的に機能
+
+### 位相同期(`sync_afg_phase`)の実測 — 2ch相対位相
+
+G1→CH2 / G2→CH3(sine 1 kHz)。停止後の同一レコードから両chの基本波位相を算出:
+
+| 状態 | CH2-CH3 相対位相 |
+|---|---|
+| sync前 | 67.5°(不定) |
+| **sync後(両ch phase 0°)** | **-0.4°** |
+| **G2へ phase 90° 設定 + sync** | **-89.4°** |
+
+→ ガイドの記述どおり「周波数が同一または整数倍のとき位相が整列」を定量確認。
+
+### deviceスイート
+
+- `test_configure_afg_modulation_set_and_readback` / `test_sync_afg_phase`: **PASS**(quirk対応後)
+- read-onlyスイート: 12件PASS(get_afg_configのmodulationキー追加を反映)
+- ARBファイルロードは**実機にファイルが無いため書き込み未検証**(パス検証・SCPI列生成はFakeScopeで担保。`:LOAD:ARBitrary?` クエリ形の実機応答は確認済み扱いとしない — 要実機検証のまま)
+
+## 7. 未実施・今後の予定
+
+- **ARBファイル選択(`arb_file` / `:LOAD:ARBitrary`)のみ実機未検証**(機器内に既知のARBファイルが無いため書き込みを見送り。実機にファイルを用意できたら `tests/device/test_write.py` へ追加する)。変調・位相同期は6章のとおり実機検証済み(AMサイドバンド実測・位相整列の定量確認)
+- `:PERiod` / `:VOLTage:HIGH`・`:LOW` は roadmap 2.3 のとおり恒久スキップ(`frequency_hz` / `amplitude_vpp`+`offset_v` で表現可能なため)
