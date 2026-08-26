@@ -22,6 +22,10 @@ dialect:
   screenshot_command: ":DISPlay:DATA?"
   screenshot_timeout_s: 30 # 約97KBの転送猶予(通常問い合わせの5秒では足りない)
   bwlimit_on: "20M" # 帯域制限「入」の値(選択肢 OFF/20M/100M/250M は要実機確認)
+  # Resultビューの全測定項目を消す(ガイド3.17.3、引数なし・全消しのみ)。実機検証:
+  # docs/verification/mho98-measure-clear.md。DHO800/900系は同義の :MEASure:CLEar
+  # (ニモニックがファミリで分岐するためdialect化。MHO98実機は両方受理する)
+  measurement_clear: ":MEASure:DELete"
   measurement_items:
     frequency: FREQuency
     period: PERiod

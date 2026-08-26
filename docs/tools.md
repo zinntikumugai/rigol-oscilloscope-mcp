@@ -187,6 +187,14 @@ Auto Setupは利用者の設定を大きく上書きするため、confirmトー
 - 返却キーはSI単位付き: `frequency_hz`, `vpp_v`, `rise_time_s`, `duty_ratio`(dutyは比率。MHO98実測 0.5002)
 - 可能な範囲で測定品質(`valid` / `overflow` / `no_signal` / `unstable` / `unknown`)を付与し、無効値を正常値としてLLMに解釈させない
 
+### `clear_measurements` — SAFE_WRITE / Phase 4
+
+画面のResultビューから**全測定項目を消す**(issue #16)。`measure` が使う `:MEASure:ITEM?`(クエリ形)は測定値を返すと同時に項目を有効化するため、測定のたびにResultビューへ項目が蓄積する — その掃除を担う。
+
+- 引数なし・全消しのみ(ガイドに部分クリアの構文が存在しない)。返却は `{"result": "ok"}`(readback対象が無い。run/stopと同型)
+- SAFE_WRITEの根拠: 表示のみの変更で取得条件(垂直・水平・トリガ)に触れず、再測定で完全に可逆
+- ニモニックはファミリで分岐する(MHO900: `:MEASure:DELete` / DHO800・900系: `:MEASure:CLEar`。説明文は両ガイドで同一)ため、プロファイルdialect `measurement_clear` の宣言必須 — 未宣言の機種では送信せず `UNSUPPORTED_FEATURE`。実機検証: [verification/mho98-measure-clear.md](verification/mho98-measure-clear.md)(MHO98は両ニモニックを受理するが、ガイド記載の `DELete` を採用)
+
 ### `capture_waveform` — READ_ONLY / Phase 1
 
 引数: `channel`(必須)、`max_points`(任意、既定/上限は設定による)、`format`(任意)
@@ -427,6 +435,7 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `get_trigger` | READ_ONLY | 1 |
 | `get_acquisition_state` | READ_ONLY | 1 |
 | `measure` | READ_ONLY | 1 |
+| `clear_measurements` | SAFE_WRITE | 4 |
 | `capture_waveform` | READ_ONLY | 1 |
 | `analyze_waveform` | READ_ONLY | 4 |
 | `capture_screenshot` | READ_ONLY | 1 |
@@ -444,6 +453,6 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `disable_afg` | SAFE_WRITE | 4 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は26(Phase 1: 12 + Phase 2: 7 + Phase 4: 7。`recommend_setup` / `raw_scpi` は未登録)。
+登録Tool数は27(Phase 1: 12 + Phase 2: 7 + Phase 4: 8。`recommend_setup` / `raw_scpi` は未登録)。
 
 将来(Phase 4の残り): AFGの変調・ARB波形ロード(`:LOAD:ARBitrary`)・`:PERiod` / `:VOLTage:HIGH`/`:LOW` / `:PHASe:SYNChronize`、Logic Analyzer。

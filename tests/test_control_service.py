@@ -714,6 +714,25 @@ def test_configure_trigger_is_audited(
 # ==========================================================================
 
 
+def test_clear_measurements_returns_ok(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.handle(":MEASure:ITEM? VPP,CHANnel1")
+
+    assert service.clear_measurements(driver) == {"result": "ok"}
+    assert scope.measurement_items == []
+
+
+def test_clear_measurements_is_audited(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    service.clear_measurements(driver)
+
+    ops = operations(audit_path)
+    assert len(ops) == 1
+    assert ops[0]["tool"] == "clear_measurements"
+
+
 def test_run_returns_ok_and_status(
     service: ControlService, driver: ScopeDriver
 ) -> None:

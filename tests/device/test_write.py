@@ -1006,7 +1006,20 @@ def test_afg_loopback_fft(
     assert off["state"]["output"] is False
 
 
-# -- 11. 監査ログ(最後に実行し、それまでの全操作を検証)--------------------
+# -- 11. 測定Resultビューのクリア(issue #16)------------------------------
+
+
+def test_clear_measurements(control: ControlService, driver: ScopeDriver) -> None:
+    """項目を追加してからクリアする。復元は不要(再測定が復元そのもの)。"""
+    results = driver.measure("CH1", ["frequency"])
+    assert results[0].value is not None  # 項目がResultビューへ追加された
+
+    outcome = control.clear_measurements(driver)
+
+    assert outcome == {"result": "ok"}  # write_checkedがエラーキューを確認済み
+
+
+# -- 12. 監査ログ(最後に実行し、それまでの全操作を検証)--------------------
 
 
 def test_audit_log_records_every_write(audit_path: Path) -> None:

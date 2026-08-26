@@ -386,6 +386,8 @@ class FakeScope:
             n: {key: default for key, _, _, default in _AFG_PROPS}
             for n in range(1, AFG_COUNT + 1)
         }
+        # Resultビューの有効化済み測定項目(:MEASure:ITEM? でも追加される — issue #16)
+        self.measurement_items: list[str] = []
         self.timebase: dict[str, float] = {"scale": 2.0e-4, "offset": 0.0}
         self.trigger: dict[str, object] = {
             "mode": "EDGE",
@@ -556,6 +558,11 @@ class FakeScope:
             (
                 rf":?{_mn('MEASure')}:{_mn('ITEM')}\?\s+(\w+)\s*,\s*{_VALUE}",
                 self._measure_item,
+            ),
+            # 実機仕様: 有効化済みの全測定項目をResultビューから消す(引数なし)
+            (
+                rf":?{_mn('MEASure')}:{_mn('DELete')}",
+                self._measure_delete,
             ),
             # 波形
             (
@@ -927,4 +934,10 @@ class FakeScope:
         if value is None:
             # phase0実測: VAVerage は受理されず -222 が積まれる
             raise self._silent(OUT_OF_RANGE)
+        # 実機仕様: クエリ形でも項目がResultビューへ追加される(issue #16)
+        self.measurement_items.append(item)
         return value.encode("ascii")
+
+    def _measure_delete(self, match: re.Match[str]) -> None:
+        self.measurement_items.clear()
+        return None

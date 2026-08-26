@@ -187,6 +187,27 @@ def test_measure_multiple_keys_carry_si_units(driver: ScopeDriver) -> None:
     assert results[0].value == pytest.approx(1000.1)
 
 
+def test_clear_measurements_sends_the_dialect_command(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """実機検証済みニモニック(mho98-measure-clear.md)だけを送る。"""
+    scope.command_log.clear()
+
+    driver.clear_measurements()
+
+    assert [c for c in scope.command_log if "?" not in c] == [":MEASure:DELete"]
+
+
+def test_clear_measurements_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.clear_measurements()
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
 def test_measure_unsupported_name_is_not_sent(
     generic_driver: ScopeDriver, scope: FakeScope
 ) -> None:

@@ -316,6 +316,36 @@ def test_measure_accepts_short_long_and_lowercase(
     assert scope.handle(command) == b"3.268E+00"
 
 
+def test_measure_item_query_adds_to_result_view(scope: FakeScope) -> None:
+    """実機仕様: クエリ形でもResultビューへ項目が追加される(issue #16)。"""
+    scope.handle(":MEASure:ITEM? VPP,CHANnel1")
+    scope.handle(":MEASure:ITEM? FREQuency,CHANnel1")
+
+    assert scope.measurement_items == ["VPP", "FREQUENCY"]
+
+
+def test_measure_delete_clears_result_view(scope: FakeScope) -> None:
+    scope.handle(":MEASure:ITEM? VPP,CHANnel1")
+
+    assert scope.handle(":MEASure:DELete") is None
+    assert scope.measurement_items == []
+
+
+def test_measure_delete_short_form(scope: FakeScope) -> None:
+    scope.handle(":MEASure:ITEM? VPP,CHANnel1")
+
+    assert scope.handle(":MEAS:DEL") is None
+    assert scope.measurement_items == []
+
+
+def test_rejected_measure_item_is_not_added_to_result_view(scope: FakeScope) -> None:
+    with pytest.raises(SilentTimeout):
+        scope.handle(":MEASure:ITEM? VAVerage,CHANnel1")
+
+    assert scope.measurement_items == []
+    scope.handle(":SYSTem:ERRor?")  # -222 を掃除
+
+
 def test_vaverage_is_rejected_then_vavg_recovers(scope: FakeScope) -> None:
     """phase0実測: VAVerage は無応答+`-222`。VAVG で回復する。"""
     with pytest.raises(SilentTimeout):

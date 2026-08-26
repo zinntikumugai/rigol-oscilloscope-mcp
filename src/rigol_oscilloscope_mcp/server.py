@@ -330,6 +330,16 @@ def create_server(
         return service.measure(manager.require_scope(), channel, measurements)
 
     @_register
+    def clear_measurements() -> dict:
+        """Remove all measurement items from the on-screen Result view.
+
+        Reading measurements (measure) also enables each item on the
+        instrument's Result view, so items accumulate on screen over time.
+        This clears them all; re-measuring restores any item.
+        """
+        return control.clear_measurements(manager.require_scope())
+
+    @_register
     def capture_waveform(channel: str, max_points: int | None = None) -> dict:
         """Capture waveform data and return it converted to volts (V).
 

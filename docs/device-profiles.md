@@ -54,6 +54,7 @@
 | 項目 | 内容 | MHO98での実測値 |
 |---|---|---|
 | `measurement_items` | 意味的測定名 → SCPIニモニック対応表 | `vavg` → `VAVG`(`VAVerage` は**不可**、無応答+`-222`) |
+| `measurement_clear` | Resultビューの全測定項目を消すコマンド(未宣言 = 送信ゼロで `UNSUPPORTED_FEATURE`) | mho98: `":MEASure:DELete"`。**DHO800/900系はガイド上 `":MEASure:CLEar"`**(ニモニックがファミリで分岐。MHO98実機は両方受理 → [verification/mho98-measure-clear.md](verification/mho98-measure-clear.md)) |
 | `screenshot_command` | スクリーンショット取得コマンドと引数形式 | `:DISPlay:DATA?`(引数なし、PNG返却) |
 | `screenshot_timeout_s` | 画像転送に与えるタイムアウト猶予(秒)。未宣言ならコード既定 30 | 30(通常問い合わせの5秒では約97KBの転送が間に合わない) |
 | `bwlimit_on` | 帯域制限「入」に送る値。未宣言なら帯域制限の設定自体を `UNSUPPORTED_FEATURE` とする | `20M`(選択肢 OFF/20M/100M/250M は要実機確認) |

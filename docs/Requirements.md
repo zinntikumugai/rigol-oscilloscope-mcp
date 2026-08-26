@@ -166,6 +166,7 @@ Transport(LAN raw socket / USB USBTMC)
 | 識別 | `scope_identify` / `get_capabilities` | READ_ONLY | 1 |
 | 状態 | `get_state` / `get_channel` / `get_timebase` / `get_trigger` / `get_acquisition_state` | READ_ONLY | 1 |
 | 測定 | `measure` | READ_ONLY | 1 |
+| 測定 | `clear_measurements`(Resultビューの全消去) | SAFE_WRITE | 4 |
 | データ | `capture_waveform` / `capture_screenshot` | READ_ONLY | 1 |
 | 設定 | `configure_channel` / `configure_timebase` / `configure_trigger` | SAFE_WRITE(50ΩのみRESTRICTED) | 2 |
 | 取込 | `run` / `stop` / `single` | SAFE_WRITE | 2 |

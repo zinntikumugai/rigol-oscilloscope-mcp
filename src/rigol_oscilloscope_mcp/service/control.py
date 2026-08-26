@@ -407,6 +407,17 @@ class ControlService:
         """シングルショット取り込みを行う。"""
         return self._acquisition(driver, "single", driver.single)
 
+    def clear_measurements(self, driver: ScopeDriver) -> dict:
+        """Resultビューの全測定項目を消す(SAFE_WRITE。issue #16)。
+
+        表示のみの変更で取得条件に触れず、再測定で完全に可逆。readbackの
+        対象が存在しないため requested/applied は返さない(run/stopと同型)。
+        """
+        with self._audited("clear_measurements", {}) as record:
+            driver.clear_measurements()
+            record.after({})
+        return {"result": "ok"}
+
     def _acquisition(
         self, driver: ScopeDriver, tool: str, action: Callable[[], None]
     ) -> dict:
