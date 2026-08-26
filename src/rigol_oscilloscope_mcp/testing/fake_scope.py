@@ -553,7 +553,8 @@ class FakeScope:
             (r":?RUN", lambda m: self._set_acquisition("RUN")),
             (r":?STOP", lambda m: self._set_acquisition("STOP")),
             (rf":?{_mn('SINGle')}", lambda m: self._set_acquisition("SINGLE")),
-            (rf":?{_mn('AUToscale')}", lambda m: self._set_acquisition("RUN")),
+            # 実機の正式ニモニックは :AUToset(:AUToscale は未定義ヘッダ=沈黙)
+            (rf":?{_mn('AUToset')}", lambda m: self._set_acquisition("RUN")),
             # 測定
             (
                 rf":?{_mn('MEASure')}:{_mn('ITEM')}\?\s+(\w+)\s*,\s*{_VALUE}",

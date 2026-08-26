@@ -170,6 +170,8 @@ MVPはEdge Triggerのみ。
 
 Auto Setupは利用者の設定を大きく上書きするため、confirmトークンによる承認を要求する。実行した場合は返却に「Auto Setupを実行し設定が変更された」ことを明記し、実行後の主要設定を併せて返す。
 
+ニモニックは世代で分岐する(MHO900/DHO系: `:AUToset` / 旧世代: `:AUToscale`)ため、dialect `autoset_command` の宣言必須 — 未宣言の機種では送信せず `UNSUPPORTED_FEATURE`。経緯と実機プローブは [verification/mho98-autoset.md](verification/mho98-autoset.md)(かつての `:AUToscale` ハードコードはMHO900に存在しない未定義ヘッダだった)。
+
 ---
 
 ## 5. 測定・データ取得
