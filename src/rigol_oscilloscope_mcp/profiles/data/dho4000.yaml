@@ -1,0 +1,19 @@
+# ガイドベースプロファイル: DHO4000シリーズ(docs/device-profiles.md 6章)
+# 出典: DHO1000/DHO4000 Programming Guide PGA34101-1110(dho1000.yaml と同一文書)
+# **実機未検証**(confidence: guide)。SCPIはDHO1000と同一系統のため差分のみ宣言する。
+# スコープ内の差分は入力インピーダンスだけ(ガイド3.9.8)。LA・AFG・デコード・
+# オプション照会は DHO1000 と同じ扱い(未宣言=ゲート)
+model: DHO4000 # ラインナップ: DHO4204 / DHO4404 / DHO4804(200/400/800MHz・全て4ch)
+match: "^DHO4[0-9]{3}"
+inherits: dho1000
+confidence: guide
+
+capabilities:
+  analog_channels: 4 # 2chモデルは無い(DHO1000と違い宣言値が正確)
+  # ガイド3.9.8: :CHANnel<n>:IMPedance {OMEG|FIFTy}(既定OMEG、問い合わせは
+  # OMEG または FIFT を返す)。DHO1000の50Ω非対応の制限文はDHO4000には掛からない。
+  # 注意: true にすると 50Ω の RESTRICTED_WRITE 確認フロー(confirm必須)が
+  # 有効になる。confidence: guide でこのゲートを開ける初のプロファイル。
+  # 50Ω時は垂直感度の上限が 10 V/div → 1 V/div に下がる(ガイド3.9.7)。要実機検証
+  impedance_control: true
+  impedance_50ohm: true

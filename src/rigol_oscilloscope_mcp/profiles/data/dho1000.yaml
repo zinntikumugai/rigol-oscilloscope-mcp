@@ -1,0 +1,91 @@
+# ガイドベースプロファイル: DHO1000シリーズ(docs/device-profiles.md 6章)
+# 出典: DHO1000/DHO4000 Programming Guide PGA34101-1110(Software Version 00.01.00)
+# **実機未検証**(confidence: guide)。ガイドに逐語で載っているニモニックだけを
+# 宣言し、quirk(沈黙挙動・スナップ・NR3形式)は未確認のため rigol-generic の
+# 保守的な既定を継承する。デコード(:BUS<n> はガイド3.8章に存在)/ オプション照会
+# (:SYSTem:OPTion:STATus? は存在するが<type>リスト未抽出)は意図的に未宣言 —
+# 不在がそのままゲートで UNSUPPORTED_FEATURE になる(4.2の原則)。
+# LA・AFGはガイドに章そのものが無い
+model: DHO1000 # ラインナップ: DHO1072/1074/1102/1104/1202/1204(70/100/200MHz)
+match: "^DHO1[0-9]{3}"
+inherits: rigol-generic
+confidence: guide
+
+capabilities:
+  # 既知の制限: DHO1072/1102/1202 は2chだが、機種内のch数差はプロファイル
+  # スキーマが未対応。範囲外のCH3/4は機器側が拒否する前提で4を宣言する
+  analog_channels: 4
+  digital_channels: 0
+  afg_channels: 0
+  protocol_decode: false # :BUS<n> はガイド3.8にあるが実機未検証のため意図的に無効
+  waveform_download: true
+  screenshot: true
+  # ガイド3.9.8: :CHANnel<n>:IMPedance {OMEG|FIFTy} は存在するが
+  # 「The DHO1000 series does not support the 50 Ω input impedance」。
+  # 取り得る値がOMEGだけなら制御する意味が無いので無効にし、
+  # チャンネル状態取得でも :IMPedance? を送らない
+  impedance_control: false
+  impedance_50ohm: false
+  # ガイド3.18.2の :MEASure:ITEM 項目(VAVGの綴りもMHO98/DHO800と同一)
+  measurements:
+    [frequency, period, vpp, vmax, vmin, vavg, rms, duty, rise_time, fall_time]
+
+dialect:
+  # ガイド3.12.7: `:DISPlay:DATA? [<type>]`、<type>={BMP|PNG|JPG}で既定はBMP。
+  # PNGで受け取るには引数が必須(引数付きのままバイナリ問い合わせへ渡す)
+  screenshot_command: ":DISPlay:DATA? PNG"
+  screenshot_timeout_s: 30 # 画像転送の猶予(MHO98実測と同じ根拠。DHOでは要実機確認)
+  autoset_command: ":AUToset" # ガイド3.6.1(:AUToscale ではない)
+  measurement_clear: ":MEASure:CLEar" # ガイド3.18.3(引数なし・全消し)
+  # ガイド3.9.1: 選択肢は {OFF|ON|20M|250M} だが、250Mは
+  # 「not supported by the DHO1000 series」のため安全なON値は 20M のみ
+  bwlimit_on: "20M"
+  measurement_items:
+    frequency: FREQuency
+    period: PERiod
+    vpp: VPP
+    vmax: VMAX
+    vmin: VMIN
+    vavg: VAVG
+    rms: VRMS
+    duty: PDUTy # 返却単位は比率(MHO98と同じ想定。要実機確認)
+    rise_time: RTIMe
+    fall_time: FTIMe
+  waveform_preamble:
+    # ガイド3.29.14のプリアンブル例も末尾が `...,0,128`(BYTE時のyreference)。
+    # 10フィールド構成はDHO800/MHO98と同一。yorigin は設定依存の動的値なので
+    # プロファイルには持たせず、変換には必ずライブの :WAVeform:PREamble? を使う
+    yreference: 128
+
+limits:
+  # ガイド3.9.11 の :CHANnel<n>:PROBe が取る24値(DHO800と同一)。要実機検証
+  probe_ratio:
+    [
+      0.001,
+      0.002,
+      0.005,
+      0.01,
+      0.02,
+      0.05,
+      0.1,
+      0.2,
+      0.5,
+      1,
+      2,
+      5,
+      10,
+      20,
+      50,
+      100,
+      200,
+      500,
+      1000,
+      2000,
+      5000,
+      10000,
+      20000,
+      50000,
+    ]
+  # vertical_scale は未検証 → 実機read-backフォールバック。参考(ガイド3.9.7):
+  # DHO1000は 1MΩ・プローブ比1Xで 500 µV/div 〜 10 V/div(既定 50 mV)。
+  # メモリ長(ガイド3.7.3 :ACQuire:MDEPth、既定10k)は1ch有効時で最大100M(オプション)
