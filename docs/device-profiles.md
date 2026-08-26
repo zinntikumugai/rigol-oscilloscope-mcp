@@ -74,7 +74,8 @@
 | `option_types` | 意味的なオプション名 → `<type>` トークン対応表。ここに載るトークンだけを送る | `bundle: BND` / `afg_50mhz: AFG50` / `memory_500mpts: RLU-05` ほか計11個 |
 | `decode_protocols` | 意味的プロトコル名 → `:BUS<n>:MODE` の値。**未宣言なら `configure_decode` 自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) | `uart: RS232` / `i2c: IIC` / `spi: SPI` / `can: CAN` / `lin: LIN` / `parallel: PARallel` の6種 |
 | `decode_formats` | デコード表示形式の対応表(`:BUS<n>:FORMat`) | `hex: HEX` / `ascii: ASCii` / `dec: DEC` / `bin: BIN` |
-| `afg_prefix` | 信号発生のコマンド接頭辞(`{n}` がチャンネル番号)。**未宣言なら `configure_afg` / `get_afg_state` 自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) | `:SOURce{n}`(MHO900は2ch・番号付き) |
+| `afg_prefix` | 信号発生のコマンド接頭辞(`{n}` がチャンネル番号。`{n}` を含まないテンプレート=番号なし方言も可)。**未宣言なら `configure_afg` / `get_afg_state` 自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) | `:SOURce{n}`(MHO900は2ch・番号付き)。dho900は `:SOURce`(番号なし・1ch) |
+| `afg_presence_query` | ジェネレータ搭載有無の実行時照会(宣言時のみ、最初のAFG操作前に1回・接続中キャッシュ。`0` なら送信ゼロで `UNSUPPORTED_FEATURE`) | dho900: `:SYSTem:DGSTatus?`(S型のみ搭載のため) |
 | `afg_waveforms` | 意味的な波形名 → `:SOURce<n>:FUNCtion` の値。ここに載るトークンだけを送る | `sine: SINusoid` / `square: SQUare` / `ramp: RAMP` / `noise: NOISe` / `dc: DC` / `arb: ARB` / `exp_rise: EXPRise` ほか計13種(**`PULSe` は実機に存在しない** — 送ると `-222`) |
 | `afg_impedances` | 信号発生器の出力インピーダンス対応表(`:SOURce<n>:IMPedance`) | `highz: OMEG` / `50: FIFTy`(問い合わせの返却は `OMEG` / `FIFTy`) |
 | `afg_mod_types` | 変調タイプの対応表(`:SOURce<n>:MOD:TYPe`)。**未宣言なら `modulation` 引数自体を扱わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) | `am: AM` / `fm: FM` / `pm: PM`(変調ソースは内蔵のみ。`EXTernal` は存在しない) |
