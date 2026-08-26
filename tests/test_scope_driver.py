@@ -187,6 +187,28 @@ def test_measure_multiple_keys_carry_si_units(driver: ScopeDriver) -> None:
     assert results[0].value == pytest.approx(1000.1)
 
 
+def test_autoset_sends_the_dialect_command(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """MHO900の正式ニモニックは :AUToset(ガイド3.2.1。:AUToscale は誤り)。"""
+    scope.command_log.clear()
+
+    driver.autoset()
+
+    assert [c for c in scope.command_log if "?" not in c] == [":AUToset"]
+
+
+def test_autoset_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """ニモニックは世代で分岐し得るため、未宣言プロファイルではゼロ送信で拒否。"""
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.autoset()
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
 def test_clear_measurements_sends_the_dialect_command(
     driver: ScopeDriver, scope: FakeScope
 ) -> None:
@@ -588,7 +610,7 @@ def test_run_stop_single(driver: ScopeDriver, scope: FakeScope) -> None:
 def test_autoset(driver: ScopeDriver, scope: FakeScope) -> None:
     driver.autoset()
 
-    assert ":AUToscale" in scope.command_log
+    assert ":AUToset" in scope.command_log
     assert scope.acquisition == "RUN"
 
 

@@ -271,7 +271,7 @@ def test_run_stop_single_autoscale(scope: FakeScope) -> None:
     assert scope.handle(":TRIGger:STATus?") == b"TD"
     assert scope.handle(":SINGle") is None
     assert scope.handle(":TRIGger:STATus?") == b"WAIT"
-    assert scope.handle(":AUToscale") is None
+    assert scope.handle(":AUToset") is None
     assert scope.handle(":TRIGger:STATus?") == b"TD"
     assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
 
@@ -314,6 +314,13 @@ def test_measure_accepts_short_long_and_lowercase(
     scope: FakeScope, command: str
 ) -> None:
     assert scope.handle(command) == b"3.268E+00"
+
+
+def test_autoscale_is_silent(scope: FakeScope) -> None:
+    """旧ハードコードの :AUToscale は実機に存在しない=沈黙(誤送信をテストで検出)。"""
+    with pytest.raises(SilentTimeout):
+        scope.handle(":AUToscale")
+    scope.handle(":SYSTem:ERRor?")  # エラーキューを掃除
 
 
 def test_measure_item_query_adds_to_result_view(scope: FakeScope) -> None:

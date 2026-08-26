@@ -864,7 +864,7 @@ def test_autoset_with_token_executes(
     result = service.autoset(driver, 0, confirm_token=token)
 
     assert result["result"] == "ok"
-    assert [c for c in scope.command_log if "AUTO" in c.upper()] == [":AUToscale"]
+    assert [c for c in scope.command_log if "AUTO" in c.upper()] == [":AUToset"]
 
 
 def test_autoset_note_states_settings_changed(
@@ -932,7 +932,7 @@ def test_autoset_does_not_query_all_channels_before(
 
     service.autoset(driver, 0, confirm_token=token)
 
-    before_autoset = scope.command_log[: scope.command_log.index(":AUToscale")]
+    before_autoset = scope.command_log[: scope.command_log.index(":AUToset")]
     assert sent_in(before_autoset, ":CHAN") == []
 
 
@@ -1033,7 +1033,7 @@ def test_autoset_skips_the_before_state_without_audit_log(
 
     service.autoset(driver, 0, confirm_token=excinfo.value.detail["confirm_token"])
 
-    before_autoset = scope.command_log[: scope.command_log.index(":AUToscale")]
+    before_autoset = scope.command_log[: scope.command_log.index(":AUToset")]
     assert before_autoset == []
 
 

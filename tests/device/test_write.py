@@ -7,7 +7,7 @@ ControlService 経由で行い、サービス層(requested/applied・監査ロ�
 安全のため、本スイートは次の操作を**一切行わない**(Fakeテストで担保済み):
 
 - 50Ω入力(`impedance="50"` / `FIFT`) — 耐圧が低く、誤接続時に機器が壊れる
-- autoset(`:AUToscale`) — 利用者の設定を破壊する
+- autoset(`:AUToset`) — 利用者の設定を破壊する
 - factory reset
 
 対象チャンネルは **CH2** を使う。CH1 はプローブ補正信号の観測に使われているため、

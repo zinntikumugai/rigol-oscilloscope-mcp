@@ -1064,5 +1064,14 @@ class ScopeDriver:
         self.session.write_checked(":SINGle")
 
     def autoset(self) -> None:
-        """オートスケール。信号系統を大きく変えるため、承認は上位の責務。"""
-        self.session.write_checked(":AUToscale")
+        """オートセットアップ。信号系統を大きく変えるため、承認は上位の責務。
+
+        ニモニックは世代で分岐する(MHO900/DHO系: :AUToset。旧世代DS1000Z等:
+        :AUToscale)ためdialect宣言必須。かつてハードコードしていた :AUToscale は
+        MHO900では **:SYSTem:AUToscale(AUTOキーの有効化スイッチ)しか存在しない**
+        未定義ヘッダで、実機に送ればSCPIサーバーが沈黙するところだった
+        (autoset書き込みは実機実行禁止のため未発火。docs/verification/
+        mho98-autoset.md)。
+        """
+        command = self._required_dialect("autoset_command", "the auto setup")
+        self.session.write_checked(command)
