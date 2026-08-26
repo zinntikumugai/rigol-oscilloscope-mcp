@@ -51,6 +51,40 @@ MHO98は2ch・100 MHz・1 GSa/s のAFGを搭載する。実測根拠は [verific
 - 未実装の候補: THD、Jitter、Overshoot / Undershoot、Ringing、Noise、Signal Integrity。実測で必要性が出た時点で `analyses` の値を増やす形で追加する(Tool追加ではなく引数追加で済ませる)
 - NumPy/SciPy: stdlibのみのradix-2 FFTで実装済み(131k点で約0.15秒、既定上限10万点なら0.1秒台)。解析が重くなったらoptional extras化を再検討する
 
+### 2.5 内蔵機能の棚卸しと対応予定(2026-08-27)
+
+MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実装の内蔵機能から**対応予定6機能**を確定した(実装済み: Root / :CHANnel / :TIMebase / :TRIGger基本 / :MEASure / :WAVeform / :BUS / :SOURce / :DISPlay:DATA? / :SYSTem)。
+
+**対応予定(優先度順):**
+
+| Phase | 機能 | ガイド節 | 方針 |
+|---|---|---|---|
+| M1 | **:MATH<n>** 演算(加減乗除・FFT・微積分・フィルタ・論理) | 3.16 | `configure_math`(SAFE_WRITE)+ `get_math_state`(READ_ONLY)の2 Tool。FFTピークサーチ結果(`:MATH<n>:FFT:SEARch:RES?`)は `get_math_state` の返却に含める(Tool追加しない)。MATHトレースの波形取得は `capture_waveform` / `analyze_waveform` の `source` 引数拡張で実現(`read_samples` 経路を流用)。プロファイルに `math_channels` + `math_operators` 対応表を宣言 |
+| M2 | **:CURSor** カーソル測定 | 3.8 | manual/track/XY。設定+ΔX/ΔY等の読み取り |
+| M2 | **:COUNter** 周波数カウンタ | 3.7 | enable/source/mode + `:VALue` 読み。実装コスト極小 |
+| M2 | **:DVM** 電圧計 | 3.10 | 同上(4コマンドのみ) |
+| M2 | **:HISTogram** ヒストグラム | 3.11 | `:STATistics:RESult` で統計テキスト取得 |
+| M3 | **:REFerence** リファレンス波形 | 3.20 | 保存→比較ワークフロー。REF波形の読み出し可否は要確認 |
+
+**M1(MATH)の要検証点:**
+
+1. `:WAVeform:SOURce MATH<n>` の可否 — ガイド3.28.1の逐語確認が先(不可ならMATHトレース取得は画面キャプチャ頼みになり価値半減)
+2. MATH無効時のクエリ挙動(沈黙の有無)— :BUSと同様、送信前ガード(プロファイル宣言の不在ゲート)で対処
+3. FFTトレースのプリアンブル解釈(横軸Hz時のxincrement / xorigin)— 実機検証項目
+4. ホスト側FFT(`analyze_waveform`)との棲み分け: 機上FFTは「画面に出る(人間が確認できる)」「ピーク表がテキストで取れる(波形転送ゼロ)」点で別価値
+
+**見送り(再検討の条件つき):**
+
+| 機能 | ガイド節 | 見送り理由 / 再検討の条件 |
+|---|---|---|
+| :MASK Pass/Fail試験 | 3.15 | 長時間自動試験の実ニーズが出たら(FAILed/PASSed/TOTal件数取得は有用) |
+| :SEARch / :NAVigate | 3.22/3.23 | イベント検索の実ニーズが出たら |
+| :RECord 波形録画/再生 | 3.19 | 状態機械が複雑。フレームナビゲーション需要が出たら |
+| :BODeplot ボード線図 | 3.5 | ライセンスオプション+AFG連携が前提。ニーズが出たら |
+| :QUICk / :LAN / :SAVE | 3.18/3.14/3.21 | ボタン割当・ネット設定・本体保存はMCPから触る価値薄 |
+
+(:LA は 2.2 に既載のため本表から除外)
+
 ## 3. プラグイン化(完了・要件へ昇格)
 
 **完了**(2026-08-25)。Claude(`.claude-plugin/plugin.json`)・Codex(`.codex-plugin/plugin.json` + `.agents/plugins/marketplace.json`)の両プラグインとして実装し、[Requirements.md](Requirements.md) 10.3 へ昇格した。スキル(`skills/measurement-workflows/SKILL.md`、Agent Skillsオープン標準)とMCP起動定義は両ホストで共有。旧v0.1のスキル素材(UART測定・Unknown Signal探索・安全プロンプト・反復上限)はすべてスキル本文へ吸収済み。
