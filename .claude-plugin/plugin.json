@@ -1,12 +1,12 @@
 {
   "name": "rigol-oscilloscope",
   "description": "Control RIGOL oscilloscopes over SCPI: an MCP server plus a measurement-workflow skill with safety guidance.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "author": { "name": "zinntikumugai" },
   "mcpServers": {
     "rigol-oscilloscope": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.2", "rigol-oscilloscope-mcp"]
+      "args": ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.3", "rigol-oscilloscope-mcp"]
     }
   }
 }
