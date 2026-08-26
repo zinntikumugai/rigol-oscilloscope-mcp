@@ -61,6 +61,40 @@
 - `test_configure_afg_set_and_readback`: PASS(継続)
 - `test_afg_loopback_fft`: **SKIP**(`RIGOL_TEST_AFG_LOOPBACK` 未設定 — 意図どおり)
 
-## 5. 未実施・今後の予定
+## 5. ループバックFFT・フィードバック検査(2026-08-26、BNCプローブ結線)
 
-- **ループバックFFT検証**: BNCケーブル入手後に実施(`RIGOL_TEST_AFG_LOOPBACK=1` を追加指定。AFG出力→CH1接続、1 kHz正弦を `analyze_waveform` のFFTで突合。テストは timebase 5 ms/div で分解能≈20 Hzを確保し、分解能アサート付き)。**現在ケーブル不足のため未実施**。実施後は本章へ結果を追記する
+**物理結線:** CH1=プローブ補償 / **CH2=G1(AFG1)/ CH3=G2(AFG2)**(10xプローブ経由)/ CH4=未接続。
+出力ONはユーザー承認のもと実施し、終了時に両ch出力OFF・全設定復元を確認済み。
+
+### 公式テスト
+
+`RIGOL_TEST_ALLOW_WRITE=1 RIGOL_TEST_ALLOW_AFG_OUTPUT=1 RIGOL_TEST_AFG_LOOPBACK=1 uv run pytest -m device_write -k afg` → **3件PASS**(`test_afg_loopback_fft` 含む。受信chは物理結線に合わせCH2へ変更)
+
+- 実行前、本体操作で両AFG出力がONのままだったため**スイートの安全ガード(出力ON時はSKIP)が正しく発動**することも副次確認できた。`disable_afg` でOFF化後にPASS
+
+### フィードバック検査スイープ(G1→CH2 / G2→CH3、各8点)
+
+周波数(カウンタ+FFT)・デューティは全点で良好:
+
+| 項目 | 結果 |
+|---|---|
+| 周波数 | 設定1k/100k/1MHzの全点で±1%以内(square 1k/100kは誤差ゼロ)。FFTも分解能内一致 |
+| duty | 50%設定→実測50.0%、60%設定→59.94%(両ch) |
+| 波形 | sine / square / ramp とも復号・測定に問題なし |
+| G1/G2差 | なし |
+
+振幅は当初「約1/9」で観測されたが、**原因は結線が10xプローブ経由**だったこと(probe_ratio=1.0で測定していたため)。`probe_ratio=10` で再検査した結果:
+
+| 設定Vpp | G1→CH2 実測 | G2→CH3 実測 |
+|---|---|---|
+| 0.2 | 0.216(+8%) | 0.210(+5%) |
+| 1.0 | 1.002(+0.2%) | 0.996(−0.4%) |
+| 5.0 | 4.996(−0.1%) | 4.985(−0.3%) |
+
+- **HighZ(OMEG)設定時の振幅マッピングを実測確認**: 設定Vpp = 1MΩ入力での実測Vpp(換算不要)
+- 0.2 Vppの+5〜8%はプローブの小信号誤差の範囲
+- 教訓: ループバック検証時は**受け側チャンネルの probe_ratio を物理経路に一致させる**こと(発生器+取得+FFT+measureの三位一体検証はこれで完結)
+
+## 6. 未実施・今後の予定
+
+- AFG残件(変調 / ARBロード / PERiod / HIGH-LOW / 位相同期)は roadmap 2.3 参照(実ニーズ待ち)

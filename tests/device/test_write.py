@@ -92,8 +92,8 @@ AFG_OUTPUT_WAVEFORM = "sine"
 AFG_OUTPUT_FREQUENCY_HZ = 1000.0
 AFG_OUTPUT_AMPLITUDE_VPP = 1.0
 
-#: ループバック時の観測条件(CH1で受ける)
-LOOPBACK_CHANNEL = "CH1"
+#: ループバック時の観測条件(物理結線: AFG1(G1)→BNC→CH2。CH1はプローブ補償専用)
+LOOPBACK_CHANNEL = "CH2"
 LOOPBACK_SCALE_V_PER_DIV = 0.5
 #: 画面レコード長 = 10 div × 5 ms = 50 ms → FFT分解能 ≈ 20 Hz = 1 kHzの2%。
 #: `:WAVeform:MODE NORMal`(画面データ)なので分解能はレコード長だけで決まり、
@@ -881,7 +881,7 @@ def loopback_channel_before(
     driver: ScopeDriver,
     generation: int,
 ) -> Iterator[dict]:
-    """ループバック受信に使うCH1の現在値を控え、teardownで必ず復元する。"""
+    """ループバック受信チャンネル(CH2)の現在値を控え、teardownで必ず復元する。"""
     before = get_channel_dict(driver, LOOPBACK_CHANNEL)
     tag = request.node.name
     _report(f"[before:{tag}] {LOOPBACK_CHANNEL}={before}")
@@ -946,7 +946,7 @@ def test_afg_loopback_fft(
     timebase_before: dict,
     trigger_before: dict,
 ) -> None:
-    """AFG出力→CH1のBNCループバックで、出した周波数をFFTで取り戻せることを見る。
+    """AFG1出力→CH2のBNCループバックで、出した周波数をFFTで取り戻せることを見る。
 
     要ケーブル(2重ゲートに加えて `RIGOL_TEST_AFG_LOOPBACK=1`)。取り込みは
     single ではなく run → 待ち → stop で行う: トリガ源は変更しない方針のため、
@@ -970,6 +970,7 @@ def test_afg_loopback_fft(
         enabled=True,
         scale_v_per_div=LOOPBACK_SCALE_V_PER_DIV,
         coupling="DC",
+        probe_ratio=1.0,  # 受け側経路の減衰(ケーブル/プローブ)は周波数判定に影響しない
     )
     control.configure_timebase(driver, scale_s_per_div=LOOPBACK_TIMEBASE_S_PER_DIV)
     control.configure_trigger(driver, sweep_mode="auto")
