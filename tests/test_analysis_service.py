@@ -304,3 +304,41 @@ def test_analyze_max_points_not_positive_is_invalid(
         analyze_waveform(driver, config, "CH1", max_points=max_points)
 
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+
+
+# --------------------------------------------------------------------------
+# MATHソース(FFTトレースは時間軸解析の対象にならない)
+# --------------------------------------------------------------------------
+
+
+def test_analyze_analog_channel_asks_nothing_about_math(
+    driver: ScopeDriver, config: Config, scope: FakeScope
+) -> None:
+    analyze_waveform(driver, config, "CH1")
+
+    assert [c for c in scope.command_log if "MATH" in c.upper()] == []
+
+
+def test_analyze_non_fft_math_source(
+    driver: ScopeDriver, config: Config, scope: FakeScope
+) -> None:
+    result = analyze_waveform(driver, config, "MATH2", analyses=["stats"])
+
+    assert result["channel"] == "MATH2"
+    assert ":WAVeform:SOURce MATH2" in scope.command_log
+    assert result["stats"]["vpp_v"] == pytest.approx(FAKE_VPP_V, rel=1e-6)
+
+
+def test_analyze_rejects_an_fft_math_trace(
+    driver: ScopeDriver, config: Config, scope: FakeScope
+) -> None:
+    """FFTトレースへの時間軸統計・ホストFFTは無意味なので拒否する。"""
+    scope.math[1]["operator"] = "FFT"
+
+    with pytest.raises(ScopeError) as excinfo:
+        analyze_waveform(driver, config, "MATH1")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert "get_math_state" in excinfo.value.message
+    assert "capture_waveform" in excinfo.value.message
+    assert ":WAVeform:DATA?" not in scope.command_log

@@ -246,3 +246,55 @@ def test_max_points_within_config_is_not_clamped(driver: ScopeDriver, scope: Fak
 
     assert ":WAVeform:STOP 150" in scope.command_log
     assert "max_points_clamped" not in result
+
+
+# --------------------------------------------------------------------------
+# MATHソース(ガイド3.28.1: :WAVeform:SOURce は MATH1-4 も受理する)
+# --------------------------------------------------------------------------
+
+
+def test_analog_channel_asks_nothing_about_math(
+    driver: ScopeDriver, config: Config, scope: FakeScope
+) -> None:
+    """アナログchの経路には `:MATH` 問い合わせを1本も混ぜない(後方互換)。"""
+    result = capture_waveform(driver, config, "CH1")
+
+    assert [c for c in scope.command_log if "MATH" in c.upper()] == []
+    assert "x_unit" not in result
+    assert result["effective_sample_rate_sa_per_s"] == 500000.0
+
+
+def test_math_source_is_captured(
+    driver: ScopeDriver, config: Config, scope: FakeScope
+) -> None:
+    result = capture_waveform(driver, config, "MATH2")
+
+    assert result["channel"] == "MATH2"
+    assert ":WAVeform:SOURce MATH2" in scope.command_log
+    assert len(result["samples_v"]) == POINTS
+    # 非FFT演算子(既定 ADD)ではアナログchと同じ形
+    assert "x_unit" not in result
+    assert result["effective_sample_rate_sa_per_s"] == 500000.0
+
+
+def test_math_operator_is_queried_once(
+    driver: ScopeDriver, config: Config, scope: FakeScope
+) -> None:
+    capture_waveform(driver, config, "MATH1")
+
+    assert [c for c in scope.command_log if "OPER" in c.upper()] == [
+        ":MATH1:OPERator?"
+    ]
+
+
+def test_fft_math_source_reports_a_frequency_axis(
+    driver: ScopeDriver, config: Config, scope: FakeScope
+) -> None:
+    scope.math[1]["operator"] = "FFT"
+
+    result = capture_waveform(driver, config, "MATH1")
+
+    assert result["x_unit"] == "Hz"
+    assert "effective_sample_rate_sa_per_s" not in result
+    assert "FFT" in result["note"]
+    assert "verification" in result["note"].lower()

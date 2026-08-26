@@ -110,6 +110,57 @@ def parse_eng_number(text: str) -> float:
     return float(match.group(1)) * scale
 
 
+#: FFTピーク表の周波数サフィックス(ガイド3.16.30の返却例は MHz)
+_FREQ_SUFFIXES = {"hz": 1.0, "khz": 1e3, "mhz": 1e6, "ghz": 1e9}
+
+#: `5,6.50125MHz,-32.34dBV` の1行。振幅の単位は末尾の英字をそのまま保持する
+#: (`:MATH<n>:FFT:UNIT` 依存で全集合が未検証のため、こちらでは列挙しない)。
+_FFT_PEAK_RE = re.compile(
+    r"^(\d+)\s*,\s*([+-]?[\d.]+(?:[eE][+-]?\d+)?)\s*([A-Za-z]*)\s*,\s*"
+    r"([+-]?[\d.]+(?:[eE][+-]?\d+)?)\s*([A-Za-z]*)$"
+)
+
+
+def parse_fft_peaks(text: object) -> tuple[list[dict], list[str]]:
+    """FFTピーク探索結果表を `(行, 警告)` へ(ガイド3.16.30)。
+
+    行は `{"index": 5, "frequency_hz": 6501250.0, "amplitude": -32.34,
+    "amplitude_unit": "dBV"}`。`parse_event_table` と同じく **戻り値はタプル**で、
+    解釈できない行は `{"raw": "<元の行>"}` として残し、対応する説明を警告リストへ
+    積む(**例外は投げない** — ピーク表は付加情報であり、1行の想定外で
+    `get_math_state` 全体を落とさない)。
+
+    行区切りは改行のほか `;` も受理する(ガイドは複数行の例を示すが、実機の
+    実際の区切りは未検証 — 実機検証項目)。
+    """
+    if not isinstance(text, str):
+        return [], [f"peak search response is not a string: {text!r}"]
+
+    peaks: list[dict] = []
+    warnings: list[str] = []
+    for line in re.split(r"[\r\n;]+", text):
+        line = line.strip()
+        if not line:
+            continue
+        match = _FFT_PEAK_RE.match(line)
+        scale = (
+            _FREQ_SUFFIXES.get(match.group(3).lower() or "hz") if match else None
+        )
+        if match is None or scale is None:
+            peaks.append({"raw": line})
+            warnings.append(f"cannot interpret peak search line: {line!r}")
+            continue
+        peaks.append(
+            {
+                "index": int(match.group(1)),
+                "frequency_hz": float(match.group(2)) * scale,
+                "amplitude": float(match.group(4)),
+                "amplitude_unit": match.group(5),
+            }
+        )
+    return peaks, warnings
+
+
 def parse_bool(text: str) -> bool:
     """`ON`/`1` → True、`OFF`/`0` → False(大文字小文字不問)。"""
     if not isinstance(text, str):

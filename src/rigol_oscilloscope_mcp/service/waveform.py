@@ -17,7 +17,12 @@ import tempfile
 from typing import NamedTuple
 
 from ..config import Config
-from ..driver.scope import ScopeDriver, WaveformPreamble, normalize_channel
+from ..driver.scope import (
+    ScopeDriver,
+    WaveformPreamble,
+    math_source_number,
+    normalize_channel,
+)
 from ..errors import ErrorCode, ScopeError
 
 # これ以下の点数はレスポンスにサンプル配列を直接含める
@@ -26,6 +31,14 @@ INLINE_POINTS_LIMIT = 10000
 NOTE = (
     "Screen data may be decimated "
     "(the effective sample rate is the reciprocal of sample_interval_s)."
+)
+
+#: FFT演算のMATHトレースはx軸が周波数(時間ではない)
+FFT_NOTE = (
+    "This is an FFT trace: the x axis is frequency, so sample_interval_s is the "
+    "frequency step in Hz and time_origin_s is the start frequency. "
+    "The interpretation of the preamble x increment for FFT traces is still "
+    "pending verification on a real device."
 )
 
 FILE_PREFIX = "rigol_waveform_"
@@ -83,6 +96,21 @@ def read_samples(
     return SampleRead(samples, preamble, clamped)
 
 
+def math_operator(driver: ScopeDriver, channel: str) -> str | None:
+    """MATHソースなら演算子を1回だけ照会する。アナログchでは何も送らない。
+
+    FFT演算のトレースは横軸が周波数になり、時間軸のメタデータ・解析が意味を
+    失うため、その判定材料を最小コスト(問い合わせ1本)で得るためのもの。
+    """
+    number = math_source_number(channel)
+    return driver.get_math_operator(number) if number is not None else None
+
+
+def source_name(channel: str, operator: str | None) -> str:
+    """返却の `channel` 表記(`chan1` → `CH1` / `math2` → `MATH2`)。"""
+    return channel.strip().upper() if operator is not None else normalize_channel(channel)
+
+
 def capture_waveform(
     driver: ScopeDriver,
     config: Config,
@@ -94,17 +122,26 @@ def capture_waveform(
     点数が INLINE_POINTS_LIMIT 以下なら `samples_v` を直接返し、超える場合は
     一時ファイル(CSV)のパスを返す。
     一時ファイルの削除は呼び出し側の責務(サーバーは消さない)。
+
+    MATHソース(`MATH1`-`MATH4`)ではFFT演算かどうかを1回照会し、FFTなら
+    `x_unit: "Hz"` を添えて `effective_sample_rate_sa_per_s`(時間軸前提の値)を
+    省く。アナログchでは追加の問い合わせを一切行わず、返却の形も変わらない。
     """
+    operator = math_operator(driver, channel)
     samples, preamble, clamped = read_samples(driver, config, channel, max_points)
 
     result = {
-        "channel": normalize_channel(channel),
+        "channel": source_name(channel, operator),
         "points": len(samples),
         "sample_interval_s": preamble.xincrement,
         "time_origin_s": preamble.xorigin,
-        "effective_sample_rate_sa_per_s": 1.0 / preamble.xincrement,
-        "note": NOTE,
     }
+    if operator == "fft":
+        result["x_unit"] = "Hz"
+        result["note"] = FFT_NOTE
+    else:
+        result["effective_sample_rate_sa_per_s"] = 1.0 / preamble.xincrement
+        result["note"] = NOTE
     if clamped:
         result["max_points_clamped"] = True
 

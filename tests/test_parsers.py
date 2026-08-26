@@ -10,6 +10,7 @@ from rigol_oscilloscope_mcp.driver.parsers import (
     parse_bool,
     parse_coupling,
     parse_eng_number,
+    parse_fft_peaks,
     parse_nr3,
     to_scpi_impedance,
     to_scpi_slope,
@@ -288,3 +289,71 @@ def test_parse_eng_number(text: str, expected: float) -> None:
 @pytest.mark.parametrize("raw", ["", "abc", "us", "1.2.3us", "5km", "1 2us", None])
 def test_parse_eng_number_rejects_garbage(raw) -> None:
     _assert_scpi_error(parse_eng_number, raw)
+
+
+# --- parse_fft_peaks ------------------------------------------------------
+
+
+def test_parse_fft_peaks_guide_example() -> None:
+    """ガイド3.16.30の返却例をそのまま解釈する。"""
+    peaks, warnings = parse_fft_peaks(
+        "1,2.50000MHz,-24.98dBV\n"
+        "2,3.50000MHz,-27.84dBV\n"
+        "5,6.50125MHz,-32.34dBV"
+    )
+
+    assert warnings == []
+    assert peaks[0] == {
+        "index": 1,
+        "frequency_hz": 2.5e6,
+        "amplitude": -24.98,
+        "amplitude_unit": "dBV",
+    }
+    assert peaks[-1]["frequency_hz"] == pytest.approx(6.50125e6)
+    assert peaks[-1]["amplitude"] == pytest.approx(-32.34)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_hz"),
+    [
+        ("1,500Hz,1.0Vrms", 500.0),
+        ("1,1.5kHz,1.0Vrms", 1500.0),
+        ("1,2.50000MHz,1.0Vrms", 2.5e6),
+        ("1,1.25GHz,1.0Vrms", 1.25e9),
+    ],
+)
+def test_parse_fft_peaks_frequency_suffixes(text: str, expected_hz: float) -> None:
+    peaks, warnings = parse_fft_peaks(text)
+
+    assert warnings == []
+    assert peaks[0]["frequency_hz"] == pytest.approx(expected_hz)
+
+
+def test_parse_fft_peaks_keeps_the_amplitude_unit_verbatim() -> None:
+    """振幅の単位はFFT:UNIT依存で全集合が未検証のため、逐語で保持する。"""
+    peaks, _ = parse_fft_peaks("1,1.0kHz,0.25Vrms")
+
+    assert peaks[0]["amplitude"] == pytest.approx(0.25)
+    assert peaks[0]["amplitude_unit"] == "Vrms"
+
+
+def test_parse_fft_peaks_falls_open_on_unparsable_lines() -> None:
+    """解釈できない行は raw で残し、警告を添える(例外にしない)。"""
+    peaks, warnings = parse_fft_peaks("1,2.50000MHz,-24.98dBV\nnonsense\n\n")
+
+    assert peaks[0]["index"] == 1
+    assert peaks[1] == {"raw": "nonsense"}
+    assert len(peaks) == 2
+    assert len(warnings) == 1
+    assert "nonsense" in warnings[0]
+
+
+def test_parse_fft_peaks_empty_response() -> None:
+    assert parse_fft_peaks("") == ([], [])
+
+
+def test_parse_fft_peaks_non_string() -> None:
+    peaks, warnings = parse_fft_peaks(None)
+
+    assert peaks == []
+    assert len(warnings) == 1

@@ -35,6 +35,7 @@ from .parsers import (
     from_scpi_sweep,
     parse_bool,
     parse_coupling,
+    parse_fft_peaks,
     parse_nr3,
     to_scpi_impedance,
     to_scpi_slope,
@@ -147,7 +148,67 @@ _AFG_MOD_KEYS = frozenset(
 #: (docs/Requirements.md 3.4)。既存ファイルのパス選択のみが対象。
 _ARB_FILE_PREFIXES = ("C:/", "D:/")
 
+# -- MATH演算(tools.md / MHO900プログラミングガイド 3.16章)-----------------
+#
+# 送信順は `configure_math` が「display ON → 下記3表 → display OFF」の順に固定する。
+# 種別: "number"(NR3) / "bool" / ("int", 下限, 上限) / ("enum", 方言キー, 説明) /
+# "source"(SOURce1/2 のトークン) / "lsource"(LSOurce1/2 のトークン)
+_MATH_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("operator", ":OPERator", ("enum", "math_operators", "the math operator")),
+    ("source1", ":SOURce1", "source"),
+    ("source2", ":SOURce2", "source"),
+    ("lsource1", ":LSOurce1", "lsource"),
+    ("lsource2", ":LSOurce2", "lsource"),
+)
+
+#: 垂直方向(論理演算・FFTでは機器側が拒否する。結合検証はホストで行わない)
+_MATH_VERTICAL_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("scale", ":SCALe", "number"),
+    ("offset_v", ":OFFSet", "number"),
+    ("invert", ":INVert", "bool"),
+)
+
+#: FFTサブツリー(ガイド3.16.15-29)。HSCale / HCENter は意図的に非対応
+#: (freq_start_hz / freq_end_hz で表現する)。average_count の範囲はガイド逐語。
+#: search_num の範囲はガイド抽出がページ跨ぎで欠落しているため上限を置かない。
+_MATH_FFT_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("window", ":FFT:WINDow", ("enum", "math_fft_windows", "the FFT window")),
+    ("unit", ":FFT:UNIT", ("enum", "math_fft_units", "the FFT vertical unit")),
+    ("mode", ":FFT:MODE", ("enum", "math_fft_modes", "the FFT operation mode")),
+    ("average_count", ":FFT:AVCNt", ("int", 2, 1000)),
+    ("scale", ":FFT:SCALe", "number"),
+    ("offset", ":FFT:OFFSet", "number"),
+    ("freq_start_hz", ":FFT:FREQuency:STARt", "number"),
+    ("freq_end_hz", ":FFT:FREQuency:END", "number"),
+    ("search_enabled", ":FFT:SEARch:ENABle", "bool"),
+    ("search_num", ":FFT:SEARch:NUM", ("int", 1, None)),
+    ("search_threshold", ":FFT:SEARch:THReshold", "number"),
+    ("search_excursion", ":FFT:SEARch:EXCursion", "number"),
+    (
+        "search_order",
+        ":FFT:SEARch:ORDer",
+        ("enum", "math_fft_search_orders", "the FFT peak search order"),
+    ),
+)
+
+#: デジタルフィルタ(ガイド3.16.31-33)
+_MATH_FILTER_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("type", ":FILTer:TYPE", ("enum", "math_filter_types", "the digital filter type")),
+    ("w1_hz", ":FILTer:W1", "number"),
+    ("w2_hz", ":FILTer:W2", "number"),
+)
+
+#: SCALe / OFFSet を持たない演算子(ガイド3.16.7/3.16.8)。読み取りの分岐に使う
+_MATH_LOGIC_OPERATORS = frozenset({"and", "or", "xor", "not"})
+#: FILTerサブツリーを持つ演算子(ガイド3.16.31)
+_MATH_FILTER_OPERATORS = frozenset({"lowpass", "highpass", "bandpass", "bandstop"})
+
+_MATH_FFT_PEAKS_PATH = ":FFT:SEARch:RES?"
+
 _CHANNEL_RE = re.compile(r"^(?:CH|CHAN|CHANNEL)?\s*([0-9]+)$", re.IGNORECASE)
+_MATH_SOURCE_RE = re.compile(r"^MATH\s*([0-9]+)$", re.IGNORECASE)
+_REF_SOURCE_RE = re.compile(r"^REF\s*([0-9]+)$", re.IGNORECASE)
+_DIGITAL_SOURCE_RE = re.compile(r"^D\s*([0-9]+)$", re.IGNORECASE)
 # 非チャンネルのトリガソース。読み値をそのまま書き戻せるよう表記は1つに固定する
 # (`ACL` / `ACLine` はどちらも `ACLINE`)。
 _NON_CHANNEL_SOURCE_RE = re.compile(r"^(?:EXT5?|ACL(?:INE)?|D(?:[0-9]|1[0-5]))$")
@@ -162,6 +223,16 @@ def normalize_channel(value: str) -> str:
     """
     match = _CHANNEL_RE.match(value.strip()) if isinstance(value, str) else None
     return f"CH{int(match.group(1))}" if match else value
+
+
+def math_source_number(value: object) -> int | None:
+    """`MATH2` / `math2` → 2。MATHソースでなければ None。
+
+    表記の判別だけを行う公開API(存在するMATHチャンネルかどうかの検証は
+    `ScopeDriver._math_prefix` の責務)。
+    """
+    match = _MATH_SOURCE_RE.match(value.strip()) if isinstance(value, str) else None
+    return int(match.group(1)) if match else None
 
 
 def _invalid(message: str, detail: dict) -> ScopeError:
@@ -186,6 +257,34 @@ def _afg_number(key: str, value: object) -> str:
             {"key": key, "value": value, "min": low, "max": high},
         )
     return format_number(number)
+
+
+def _math_source_readback(text: str) -> str:
+    """`CHAN2` → `CH2`。`REF3` / `MATH1` / `D0` は大文字化してそのまま。"""
+    if not isinstance(text, str):
+        raise ScopeError(
+            ErrorCode.SCPI_ERROR, "source response is not a string", {"raw": text}
+        )
+    return normalize_channel(text.strip().upper())
+
+
+def _math_bool(value: object, key: str) -> str:
+    if not isinstance(value, bool):
+        raise _invalid(f"{key} is not a boolean: {value!r}", {"key": key, "value": value})
+    return "ON" if value else "OFF"
+
+
+def _math_int(value: object, key: str, low: int, high: int | None) -> str:
+    """整数項目を送信トークンへ。値域は**送信前**にここで検証する。"""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _invalid(f"{key} is not an integer: {value!r}", {"key": key, "value": value})
+    if value < low or (high is not None and value > high):
+        allowed = f"{low} or greater" if high is None else f"between {low} and {high}"
+        raise _invalid(
+            f"{key} must be {allowed}: {value!r}",
+            {"key": key, "value": value, "min": low, "max": high},
+        )
+    return str(value)
 
 
 def _optional_number(text: str) -> float | None:
@@ -528,11 +627,23 @@ class ScopeDriver:
         timeout_s = self.profile.dialect.get("screenshot_timeout_s", DEFAULT_SCREENSHOT_TIMEOUT_S)
         return self.session.query_binary(command, timeout_s=float(timeout_s))
 
+    def _waveform_source(self, channel: str) -> str:
+        """波形ソースのSCPIトークン(ガイド3.28.1 `{CHANnel1-4|MATH1-4}`)。
+
+        MATHはここでだけ受理する。トリガ・測定のソースはMATHを取らないため、
+        共有の `_channel_number` / `normalize_channel` は広げない。
+        """
+        math = math_source_number(channel)
+        if math is None:
+            return f"CHANnel{self._channel_number(channel)}"
+        number, _ = self._math_prefix(math)
+        return f"MATH{number}"
+
     def read_waveform(self, channel: str, max_points: int | None = None) -> WaveformRaw:
         self._require("waveform_download", "waveform data download")
-        number = self._channel_number(channel)
+        source = self._waveform_source(channel)
 
-        self.session.write_checked(f":WAVeform:SOURce CHANnel{number}")
+        self.session.write_checked(f":WAVeform:SOURce {source}")
         self.session.write_checked(":WAVeform:MODE NORMal")
         self.session.write_checked(":WAVeform:FORMat BYTE")
 
@@ -1394,6 +1505,329 @@ class ScopeDriver:
                 {"channel": channel, "math_channels": count},
             )
         return channel, f":MATH{channel}"
+
+    @property
+    def ref_channels(self) -> int:
+        """リファレンス波形の本数(プロファイル未宣言なら 0 = 非対応)。"""
+        count = self.profile.capabilities.get("ref_channels")
+        return count if isinstance(count, int) and count > 0 else 0
+
+    @property
+    def digital_channels(self) -> int:
+        """ロジックチャンネル数(プロファイル未宣言なら 0 = 非対応)。"""
+        count = self.profile.capabilities.get("digital_channels")
+        return count if isinstance(count, int) and count > 0 else 0
+
+    def _math_source(self, value: object, key: str, channel: int) -> str:
+        """`SOURce1/2` のトークンを検証して送信形へ(ガイド3.16.3/3.16.4)。
+
+        受理するのは `CH1`-`CH<analog_channels>` / `REF1`-`REF<ref_channels>` /
+        `MATH<m>`。**カスケードは m < n のみ**(ガイド逐語のRemarks)で、
+        `:MATH1:SOURce1 MATH1` のような自己参照は送信前に拒否する。
+        """
+        if not isinstance(value, str):
+            raise _invalid(f"{key} is not a string: {value!r}", {"key": key, "value": value})
+        token = value.strip()
+        match = _MATH_SOURCE_RE.match(token)
+        if match is not None:
+            number = int(match.group(1))
+            if not 1 <= number < channel:
+                raise _invalid(
+                    f"{key} may only use a lower-numbered math channel "
+                    f"(MATH1-MATH{channel - 1} for MATH{channel}): {value!r}",
+                    {"key": key, "value": value, "channel": channel},
+                )
+            return f"MATH{number}"
+        match = _REF_SOURCE_RE.match(token)
+        if match is not None:
+            number = int(match.group(1))
+            available = self.ref_channels
+            if not 1 <= number <= available:
+                raise _invalid(
+                    f"{key} reference waveform {value!r} does not exist "
+                    f"(this model has REF1-REF{available})",
+                    {"key": key, "value": value, "ref_channels": available},
+                )
+            return f"REF{number}"
+        if _CHANNEL_RE.match(token) is None:
+            raise _invalid(
+                f"cannot interpret {key}: {value!r} "
+                "(e.g. 'CH1', 'REF1' or a lower-numbered 'MATH1')",
+                {"key": key, "value": value},
+            )
+        return f"CHANnel{self._channel_number(token)}"
+
+    def _math_lsource(self, value: object, key: str) -> str:
+        """`LSOurce1/2` のトークンを検証して送信形へ(ガイド3.16.5/3.16.6)。
+
+        受理するのは `D0`-`D<digital_channels-1>` と `CH1`-`CH<analog_channels>`。
+        """
+        if not isinstance(value, str):
+            raise _invalid(f"{key} is not a string: {value!r}", {"key": key, "value": value})
+        token = value.strip()
+        match = _DIGITAL_SOURCE_RE.match(token)
+        if match is not None:
+            number = int(match.group(1))
+            available = self.digital_channels
+            if not 0 <= number < available:
+                raise _invalid(
+                    f"{key} digital channel {value!r} does not exist "
+                    f"(this model has D0-D{available - 1})",
+                    {"key": key, "value": value, "digital_channels": available},
+                )
+            return f"D{number}"
+        if _CHANNEL_RE.match(token) is None:
+            raise _invalid(
+                f"cannot interpret {key}: {value!r} (e.g. 'D0' or 'CH1')",
+                {"key": key, "value": value},
+            )
+        return f"CHANnel{self._channel_number(token)}"
+
+    def _math_converter(self, kind: object, channel: int) -> tuple[object, object]:
+        """項目1件の (値→トークン, 応答→値) 変換器(種別は `_MATH_ITEMS` 参照)。"""
+        if kind == "number":
+            return (lambda value, key: _afg_number(key, value)), parse_nr3
+        if kind == "bool":
+            return _math_bool, parse_bool
+        if kind == "source":
+            return (
+                (lambda value, key: self._math_source(value, key, channel)),
+                _math_source_readback,
+            )
+        if kind == "lsource":
+            return (
+                (lambda value, key: self._math_lsource(value, key)),
+                _math_source_readback,
+            )
+        if isinstance(kind, tuple) and kind[0] == "int":
+            _, low, high = kind
+            return (
+                (lambda value, key: _math_int(value, key, low, high)),
+                (lambda text: int(parse_nr3(text))),
+            )
+        _, dialect_key, what = kind  # ("enum", 方言キー, 説明)
+        return self._afg_enum(dialect_key, what)
+
+    def _math_plan(
+        self,
+        prefix: str,
+        channel: int,
+        items: tuple[tuple[str, str, object], ...],
+        values: dict,
+    ) -> list[tuple[str, str, str, object]]:
+        """指定された項目だけの送信計画(検証はここで全て済ませる)。"""
+        plan: list[tuple[str, str, str, object]] = []
+        for key, path, kind in items:
+            value = values.get(key)
+            if value is None:
+                continue
+            to_scpi, from_scpi = self._math_converter(kind, channel)
+            plan.append(
+                (
+                    key,
+                    f"{prefix}{path} {to_scpi(value, key)}",
+                    f"{prefix}{path}?",
+                    from_scpi,
+                )
+            )
+        return plan
+
+    def _math_sub_plan(
+        self,
+        prefix: str,
+        channel: int,
+        name: str,
+        values: object,
+        items: tuple[tuple[str, str, object], ...],
+    ) -> list[tuple[str, str, str, object]]:
+        """`fft` / `filter` サブ辞書の送信計画(未知キーは送信前に拒否)。"""
+        if not isinstance(values, dict):
+            raise _invalid(f"{name} is not an object: {values!r}", {name: values})
+        allowed = [key for key, _, _ in items]
+        unknown = sorted(key for key in values if key not in allowed)
+        if unknown:
+            raise _invalid(
+                f"unknown {name} setting: {unknown}",
+                {"unknown": unknown, "allowed": allowed},
+            )
+        return self._math_plan(prefix, channel, items, values)
+
+    def configure_math(
+        self,
+        channel: int = 1,
+        *,
+        display: bool | None = None,
+        operator: str | None = None,
+        source1: str | None = None,
+        source2: str | None = None,
+        lsource1: str | None = None,
+        lsource2: str | None = None,
+        scale: float | None = None,
+        offset_v: float | None = None,
+        invert: bool | None = None,
+        fft: dict | None = None,
+        # `filter` は組込み名と重なるが、Tool引数名(ガイドの :FILTer)を優先する
+        filter: dict | None = None,
+    ) -> dict:
+        """MATH演算を設定し、read-backした適用値を返す。
+
+        全ての検証を送信前に済ませる(不正なチャンネル番号1発で実機のSCPIサーバーが
+        沈黙するため)。送信順は表示ONを**最初**、表示OFFを**最後**に置き、その間は
+        OPERator → SOURce1/2 → LSOurce1/2 → FFT → FILTer → SCALe → OFFSet →
+        INVert(表示OFF中の書き込みが無視される実機quirk — AFGの変調STATeと同族 —
+        への対策。実機確認は未実施)。
+
+        **演算子と引数の結合制約はホストで検証しない。** 論理演算での `scale` や
+        FFTでの `offset_v` のように演算子によって無効になる項目(ガイド3.16.7/
+        3.16.8)は機器のエラーキューに委ね、`applied` と `requested` の突合で
+        呼び出し側が検出する。
+        """
+        number, prefix = self._math_prefix(channel)
+        values = {
+            "operator": operator,
+            "source1": source1,
+            "source2": source2,
+            "lsource1": lsource1,
+            "lsource2": lsource2,
+            "scale": scale,
+            "offset_v": offset_v,
+            "invert": invert,
+        }
+        if (
+            display is None
+            and all(value is None for value in values.values())
+            and fft is None
+            and filter is None
+        ):
+            raise _invalid(
+                "No item to change was specified "
+                f"(specify at least one of display / {' / '.join(values)} / fft / "
+                "filter)",
+                {"channel": number},
+            )
+
+        # 先に全項目を検証してから送る(1項目でも不正なら1コマンドも送らない)
+        display_entry = None
+        if display is not None:
+            display_entry = (
+                "display",
+                f"{prefix}:DISPlay {_math_bool(display, 'display')}",
+                f"{prefix}:DISPlay?",
+                parse_bool,
+            )
+        # (返却先のサブ辞書名 or None, 送信エントリ)を送信順に並べる
+        plan: list[tuple[str | None, tuple[str, str, str, object]]] = [
+            (None, entry) for entry in self._math_plan(prefix, number, _MATH_ITEMS, values)
+        ]
+        if fft is not None:
+            plan += [
+                ("fft", entry)
+                for entry in self._math_sub_plan(
+                    prefix, number, "fft", fft, _MATH_FFT_ITEMS
+                )
+            ]
+        if filter is not None:
+            plan += [
+                ("filter", entry)
+                for entry in self._math_sub_plan(
+                    prefix, number, "filter", filter, _MATH_FILTER_ITEMS
+                )
+            ]
+        plan += [
+            (None, entry)
+            for entry in self._math_plan(prefix, number, _MATH_VERTICAL_ITEMS, values)
+        ]
+        if display_entry is not None:
+            # 表示ONは先頭、OFFは末尾(表示OFF中の書き込み無視quirk対策)
+            if display:
+                plan.insert(0, (None, display_entry))
+            else:
+                plan.append((None, display_entry))
+
+        applied: dict[str, object] = {"channel": number}
+        sub: dict[str, dict] = {"fft": {}, "filter": {}}
+        for dest, (key, set_cmd, query, from_scpi) in plan:
+            value = from_scpi(self.session.set_and_verify(set_cmd, query))
+            if dest is None:
+                applied[key] = value
+            else:
+                sub[dest][key] = value
+        for name, values_applied in sub.items():
+            if values_applied:
+                applied[name] = values_applied
+        return applied
+
+    def get_math_config(self, channel: int) -> dict:
+        """MATH演算の現在設定を意味的なキーで返す(演算子に応じた条件付き読み取り)。
+
+        クエリ数を抑えると同時に、未検証のサブツリーを不用意に突かないため、
+        読むのは「その演算子で意味を持つ項目」だけに絞る:
+
+        - 常に: display(**最初**に読む)/ operator / source1 / source2 / invert
+        - scale・offset_v: 論理演算・FFT以外(ガイド3.16.7/3.16.8)
+        - lsource1・lsource2: 論理演算のみ
+        - fft サブツリー: operator=fft のみ。`peaks` は探索が有効なときのみ
+        - filter サブツリー: フィルタ演算子のみ
+        """
+        number, prefix = self._math_prefix(channel)
+        items = {
+            key: (path, kind) for key, path, kind in _MATH_ITEMS + _MATH_VERTICAL_ITEMS
+        }
+
+        def read(key: str) -> object:
+            path, kind = items[key]
+            return self._math_read(prefix, number, path, kind)
+
+        config: dict[str, object] = {
+            "channel": number,
+            "display": parse_bool(self.session.query(f"{prefix}:DISPlay?")),
+        }
+        for key in ("operator", "source1", "source2", "invert"):
+            config[key] = read(key)
+
+        operator = config["operator"]
+        if operator in _MATH_LOGIC_OPERATORS:
+            conditional = ("lsource1", "lsource2")
+        elif operator == "fft":
+            conditional = ()  # SCALe / OFFSet はFFT配下(:FFT:SCALe)にある
+        else:
+            conditional = ("scale", "offset_v")
+        for key in conditional:
+            config[key] = read(key)
+
+        if operator == "fft":
+            fft = {
+                key: self._math_read(prefix, number, path, kind)
+                for key, path, kind in _MATH_FFT_ITEMS
+            }
+            config["fft"] = fft
+            if fft["search_enabled"]:
+                peaks, warnings = parse_fft_peaks(
+                    self.session.query(f"{prefix}{_MATH_FFT_PEAKS_PATH}")
+                )
+                config["peaks"] = peaks
+                if warnings:
+                    config["peak_warnings"] = warnings
+        if operator in _MATH_FILTER_OPERATORS:
+            config["filter"] = {
+                key: self._math_read(prefix, number, path, kind)
+                for key, path, kind in _MATH_FILTER_ITEMS
+            }
+        return config
+
+    def _math_read(self, prefix: str, channel: int, path: str, kind: object) -> object:
+        """MATH項目1件を読んで意味的な値へ変換する。"""
+        _, from_scpi = self._math_converter(kind, channel)
+        return from_scpi(self.session.query(f"{prefix}{path}?"))
+
+    def get_math_operator(self, channel: int) -> str:
+        """MATHチャンネルの演算子だけを意味的な名前で返す(問い合わせ1本)。
+
+        波形取得の経路が「FFTトレースかどうか」を判定するための最小の読み取り。
+        """
+        _, prefix = self._math_prefix(channel)
+        _, from_scpi = self._afg_enum("math_operators", "the math operator")
+        return from_scpi(self.session.query(f"{prefix}:OPERator?"))
 
     # -- Acquisition ------------------------------------------------------
 

@@ -19,9 +19,9 @@ import math
 import statistics
 
 from ..config import Config
-from ..driver.scope import ScopeDriver, normalize_channel
+from ..driver.scope import ScopeDriver
 from ..errors import ErrorCode, ScopeError
-from .waveform import NOTE, read_samples
+from .waveform import NOTE, math_operator, read_samples, source_name
 
 #: `analyses` に指定できる解析名(返却キーもこの名前)
 VALID_ANALYSES = ("stats", "fft")
@@ -166,12 +166,25 @@ def analyze_waveform(
     """波形を取得してホスト側で解析し、要約だけを返す(サンプル配列は返さない)。
 
     `analyses` が None なら全解析。`max_points` の扱いは capture_waveform と同じ。
+
+    MATHソースのうちFFT演算のトレースは横軸が周波数のため、時間軸前提の統計も
+    ホスト側FFTも意味を持たない。取得前に `INVALID_PARAMETER` で拒否する。
     """
     selected = _select(analyses)
+    operator = math_operator(driver, channel)
+    if operator == "fft":
+        raise ScopeError(
+            ErrorCode.INVALID_PARAMETER,
+            f"{channel} is an FFT trace, whose x axis is frequency: host-side "
+            "statistics and FFT do not apply. Use get_math_state for the "
+            "instrument's peak table, or capture_waveform to fetch the spectrum "
+            "points.",
+            {"channel": channel, "operator": operator},
+        )
     samples, preamble, clamped = read_samples(driver, config, channel, max_points)
 
     result = {
-        "channel": normalize_channel(channel),
+        "channel": source_name(channel, operator),
         "points": len(samples),
         "sample_interval_s": preamble.xincrement,
         "effective_sample_rate_sa_per_s": 1.0 / preamble.xincrement,
