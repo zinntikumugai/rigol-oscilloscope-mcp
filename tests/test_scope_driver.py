@@ -215,6 +215,73 @@ def test_autoset_unsupported_profile_sends_nothing(
     assert scope.command_log == []
 
 
+class _DgStatusScope(FakeScope):
+    """DHO系の :SYSTem:DGSTatus? に応答するフェイク(AFG搭載可否ゲートの検証用)。"""
+
+    def __init__(self, dg_status: bool) -> None:
+        super().__init__()
+        self.dg_status = dg_status
+
+    def handle(self, command: str) -> bytes | None:
+        text = command.strip().upper()
+        if text in (":SYSTEM:DGSTATUS?", ":SYST:DGST?"):
+            self.command_log.append(command)
+            return b"1" if self.dg_status else b"0"
+        return super().handle(command)
+
+
+def test_dho900_afg_without_module_is_unsupported() -> None:
+    """DGSTatus=0(非S型)はAFGコマンドを1つも送らず UNSUPPORTED_FEATURE。"""
+    scope = _DgStatusScope(dg_status=False)
+    driver = make_driver(scope, "dho900")
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_afg_config(1)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == [":SYSTem:DGSTatus?"]
+
+
+def test_dho900_afg_presence_is_cached() -> None:
+    scope = _DgStatusScope(dg_status=False)
+    driver = make_driver(scope, "dho900")
+
+    for _ in range(2):
+        with pytest.raises(ScopeError):
+            driver.get_afg_config(1)
+
+    assert scope.command_log == [":SYSTem:DGSTatus?"]
+
+
+def test_dho900_afg_with_module_passes_the_gate() -> None:
+    """DGSTatus=1(S型)はゲート通過後、番号なし :SOURce で送信する。
+
+    FakeScopeはMHO方言(番号つき)のため後続は沈黙=TIMEOUTになるが、
+    「最初にゲートを照会し、番号なしプレフィクスを組み立てた」ことは
+    送信ログで確認できる。
+    """
+    scope = _DgStatusScope(dg_status=True)
+    driver = make_driver(scope, "dho900")
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_afg_config(1)
+
+    assert excinfo.value.code == ErrorCode.TIMEOUT
+    assert scope.command_log[0] == ":SYSTem:DGSTatus?"
+    assert scope.command_log[1].startswith(":SOURce:")  # 番号なしプレフィクス
+
+
+def test_dho900_afg_channel_2_rejected_before_sending() -> None:
+    scope = _DgStatusScope(dg_status=True)
+    driver = make_driver(scope, "dho900")
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_afg_config(2)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
 def test_clear_measurements_sends_the_dialect_command(
     driver: ScopeDriver, scope: FakeScope
 ) -> None:

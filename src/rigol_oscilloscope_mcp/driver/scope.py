@@ -287,6 +287,7 @@ class ScopeDriver:
         self.session = session
         self.profile = profile
         self._options: dict[str, bool | None] | None = None
+        self._afg_present: bool | None = None  # afg_presence_query の結果(接続中不変)
 
     @property
     def analog_channels(self) -> int:
@@ -989,8 +990,12 @@ class ScopeDriver:
 
         実機MHO98は `:SOURce3` の1発でSCPIサーバー全体が沈黙する
         (docs/verification/mho98-afg.md 1章)。宣言の不在(`afg_prefix` 未宣言)は
-        そのまま非対応のゲートで、DHO800/900の番号なし `:SOURce`(DGモジュール)は
-        別方言なのでここには載らない。
+        そのまま非対応のゲート。
+
+        DHO900系は番号なし `:SOURce`(`{n}` を含まないテンプレート)で表現し、
+        ジェネレータ搭載がS型のみのため dialect `afg_presence_query`
+        (`:SYSTem:DGSTatus?`)が宣言されていれば**最初のAFG操作の前に1回だけ**
+        照会する(0なら送信ゼロで UNSUPPORTED_FEATURE。結果は接続中キャッシュ)。
         """
         template = self._required_dialect("afg_prefix", "the function generator")
         count = self.afg_channels
@@ -1010,6 +1015,16 @@ class ScopeDriver:
                 f"(this model has channel 1-{count})",
                 {"channel": channel, "afg_channels": count},
             )
+        presence = self.profile.dialect.get("afg_presence_query")
+        if presence is not None:
+            if self._afg_present is None:
+                self._afg_present = parse_bool(self.session.query(str(presence)))
+            if not self._afg_present:
+                raise _unsupported(
+                    "this model has no generator module installed "
+                    "(only the S variants ship one)",
+                    {"dialect": "afg_presence_query", "profile": self.profile.name},
+                )
         return channel, template.replace("{n}", str(channel))
 
     def _afg_enum(self, dialect_key: str, what: str) -> tuple[object, object]:

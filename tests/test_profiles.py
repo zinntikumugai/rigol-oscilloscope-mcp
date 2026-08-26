@@ -254,13 +254,38 @@ def test_dho900_inherits_dho800() -> None:
     dho900 = load_profile("dho900")
 
     assert dho900.confidence == "guide"
-    assert set(dho800.dialect) == set(dho900.dialect)
+    # dho900はAFG方言(番号なし:SOURce+DGSTatusゲート)だけを追加宣言する
+    assert set(dho900.dialect) - set(dho800.dialect) == {
+        "afg_prefix", "afg_waveforms", "afg_presence_query"
+    }
+    assert set(dho800.dialect) <= set(dho900.dialect)
     assert dho900.dialect["measurement_items"] == dho800.dialect["measurement_items"]
     # LA は DHO900 シリーズ全体で D0-D15
     assert dho900.capabilities["digital_channels"] == 16
     assert dho900.capabilities["analog_channels"] == 4
 
 
+
+
+def test_dho900_declares_numberless_afg_with_presence_gate() -> None:
+    """DHO900のAFGは番号なし:SOURce・1ch・6波形・DGSTatusゲート(S型のみ搭載)。"""
+    p = load_profile("dho900")
+
+    assert p.dialect["afg_prefix"] == ":SOURce"
+    assert p.capabilities["afg_channels"] == 1
+    assert set(p.dialect["afg_waveforms"]) == {
+        "sine", "square", "ramp", "dc", "noise", "arb"
+    }
+    assert p.dialect["afg_presence_query"] == ":SYSTem:DGSTatus?"
+    # インピーダンス・変調はDHOガイドに存在しない/未検証 → 未宣言=ゲート
+    assert "afg_impedances" not in p.dialect
+    assert "afg_mod_types" not in p.dialect
+
+
+def test_other_dho_profiles_do_not_declare_afg() -> None:
+    for name in ("dho800", "dho1000", "dho4000"):
+        p = load_profile(name)
+        assert "afg_prefix" not in p.dialect, name
 
 
 def test_load_dho1000_profile_fields() -> None:
@@ -310,11 +335,10 @@ def test_dho_profiles_do_not_declare_unverified_features(name: str) -> None:
     """デコード/AFG/オプション照会は実機検証まで未宣言 — 不在がそのままゲート。"""
     p = load_profile(name)
 
+    afg_core = ("afg_prefix", "afg_waveforms")
     for key in (
         "decode_protocols",
         "decode_formats",
-        "afg_prefix",
-        "afg_waveforms",
         "afg_impedances",
         "afg_mod_types",
         "afg_mod_waveforms",
@@ -322,6 +346,9 @@ def test_dho_profiles_do_not_declare_unverified_features(name: str) -> None:
         "option_types",
     ):
         assert key not in p.dialect
+    if name != "dho900":  # dho900のみAFGコア方言を宣言(DGSTatusゲート付き)
+        for key in afg_core:
+            assert key not in p.dialect
     assert "decode_buses" not in p.capabilities
     assert p.supports("protocol_decode") is False
 
