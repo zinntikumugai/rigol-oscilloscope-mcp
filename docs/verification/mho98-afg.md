@@ -95,6 +95,23 @@
 - 0.2 Vppの+5〜8%はプローブの小信号誤差の範囲
 - 教訓: ループバック検証時は**受け側チャンネルの probe_ratio を物理経路に一致させる**こと(発生器+取得+FFT+measureの三位一体検証はこれで完結)
 
+### 全13波形の実機検査(2026-08-26 追補)
+
+**① FUNCtion往復(出力OFF)**: 13種全トークン(sine/square/ramp/noise/dc/arb/exp_rise/exp_fall/ecg/gaussian/lorentz/haversine/sinc)が受理され、readbackが一致。プロファイル `afg_waveforms` の全宣言が実機裏取り済みとなった。
+
+**② ループバック実測(G1→CH2、1 kHz / 1 Vpp設定)**:
+
+| 波形 | FFT支配ピーク | 所見 |
+|---|---|---|
+| exp_rise / exp_fall / gaussian / lorentz / haversine | ≈1 kHz(分解能内) | 基本波が支配。周期性◎ |
+| ecg | ≈2 kHz(第2高調波) | パルス的波形の正常なスペクトル形状 |
+| sinc / arb(内蔵既定) | 高域(87〜96 kHz) | 広帯域波形の特性どおり(基本波が支配的でない) |
+| noise | 意味のあるピークなし | std 0.31 V・広帯域。ランダム波形として妥当 |
+| dc(offset 1.0 V) | — | mean 0.948 V で追従(プローブ誤差内) |
+
+- 特殊波形ではエッジカウンタの `frequency` が無効値 → measureのquality設計どおり `null` になることを確認(FFTが代替手段)
+- 特殊波形のVpp実測は 1.36〜1.58 V(設定1 Vpp)— 波形ごとの振幅定義差・リンギングを含む観測値として記録(sine系の±0.4%一致とは性質が異なる)
+
 ## 6. 未実施・今後の予定
 
 - AFG残件(変調 / ARBロード / PERiod / HIGH-LOW / 位相同期)は roadmap 2.3 参照(実ニーズ待ち)
