@@ -162,6 +162,22 @@ def test_mho98_declares_afg_dialect() -> None:
     assert p.dialect["afg_impedances"] == {"highz": "OMEG", "50": "FIFTy"}
 
 
+def test_mho98_declares_afg_modulation_dialect() -> None:
+    """変調(ガイド3.25.15-25)。変調ソースは内蔵のみ(EXTernalは無い)。"""
+    p = load_profile("mho98")
+
+    assert p.dialect["afg_mod_types"] == {"am": "AM", "fm": "FM", "pm": "PM"}
+    waveforms = p.dialect["afg_mod_waveforms"]
+    assert waveforms == {
+        "sine": "SINusoid",
+        "square": "SQUare",
+        "triangle": "TRIangle",
+        "upramp": "UPRamp",
+        "dnramp": "DNRamp",
+        "noise": "NOISe",
+    }
+
+
 def test_generic_does_not_declare_afg() -> None:
     """DHO800/900は番号なし `:SOURce`(DGモジュール)で別方言。不在がゲート。"""
     p = load_profile(GENERIC)
@@ -169,6 +185,8 @@ def test_generic_does_not_declare_afg() -> None:
     assert "afg_prefix" not in p.dialect
     assert "afg_waveforms" not in p.dialect
     assert "afg_impedances" not in p.dialect
+    assert "afg_mod_types" not in p.dialect
+    assert "afg_mod_waveforms" not in p.dialect
     assert "afg_channels" not in p.capabilities
 
 
@@ -298,6 +316,8 @@ def test_dho_profiles_do_not_declare_unverified_features(name: str) -> None:
         "afg_prefix",
         "afg_waveforms",
         "afg_impedances",
+        "afg_mod_types",
+        "afg_mod_waveforms",
         "option_query",
         "option_types",
     ):

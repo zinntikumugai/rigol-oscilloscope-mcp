@@ -327,6 +327,23 @@ _AFG_PROPS: tuple[tuple[str, str, object, object], ...] = (
     ("symmetry", "FUNCtion:RAMP:SYMMetry", "nr3", 50.0),
 )
 
+# -- 信号発生: 変調(:SOURce<n>:MOD:* / ガイド3.25.15-25)--------------------
+
+_AFG_MOD_TYPES = ("AM", "FM", "PM")
+_AFG_MOD_WAVEFORMS = ("SINusoid", "SQUare", "TRIangle", "UPRamp", "DNRamp", "NOISe")
+
+#: type短形式 → (深さ/偏移キー, SCPIパス)。ガイドの初期値そのまま。
+_AFG_MOD_DEPTH_PATHS: dict[str, tuple[str, str]] = {
+    "AM": ("depth", "DEPTh"),
+    "FM": ("dev", "DEViation"),
+    "PM": ("dev", "DEViation"),
+}
+_AFG_MOD_DEFAULTS: dict[str, dict[str, object]] = {
+    "am": {"depth": 100.0, "freq": 100.0, "func": "SIN"},
+    "fm": {"dev": 1000.0, "freq": 100.0, "func": "SIN"},
+    "pm": {"dev": 90.0, "freq": 100.0, "func": "SIN"},
+}
+
 
 class FakeScope:
     """MHO98方言のフェイク機器(SCPIコマンド1件単位で応答する)。"""
@@ -383,7 +400,15 @@ class FakeScope:
         }
         # 信号発生(2ch)。既定はガイドの初期値 = 実機プローブの実測値
         self.afg: dict[int, dict] = {
-            n: {key: default for key, _, _, default in _AFG_PROPS}
+            n: {
+                **{key: default for key, _, _, default in _AFG_PROPS},
+                "mod_state": False,
+                "mod_type": "AM",
+                "am": dict(_AFG_MOD_DEFAULTS["am"]),
+                "fm": dict(_AFG_MOD_DEFAULTS["fm"]),
+                "pm": dict(_AFG_MOD_DEFAULTS["pm"]),
+                "arb_path": "",
+            }
             for n in range(1, AFG_COUNT + 1)
         }
         # Resultビューの有効化済み測定項目(:MEASure:ITEM? でも追加される — issue #16)
@@ -627,6 +652,7 @@ class FakeScope:
         ]
         entries += self._bus_entries()
         entries += self._afg_entries()
+        entries += self._afg_mod_entries()
         return tuple(
             (re.compile(pattern, re.IGNORECASE), handler)
             for pattern, handler in entries
@@ -729,6 +755,79 @@ class FakeScope:
                     lambda m, k=key, t=kind: self._afg_write(m, k, t, m.group(2)),
                 )
             )
+        return entries
+
+    def _afg_mod_entries(self) -> list[tuple[str, Callable]]:
+        """変調(`:SOURce<n>:MOD:*`)+ ARB選択 + 位相同期のディスパッチ表。
+
+        `:SOURce3` 配下と同様、`:SOURce<n>` の範囲外は既存の `_afg_entries` 同様
+        どのパターンにも一致せず沈黙する。
+        """
+        source = rf":?{_mn('SOURce')}([1-{AFG_COUNT}])"
+        mod = rf"{source}:{_mn('MOD')}"
+        entries: list[tuple[str, Callable]] = [
+            (
+                rf"{mod}:{_mn('STATe')}\?",
+                lambda m: b"1" if self._afg(m)["mod_state"] else b"0",
+            ),
+            (rf"{mod}:{_mn('STATe')}\s+{_VALUE}", self._afg_mod_state_write),
+            (
+                rf"{mod}:{_mn('TYPe')}\?",
+                lambda m: str(self._afg(m)["mod_type"]).encode("ascii"),
+            ),
+            (rf"{mod}:{_mn('TYPe')}\s+{_VALUE}", self._afg_mod_type_write),
+        ]
+        for token in ("AM", "FM", "PM"):
+            low = token.lower()
+            depth_key, depth_spec = _AFG_MOD_DEPTH_PATHS[token]
+            entries += [
+                (
+                    rf"{mod}:{token}:{_mn(depth_spec)}\?",
+                    lambda m, t=low, k=depth_key: _nr3_single_digit_exponent(
+                        self._afg(m)[t][k]
+                    ).encode("ascii"),
+                ),
+                (
+                    rf"{mod}:{token}:{_mn(depth_spec)}\s+{_VALUE}",
+                    lambda m, t=low, k=depth_key: self._afg_mod_set(
+                        m, t, k, self._float(m.group(2))
+                    ),
+                ),
+                (
+                    rf"{mod}:{token}:{_mn('INTernal')}:{_mn('FREQuency')}\?",
+                    lambda m, t=low: _nr3_single_digit_exponent(
+                        self._afg(m)[t]["freq"]
+                    ).encode("ascii"),
+                ),
+                (
+                    rf"{mod}:{token}:{_mn('INTernal')}:{_mn('FREQuency')}\s+{_VALUE}",
+                    lambda m, t=low: self._afg_mod_set(
+                        m, t, "freq", self._float(m.group(2))
+                    ),
+                ),
+                (
+                    rf"{mod}:{token}:{_mn('INTernal')}:{_mn('FUNCtion')}\?",
+                    lambda m, t=low: str(self._afg(m)[t]["func"]).encode("ascii"),
+                ),
+                (
+                    rf"{mod}:{token}:{_mn('INTernal')}:{_mn('FUNCtion')}\s+{_VALUE}",
+                    lambda m, t=low: self._afg_mod_set(
+                        m, t, "func", self._enum(m.group(2), _AFG_MOD_WAVEFORMS)
+                    ),
+                ),
+            ]
+        entries += [
+            (
+                rf"{source}:{_mn('LOAD')}:{_mn('ARBitrary')}\?",
+                lambda m: str(self._afg(m)["arb_path"]).encode("ascii"),
+            ),
+            (
+                rf"{source}:{_mn('LOAD')}:{_mn('ARBitrary')}\s+{_VALUE}",
+                self._afg_arb_write,
+            ),
+            # 引数無し・応答無しのwrite-only命令。状態は変えない(no-opで十分)。
+            (rf"{source}:{_mn('PHASe')}:{_mn('SYNChronize')}", lambda m: None),
+        ]
         return entries
 
     # -- 内部: ハンドラ ---------------------------------------------------
@@ -927,6 +1026,29 @@ class FakeScope:
         else:
             value = self._enum(token, kind)  # 列挙(仕様タプル)
         self._afg(match)[key] = value
+        return None
+
+    def _afg_mod_state_write(self, match: re.Match[str]) -> None:
+        self._afg(match)["mod_state"] = self._on_off(match.group(2))
+        return None
+
+    def _afg_mod_type_write(self, match: re.Match[str]) -> None:
+        self._afg(match)["mod_type"] = self._enum(match.group(2), _AFG_MOD_TYPES)
+        return None
+
+    def _afg_mod_set(
+        self, match: re.Match[str], mod_type: str, key: str, value: object
+    ) -> None:
+        # 実機quirk(2026-08-27実測): MOD:STATe OFF中のパラメータ書き込みは
+        # エラーなしで無視される(表示OFFチャンネルへの書き込み無視と同族)
+        if not self._afg(match)["mod_state"]:
+            return None
+        self._afg(match)[mod_type][key] = value
+        return None
+
+    def _afg_arb_write(self, match: re.Match[str]) -> None:
+        """ARBファイルパスを裸文字列のまま保存する(引用符無し・往復のみ)。"""
+        self._afg(match)["arb_path"] = match.group(2)
         return None
 
     def _measure_item(self, match: re.Match[str]) -> bytes:

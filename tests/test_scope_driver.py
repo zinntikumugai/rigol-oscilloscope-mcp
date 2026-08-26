@@ -1654,9 +1654,16 @@ def test_get_afg_config_round_trip(driver: ScopeDriver, scope: FakeScope) -> Non
         "phase_deg": pytest.approx(0.0),
         "duty_percent": pytest.approx(50.0),
         "symmetry_percent": pytest.approx(40.0),
+        "modulation": {
+            "enabled": False,
+            "type": "am",
+            "am_depth_percent": pytest.approx(100.0),
+            "frequency_hz": pytest.approx(100.0),
+            "waveform": "sine",
+        },
     }
-    # 問い合わせ9件のみ(書き込みは1件も無い)
-    assert len(scope.command_log) == 9
+    # 問い合わせ9件(既存項目)+ 変調5件(STATe/TYPe/DEPTh/INTernal FREQ/FUNC)= 14件
+    assert len(scope.command_log) == 14
     assert [c for c in scope.command_log if "?" not in c] == []
 
 
@@ -1745,6 +1752,287 @@ def test_set_afg_output_unsupported_profile_sends_nothing(
 ) -> None:
     with pytest.raises(ScopeError) as excinfo:
         generic_driver.set_afg_output(1, True)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# 信号発生: 変調(ガイド3.25.15-25)
+# --------------------------------------------------------------------------
+
+
+def test_configure_afg_modulation_sends_the_fixed_order(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """順序: TYPe → STATe ON → 深さ/偏移 → FREQuency → FUNCtion(quirk対応)。
+
+    実機はMOD:STATe OFF中のパラメータ書き込みを黙って無視するため、
+    有効化はパラメータより先に送る(mho98-afg.md 6章)。"""
+    applied = driver.configure_afg(
+        1,
+        modulation={
+            "enabled": True,
+            "type": "am",
+            "am_depth_percent": 50.0,
+            "frequency_hz": 1000.0,
+            "waveform": "sine",
+        },
+    )
+
+    assert afg_writes(scope) == [
+        ":SOURce1:MOD:TYPe AM",
+        ":SOURce1:MOD:STATe ON",
+        ":SOURce1:MOD:AM:DEPTh 50.0",
+        ":SOURce1:MOD:AM:INTernal:FREQuency 1000.0",
+        ":SOURce1:MOD:AM:INTernal:FUNCtion SINusoid",
+    ]
+    assert applied["modulation"] == {
+        "type": "am",
+        "am_depth_percent": pytest.approx(50.0),
+        "frequency_hz": pytest.approx(1000.0),
+        "waveform": "sine",
+        "enabled": True,
+    }
+
+
+def test_configure_afg_modulation_routes_frequency_to_the_given_type(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`type="fm"` と同時指定した `frequency_hz` はFM配下へ送る(現在値は問い合わせない)。"""
+    driver.configure_afg(
+        1, modulation={"type": "fm", "frequency_hz": 250.0, "enabled": True}
+    )
+
+    assert afg_writes(scope) == [
+        ":SOURce1:MOD:TYPe FM",
+        ":SOURce1:MOD:STATe ON",
+        ":SOURce1:MOD:FM:INTernal:FREQuency 250.0",
+    ]
+    # :MOD:TYPe? はTYPeコマンドのread-back1回のみ(ルーティング用の別問い合わせは無い)
+    assert [c for c in scope.command_log if c == ":SOURce1:MOD:TYPe?"] == [
+        ":SOURce1:MOD:TYPe?"
+    ]
+
+
+def test_configure_afg_modulation_routes_to_the_current_device_type(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`type` 未指定の `frequency_hz` は現在のtypeを1回だけ問い合わせてルーティングする。"""
+    scope.afg[1]["mod_type"] = "FM"
+    scope.afg[1]["mod_state"] = True  # OFF中はパラメータが無視されるため前提を作る
+
+    driver.configure_afg(1, modulation={"frequency_hz": 300.0})
+
+    assert scope.command_log[0] == ":SOURce1:MOD:TYPe?"
+    assert afg_writes(scope) == [":SOURce1:MOD:FM:INTernal:FREQuency 300.0"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "D:/x.csv;:SYSTem:ERRor?",  # ';' はSCPIコマンドセパレータ(注入)
+        "D:/x.csv:extra",  # ':' もヘッダ区切りのため接頭辞以外では拒否
+        "D:/x'y.csv",
+    ],
+)
+def test_configure_afg_arb_file_rejects_scpi_metacharacters(
+    driver: ScopeDriver, scope: FakeScope, path: str
+) -> None:
+    """接頭辞以降はホワイトリスト検証(SCPIインジェクション対策)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_afg(1, arb_file=path)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert afg_writes(scope) == []
+
+
+def test_configure_afg_modulation_params_while_off_reject_before_sending(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """MOD OFF中のパラメータのみ指定は書き込みゼロで拒否(実機は黙って無視するため)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_afg(1, modulation={"am_depth_percent": 50.0})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert afg_writes(scope) == []
+
+
+def test_configure_afg_modulation_disable_sends_state_last(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """無効化はパラメータをON中に書いてから STATe OFF(最後)。"""
+    scope.afg[1]["mod_state"] = True
+
+    driver.configure_afg(
+        1, modulation={"am_depth_percent": 40.0, "enabled": False}
+    )
+
+    assert afg_writes(scope) == [
+        ":SOURce1:MOD:AM:DEPTh 40.0",
+        ":SOURce1:MOD:STATe OFF",
+    ]
+    assert scope.afg[1]["am"]["depth"] == 40.0
+
+
+def test_configure_afg_modulation_unknown_key_rejects_before_sending(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_afg(1, modulation={"depth": 50.0})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert excinfo.value.detail["allowed"] == sorted(
+        {
+            "enabled",
+            "type",
+            "am_depth_percent",
+            "fm_deviation_hz",
+            "pm_deviation_deg",
+            "frequency_hz",
+            "waveform",
+        }
+    )
+    assert scope.command_log == []
+
+
+@pytest.mark.parametrize(
+    "modulation",
+    [
+        {"am_depth_percent": 121.0},
+        {"am_depth_percent": -1.0},
+        {"pm_deviation_deg": 361.0},
+        {"pm_deviation_deg": -1.0},
+        {"fm_deviation_hz": 0.0},
+        {"frequency_hz": 0.0, "type": "am"},
+        {"type": "xx"},
+        {"waveform": "pulse", "type": "am"},
+        {"enabled": "on"},
+    ],
+)
+def test_configure_afg_modulation_rejects_out_of_range_before_sending(
+    driver: ScopeDriver, scope: FakeScope, modulation: dict
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_afg(1, modulation=modulation)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_afg_modulation_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`afg_prefix` 未宣言(=AFG自体が非対応)。宣言の不在がそのままゲート。"""
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.configure_afg(1, modulation={"enabled": True})
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_get_afg_config_reads_the_effective_modulation_type_only(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_afg(
+        1, modulation={"type": "pm", "pm_deviation_deg": 45.0, "enabled": True}
+    )
+    scope.command_log.clear()
+
+    config = driver.get_afg_config(1)
+
+    assert config["modulation"] == {
+        "enabled": True,
+        "type": "pm",
+        "pm_deviation_deg": pytest.approx(45.0),
+        "frequency_hz": pytest.approx(100.0),
+        "waveform": "sine",
+    }
+    assert [c for c in scope.command_log if "?" not in c] == []
+
+
+# --------------------------------------------------------------------------
+# 信号発生: ARBファイル選択(ガイド3.25.3)
+# --------------------------------------------------------------------------
+
+
+def test_configure_afg_arb_file_sent_after_waveform_before_frequency(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    applied = driver.configure_afg(
+        1, waveform="arb", arb_file="D:/test.csv", frequency_hz=1000.0
+    )
+
+    assert afg_writes(scope) == [
+        ":SOURce1:FUNCtion ARB",
+        ":SOURce1:LOAD:ARBitrary D:/test.csv",
+        ":SOURce1:FREQuency 1000.0",
+    ]
+    assert applied["arb_file"] == "D:/test.csv"
+
+
+@pytest.mark.parametrize(
+    "arb_file",
+    [
+        "test.csv",  # プレフィックス無し
+        "E:/test.csv",  # C:/ でもD:/でもない
+        "D:/no suffix",  # 拡張子無し
+        "D:/bad name.csv",  # 空白を含む
+        "D:/bad\tname.csv",  # 制御文字を含む
+        "",
+        123,
+    ],
+)
+def test_configure_afg_arb_file_rejects_before_sending(
+    driver: ScopeDriver, scope: FakeScope, arb_file: object
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_afg(1, waveform="sine", arb_file=arb_file)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_afg_arb_file_only_is_accepted(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`waveform` を指定しなくても `arb_file` 単独で送れる。"""
+    applied = driver.configure_afg(1, arb_file="C:/local.bin")
+
+    assert afg_writes(scope) == [":SOURce1:LOAD:ARBitrary C:/local.bin"]
+    assert applied == {"channel": 1, "arb_file": "C:/local.bin"}
+
+
+# --------------------------------------------------------------------------
+# 位相同期(sync_afg_phase、ガイド3.25.7)
+# --------------------------------------------------------------------------
+
+
+def test_sync_afg_phase_sends_exactly_the_command(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.sync_afg_phase(1)
+
+    assert [c for c in scope.command_log if "?" not in c] == [
+        ":SOURce1:PHASe:SYNChronize"
+    ]
+
+
+def test_sync_afg_phase_channel_out_of_range_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.sync_afg_phase(3)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_sync_afg_phase_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.sync_afg_phase(1)
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert scope.command_log == []

@@ -298,12 +298,15 @@ class ControlService:
         duty_percent: float | None = None,
         symmetry_percent: float | None = None,
         impedance: str | None = None,
+        arb_file: str | None = None,
+        modulation: dict | None = None,
     ) -> dict:
         """信号発生器を設定する(SAFE_WRITE)。未指定の項目は変更しない。
 
         **出力状態には一切触れない**ため、この操作だけで信号が外へ出ることはない
         (出力のON/OFFは承認フロー付きの別Toolの責務)。したがって引数依存の昇格も
-        承認要求も無い。
+        承認要求も無い。`arb_file` は機器内蔵ストレージの既存ARBファイルを選択する
+        だけで、ファイルの作成・転送・削除は行わない(docs/Requirements.md 3.4)。
         """
         requested = _specified(
             {
@@ -315,13 +318,16 @@ class ControlService:
                 "duty_percent": duty_percent,
                 "symmetry_percent": symmetry_percent,
                 "impedance": impedance,
+                "arb_file": arb_file,
+                "modulation": modulation,
             }
         )
         if not requested:
             raise _invalid(
                 "No item to change was specified "
                 "(specify at least one of waveform / frequency_hz / amplitude_vpp / "
-                "offset_v / phase_deg / duty_percent / symmetry_percent / impedance)",
+                "offset_v / phase_deg / duty_percent / symmetry_percent / "
+                "impedance / arb_file / modulation)",
                 {"channel": channel},
             )
 
@@ -392,6 +398,20 @@ class ControlService:
             record.after(after)
 
         return {"result": "ok", "channel": after["channel"], "state": after}
+
+    def sync_afg_phase(self, driver: ScopeDriver, channel: int = 1) -> dict:
+        """信号発生の両チャンネルの位相を同期する(SAFE_WRITE)。
+
+        振幅・出力状態には一切触れない整列操作(プリセットの周波数・位相を
+        再適用するだけ)なので承認は要求しない。**両チャンネルとも影響を受ける**
+        操作のため監査の requested には `channel`(送信先の選択にすぎない)を
+        含めない。read-back対象が存在しないwrite-onlyコマンドのため、
+        run/stop・clear_measurementsと同型で `{"result": "ok"}` のみ返す。
+        """
+        with self._audited("sync_afg_phase", {}) as record:
+            driver.sync_afg_phase(channel)
+            record.after({})
+        return {"result": "ok"}
 
     # -- Acquisition ------------------------------------------------------
 

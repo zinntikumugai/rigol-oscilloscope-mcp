@@ -77,6 +77,8 @@
 | `afg_prefix` | 信号発生のコマンド接頭辞(`{n}` がチャンネル番号)。**未宣言なら `configure_afg` / `get_afg_state` 自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) | `:SOURce{n}`(MHO900は2ch・番号付き) |
 | `afg_waveforms` | 意味的な波形名 → `:SOURce<n>:FUNCtion` の値。ここに載るトークンだけを送る | `sine: SINusoid` / `square: SQUare` / `ramp: RAMP` / `noise: NOISe` / `dc: DC` / `arb: ARB` / `exp_rise: EXPRise` ほか計13種(**`PULSe` は実機に存在しない** — 送ると `-222`) |
 | `afg_impedances` | 信号発生器の出力インピーダンス対応表(`:SOURce<n>:IMPedance`) | `highz: OMEG` / `50: FIFTy`(問い合わせの返却は `OMEG` / `FIFTy`) |
+| `afg_mod_types` | 変調タイプの対応表(`:SOURce<n>:MOD:TYPe`)。**未宣言なら `modulation` 引数自体を扱わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) | `am: AM` / `fm: FM` / `pm: PM`(変調ソースは内蔵のみ。`EXTernal` は存在しない) |
+| `afg_mod_waveforms` | 変調波形の対応表(`:MOD:<TYPE>:INTernal:FUNCtion`) | `sine: SINusoid` / `square: SQUare` / `triangle: TRIangle` / `upramp: UPRamp` / `dnramp: DNRamp` / `noise: NOISe` |
 
 `:SYSTem:OPTion:*` は**MHO900専用**でDHO800/900のガイドには存在しない。したがって `option_query` / `option_types` は `mho98.yaml` にのみ宣言し、`rigol-generic.yaml` には置かない — **キーの不在がそのままゲート**である(4.2の原則の適用例)。`*OPT?` はRigolオシロ全シリーズで未定義ヘッダのため使わない。`<type>` リスト外のトークン(実測: `AUTOA`)でもSCPIサーバーが沈黙するので、`option_types` に載っていないトークンを送ってはならない。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md)(未ライセンス状態でも `AFG50` / `RLU-05` は `1` を返す)。
 

@@ -107,7 +107,45 @@ _AFG_RANGES: dict[str, tuple[float, float | None, bool]] = {
     "phase_deg": (0.0, 360.0, False),
     "duty_percent": (1.0, 99.0, False),
     "symmetry_percent": (0.0, 100.0, False),
+    "am_depth_percent": (0.0, 120.0, False),
+    "fm_deviation_hz": (0.0, None, True),
+    "pm_deviation_deg": (0.0, 360.0, False),
 }
+
+# -- 信号発生: 変調(ガイド3.25.15-25)------------------------------------
+#
+# 変調タイプ(am/fm/pm)ごとの深さ/偏移キーとSCPIパス。frequency_hz / waveform は
+# 「今回指定されたtype、無ければ現在のtype」の配下(:MOD:<TYPE>:INTernal:*)へ
+# ルーティングするため、type自体はここに含めない(configure_afgのルーティング
+# ロジックが type→SCPIトークンの変換を都度行う)。
+_AFG_MOD_DEPTH_PATHS: dict[str, str] = {
+    "am_depth_percent": ":MOD:AM:DEPTh",
+    "fm_deviation_hz": ":MOD:FM:DEViation",
+    "pm_deviation_deg": ":MOD:PM:DEViation",
+}
+#: 意味的type("am"/"fm"/"pm") → その深さ/偏移キー・SCPIパス
+_AFG_MOD_DEPTH_BY_TYPE: dict[str, tuple[str, str]] = {
+    "am": ("am_depth_percent", ":MOD:AM:DEPTh"),
+    "fm": ("fm_deviation_hz", ":MOD:FM:DEViation"),
+    "pm": ("pm_deviation_deg", ":MOD:PM:DEViation"),
+}
+#: configure_afgのmodulation引数で受理するキー(値域検証は_afg_number/専用ロジック)
+_AFG_MOD_KEYS = frozenset(
+    {
+        "enabled",
+        "type",
+        "am_depth_percent",
+        "fm_deviation_hz",
+        "pm_deviation_deg",
+        "frequency_hz",
+        "waveform",
+    }
+)
+
+#: ARBファイル選択(ガイド3.25.3)。機器内蔵ストレージのパスのみ(C:/ローカル、
+#: D:/USB)。**このサーバーは機器内ファイルの作成・転送・削除を一切行わない**
+#: (docs/Requirements.md 3.4)。既存ファイルのパス選択のみが対象。
+_ARB_FILE_PREFIXES = ("C:/", "D:/")
 
 _CHANNEL_RE = re.compile(r"^(?:CH|CHAN|CHANNEL)?\s*([0-9]+)$", re.IGNORECASE)
 # 非チャンネルのトリガソース。読み値をそのまま書き戻せるよう表記は1つに固定する
@@ -153,6 +191,42 @@ def _afg_number(key: str, value: object) -> str:
 def _optional_number(text: str) -> float | None:
     """数値応答を返す。`AUTO` 等の非数値は「取得できない」として None。"""
     return parse_nr3(text) if _NUMBER_RE.match(text.strip()) else None
+
+
+def _validate_afg_arb_file(value: object) -> str:
+    """ARBファイルパスを**送信前**に検証する(ガイド3.25.3)。
+
+    値は引用符無しでそのままコマンドへ埋め込むため、SCPIインジェクション対策
+    としてプレフィクス(`C:/` / `D:/`)以降を**ホワイトリスト**
+    (`[A-Za-z0-9._/-]`)で検証する(`;` はSCPIのコマンドセパレータであり
+    特に危険 — Copilotレビュー指摘)。機器内蔵ストレージの既存ファイルを
+    選択するだけで、ファイルの作成・転送・削除は一切行わない。
+    """
+    if not isinstance(value, str) or not value:
+        raise _invalid(
+            f"arb_file is not a non-empty string: {value!r}", {"arb_file": value}
+        )
+    if not value.startswith(_ARB_FILE_PREFIXES):
+        raise _invalid(
+            f"arb_file must start with 'C:/' (local) or 'D:/' (USB): {value!r}",
+            {"arb_file": value},
+        )
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", value[3:]):
+        raise _invalid(
+            "arb_file may contain only letters, digits, '.', '_', '/' and '-' "
+            f"after the drive prefix (';', whitespace etc. are rejected): {value!r}",
+            {"arb_file": value},
+        )
+    if "." not in value.rsplit("/", 1)[-1]:
+        raise _invalid(
+            f"arb_file must end with a filename that has a suffix: {value!r}",
+            {"arb_file": value},
+        )
+    return value
+
+
+def _afg_arb_readback(text: str) -> str:
+    return text.strip()
 
 
 @dataclass(frozen=True)
@@ -973,6 +1047,8 @@ class ScopeDriver:
         duty_percent: float | None = None,
         symmetry_percent: float | None = None,
         impedance: str | None = None,
+        arb_file: str | None = None,
+        modulation: dict | None = None,
     ) -> dict:
         """信号発生器を設定し、read-backした適用値を返す。
 
@@ -980,7 +1056,9 @@ class ScopeDriver:
         (承認フロー付き)の責務で、本メソッドの実行で信号が外へ出ることはない。
 
         全ての検証を送信前に済ませる(不正なチャンネル番号1発で実機のSCPIサーバーが
-        沈黙するため)。送信順は `_AFG_ITEMS` の並び順に固定する。
+        沈黙するため)。送信順は `_AFG_ITEMS` の並び順に固定し、`arb_file` は
+        `waveform`(`:FUNCtion`)の直後・周波数/振幅より前に送る(ガイド3.25.3)。
+        `modulation` はそれらを送った後、`_afg_modulation_plan` の順序で送る。
         """
         number, prefix = self._afg_prefix(channel)
         values = {
@@ -993,10 +1071,15 @@ class ScopeDriver:
             "duty_percent": duty_percent,
             "symmetry_percent": symmetry_percent,
         }
-        if all(value is None for value in values.values()):
+        if (
+            all(value is None for value in values.values())
+            and arb_file is None
+            and modulation is None
+        ):
             raise _invalid(
                 "No item to change was specified "
-                f"(specify at least one of {' / '.join(values)})",
+                f"(specify at least one of {' / '.join(values)} / arb_file / "
+                "modulation)",
                 {"channel": number},
             )
 
@@ -1004,27 +1087,193 @@ class ScopeDriver:
         plan: list[tuple[str, str, str, object]] = []
         for key, path in _AFG_ITEMS:
             value = values[key]
-            if value is None:
-                continue
-            to_scpi, from_scpi = self._afg_item(key)
-            plan.append(
-                (
-                    key,
-                    f"{prefix}{path} {to_scpi(value, key)}",
-                    f"{prefix}{path}?",
-                    from_scpi,
+            if value is not None:
+                to_scpi, from_scpi = self._afg_item(key)
+                plan.append(
+                    (
+                        key,
+                        f"{prefix}{path} {to_scpi(value, key)}",
+                        f"{prefix}{path}?",
+                        from_scpi,
+                    )
                 )
-            )
+            if key == "waveform" and arb_file is not None:
+                token = _validate_afg_arb_file(arb_file)
+                plan.append(
+                    (
+                        "arb_file",
+                        f"{prefix}:LOAD:ARBitrary {token}",
+                        f"{prefix}:LOAD:ARBitrary?",
+                        _afg_arb_readback,
+                    )
+                )
+
+        # modulationの検証もここで完結させる(ルーティング先が今回未指定のtypeに
+        # 依存する場合のみ、ここで初めて :MOD:TYPe? を1回問い合わせる)。
+        mod_plan = (
+            self._afg_modulation_plan(prefix, modulation)
+            if modulation is not None
+            else []
+        )
 
         applied: dict[str, object] = {"channel": number}
         for key, set_cmd, query, from_scpi in plan:
             applied[key] = from_scpi(self.session.set_and_verify(set_cmd, query))
+        if mod_plan:
+            applied_modulation: dict[str, object] = {}
+            for key, set_cmd, query, from_scpi in mod_plan:
+                applied_modulation[key] = from_scpi(
+                    self.session.set_and_verify(set_cmd, query)
+                )
+            applied["modulation"] = applied_modulation
         return applied
+
+    def _afg_modulation_plan(
+        self, prefix: str, modulation: object
+    ) -> list[tuple[str, str, str, object]]:
+        """変調設定の送信計画を組み立てる(ガイド3.25.15-25)。
+
+        Python側の検証(キー・値域・トークン)を全て終えてから、必要な場合に限り
+        現在の変調タイプを1回だけ問い合わせる(`frequency_hz` / `waveform` の
+        ルーティング先が今回の呼び出しで `type` を指定していない場合のみ必要)。
+        それ以外は機器へ一切触れない。
+
+        **実機quirk(2026-08-27実測)**: `MOD:STATe` がOFFの間、変調パラメータの
+        書き込みは**エラーなしで無視される**(表示OFFチャンネルへの書き込み無視と
+        同族)。そのため送信順は状態依存とする:
+        - 有効化(enabled=True)を伴う場合: `TYPe` → `STATe ON` → パラメータ
+        - 無効化(enabled=False)を伴う場合: パラメータ → `STATe OFF`(最後)
+        - enabled省略でパラメータを送る場合: 現在のSTATeを読み、OFFなら送信前に
+          `INVALID_PARAMETER` で拒否(enabled=true の併用を促す)
+        なお `MOD:STATe ON` にしても出力自体(`OUTPut:STATe`)はONにならない
+        (実測確認済み)ため、この順序変更で信号が外に出ることはない。
+        """
+        if not isinstance(modulation, dict):
+            raise _invalid(
+                f"modulation is not an object: {modulation!r}",
+                {"modulation": modulation},
+            )
+        unknown = [key for key in modulation if key not in _AFG_MOD_KEYS]
+        if unknown:
+            raise _invalid(
+                f"unknown modulation setting: {sorted(unknown)}",
+                {"unknown": sorted(unknown), "allowed": sorted(_AFG_MOD_KEYS)},
+            )
+
+        type_to, type_from = self._afg_enum(
+            "afg_mod_types", "the function generator modulation type"
+        )
+        wave_to, wave_from = self._afg_enum(
+            "afg_mod_waveforms", "the function generator modulation waveform"
+        )
+
+        mod_type = modulation.get("type")
+        if mod_type is not None:
+            type_to(mod_type, "type")  # 検証のみ(トークンは送信直前に再取得)
+        for key in ("am_depth_percent", "fm_deviation_hz", "pm_deviation_deg"):
+            if key in modulation:
+                _afg_number(key, modulation[key])
+        if "frequency_hz" in modulation:
+            _afg_number("frequency_hz", modulation["frequency_hz"])
+        if "waveform" in modulation:
+            wave_to(modulation["waveform"], "waveform")
+        if "enabled" in modulation and not isinstance(modulation["enabled"], bool):
+            raise _invalid(
+                f"enabled is not a boolean: {modulation['enabled']!r}",
+                {"key": "enabled", "value": modulation["enabled"]},
+            )
+
+        # ここまでは全てPython側検証のみ(機器へは1バイトも送っていない)。
+        needs_routing = "frequency_hz" in modulation or "waveform" in modulation
+        effective_type = mod_type
+        if effective_type is None and needs_routing:
+            effective_type = type_from(self.session.query(f"{prefix}:MOD:TYPe?"))
+
+        # 実機quirk対策: パラメータはSTATe ONの間しか適用されない
+        param_keys = (
+            "am_depth_percent",
+            "fm_deviation_hz",
+            "pm_deviation_deg",
+            "frequency_hz",
+            "waveform",
+        )
+        has_params = any(key in modulation for key in param_keys)
+        enabled = modulation.get("enabled")
+        if has_params and enabled is None:
+            if not parse_bool(self.session.query(f"{prefix}:MOD:STATe?")):
+                raise _invalid(
+                    "modulation parameters are silently ignored while modulation "
+                    "is off; pass modulation={'enabled': true, ...} in the same "
+                    "call (enabling modulation does not turn the output on)",
+                    {"keys": [k for k in param_keys if k in modulation]},
+                )
+        if has_params and enabled is False:
+            # 無効化と同時のパラメータ設定は「パラメータ→OFF」の順で成立する
+            pass
+
+        plan: list[tuple[str, str, str, object]] = []
+        if mod_type is not None:
+            plan.append(
+                (
+                    "type",
+                    f"{prefix}:MOD:TYPe {type_to(mod_type, 'type')}",
+                    f"{prefix}:MOD:TYPe?",
+                    type_from,
+                )
+            )
+        for key in ("am_depth_percent", "fm_deviation_hz", "pm_deviation_deg"):
+            if key in modulation:
+                path = _AFG_MOD_DEPTH_PATHS[key]
+                token = _afg_number(key, modulation[key])
+                plan.append(
+                    (key, f"{prefix}{path} {token}", f"{prefix}{path}?", parse_nr3)
+                )
+        if "frequency_hz" in modulation:
+            sub = type_to(effective_type, "type")
+            token = _afg_number("frequency_hz", modulation["frequency_hz"])
+            plan.append(
+                (
+                    "frequency_hz",
+                    f"{prefix}:MOD:{sub}:INTernal:FREQuency {token}",
+                    f"{prefix}:MOD:{sub}:INTernal:FREQuency?",
+                    parse_nr3,
+                )
+            )
+        if "waveform" in modulation:
+            sub = type_to(effective_type, "type")
+            token = wave_to(modulation["waveform"], "waveform")
+            plan.append(
+                (
+                    "waveform",
+                    f"{prefix}:MOD:{sub}:INTernal:FUNCtion {token}",
+                    f"{prefix}:MOD:{sub}:INTernal:FUNCtion?",
+                    wave_from,
+                )
+            )
+        state_entry = None
+        if "enabled" in modulation:
+            token = "ON" if modulation["enabled"] else "OFF"
+            state_entry = (
+                "enabled",
+                f"{prefix}:MOD:STATe {token}",
+                f"{prefix}:MOD:STATe?",
+                parse_bool,
+            )
+        if state_entry is not None:
+            if modulation["enabled"]:
+                # ON はパラメータより前(TYPe直後)に置く(quirk対策)
+                insert_at = 1 if mod_type is not None else 0
+                plan.insert(insert_at, state_entry)
+            else:
+                # OFF は最後(パラメータをON中に書いてから無効化する)
+                plan.append(state_entry)
+        return plan
 
     def get_afg_config(self, channel: int) -> dict:
         """信号発生チャンネルの現在設定を意味的なキーで返す。
 
-        出力状態は**読むだけ**(書き込みは行わない)。
+        出力状態は**読むだけ**(書き込みは行わない)。変調は現在有効なtype配下の
+        深さ/偏移・変調周波数・変調波形のみを読む(約6問い合わせ追加)。
         """
         number, prefix = self._afg_prefix(channel)
         query = self.session.query
@@ -1036,7 +1285,33 @@ class ScopeDriver:
         for key, path in _AFG_ITEMS:
             _, from_scpi = self._afg_item(key)
             config[key] = from_scpi(query(f"{prefix}{path}?"))
+        config["modulation"] = self._get_afg_modulation(prefix)
         return config
+
+    def _get_afg_modulation(self, prefix: str) -> dict:
+        """変調設定の現在値(ガイド3.25.15-25)。現在有効なtype配下のみを読む。"""
+        type_to, type_from = self._afg_enum(
+            "afg_mod_types", "the function generator modulation type"
+        )
+        _, wave_from = self._afg_enum(
+            "afg_mod_waveforms", "the function generator modulation waveform"
+        )
+        query = self.session.query
+
+        enabled = parse_bool(query(f"{prefix}:MOD:STATe?"))
+        mod_type = type_from(query(f"{prefix}:MOD:TYPe?"))
+        sub = type_to(mod_type, "type")
+        depth_key, depth_path = _AFG_MOD_DEPTH_BY_TYPE[mod_type]
+
+        return {
+            "enabled": enabled,
+            "type": mod_type,
+            depth_key: parse_nr3(query(f"{prefix}{depth_path}?")),
+            "frequency_hz": parse_nr3(
+                query(f"{prefix}:MOD:{sub}:INTernal:FREQuency?")
+            ),
+            "waveform": wave_from(query(f"{prefix}:MOD:{sub}:INTernal:FUNCtion?")),
+        }
 
     def set_afg_output(self, channel: int, enabled: bool) -> bool:
         """信号発生の出力をON/OFFし、read-backした状態を返す。
@@ -1051,6 +1326,18 @@ class ScopeDriver:
                 f"{prefix}{_AFG_OUTPUT_PATH}?",
             )
         )
+
+    def sync_afg_phase(self, channel: int = 1) -> None:
+        """両AFGチャンネルの位相を同期する(ガイド3.25.7)。
+
+        引数無し・応答無しのwrite-onlyコマンド(run/stopと同型)。プリセットの
+        周波数・位相へ両チャンネルを再設定し直すことで位相を揃える動作のため、
+        周波数が等しいか整数比のときのみ意味を持つ(振幅・出力状態には触れない)。
+        `channel` はコマンドの送信先(`:SOURce<n>`)を選ぶだけで、範囲検証は
+        `_afg_prefix` に委ねる(両チャンネルとも影響を受ける)。
+        """
+        _, prefix = self._afg_prefix(channel)
+        self.session.write_checked(f"{prefix}:PHASe:SYNChronize")
 
     # -- Acquisition ------------------------------------------------------
 

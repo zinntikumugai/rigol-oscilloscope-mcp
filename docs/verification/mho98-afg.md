@@ -112,6 +112,40 @@
 - 特殊波形ではエッジカウンタの `frequency` が無効値 → measureのquality設計どおり `null` になることを確認(FFTが代替手段)
 - 特殊波形のVpp実測は 1.36〜1.58 V(設定1 Vpp)— 波形ごとの振幅定義差・リンギングを含む観測値として記録(sine系の±0.4%一致とは性質が異なる)
 
-## 6. 未実施・今後の予定
+## 6. 変調・ARB選択・位相同期の実機検証(2026-08-27)
 
-- AFG残件(変調 / ARBロード / PERiod / HIGH-LOW / 位相同期)は roadmap 2.3 参照(実ニーズ待ち)
+### 実機quirk: MOD:STATe OFF中のパラメータ書き込みは黙って無視される
+
+`:SOURce1:MOD:AM:DEPTh 50` を `MOD:STATe` OFFの状態で送るとエラーキューは `No error` のまま readback は既定値100(無視)。STATe ONにしてから送ると正常適用。**表示OFFチャンネルへの書き込み無視(mho98-mvp.md 3.3)と同族のquirk**。また `MOD:STATe ON` にしても `OUTPut:STATe` はOFFのまま(=変調有効化だけでは信号は出ない)ことも確認。
+
+→ 実装は送信順を状態依存に変更(有効化はパラメータより先/無効化は最後)、パラメータのみ指定+OFF時は送信前拒否。FakeScopeにも同quirkをモデル化。
+
+### 変調(AM)の実測 — ループバックFFTでサイドバンド確認
+
+G1: キャリア sine 100 kHz / 1 Vpp、AM depth 100% / 変調周波数 10 kHz → CH2で取得(分解能5 kHz):
+
+- ピーク: キャリア 97.7 kHz(0.225 V)、**下側波帯 87.9 kHz(0.117 V)**
+- **側波帯/キャリア比 0.52 ≒ 理論値 0.5(depth 100%)** — AM変調が定量的に機能
+
+### 位相同期(`sync_afg_phase`)の実測 — 2ch相対位相
+
+G1→CH2 / G2→CH3(sine 1 kHz)。停止後の同一レコードから両chの基本波位相を算出:
+
+| 状態 | CH2-CH3 相対位相 |
+|---|---|
+| sync前 | 67.5°(不定) |
+| **sync後(両ch phase 0°)** | **-0.4°** |
+| **G2へ phase 90° 設定 + sync** | **-89.4°** |
+
+→ ガイドの記述どおり「周波数が同一または整数倍のとき位相が整列」を定量確認。
+
+### deviceスイート
+
+- `test_configure_afg_modulation_set_and_readback` / `test_sync_afg_phase`: **PASS**(quirk対応後)
+- read-onlyスイート: 12件PASS(get_afg_configのmodulationキー追加を反映)
+- ARBファイルロードは**実機にファイルが無いため書き込み未検証**(パス検証・SCPI列生成はFakeScopeで担保。`:LOAD:ARBitrary?` クエリ形の実機応答は確認済み扱いとしない — 要実機検証のまま)
+
+## 7. 未実施・今後の予定
+
+- **ARBファイル選択(`arb_file` / `:LOAD:ARBitrary`)のみ実機未検証**(機器内に既知のARBファイルが無いため書き込みを見送り。実機にファイルを用意できたら `tests/device/test_write.py` へ追加する)。変調・位相同期は6章のとおり実機検証済み(AMサイドバンド実測・位相整列の定量確認)
+- `:PERiod` / `:VOLTage:HIGH`・`:LOW` は roadmap 2.3 のとおり恒久スキップ(`frequency_hz` / `amplitude_vpp`+`offset_v` で表現可能なため)

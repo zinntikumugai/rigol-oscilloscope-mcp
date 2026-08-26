@@ -349,18 +349,35 @@ FFTの実装:
 | `duty_percent` | float | 方形波のデューティ比(%)。1〜99 |
 | `symmetry_percent` | float | ランプ波の対称性(%)。0〜100 |
 | `impedance` | `"highz"` \| `"50"` | **信号発生器側の出力インピーダンス設定**(振幅がどの負荷を前提とするか)。`configure_channel` のオシロ**入力**インピーダンスとは無関係 |
+| `arb_file` | string | 機器内蔵ストレージの**既存**ARBファイルを選択する(`C:/...` ローカル / `D:/...` USB。拡張子必須、空白・制御文字禁止)。`:SOURce<n>:LOAD:ARBitrary`(ガイド3.25.3) |
+| `modulation` | object | 変調設定。下表参照(ガイド3.25.15-25) |
 
-返却: `channel` / `requested` / `applied`(read-back値)/ `changed`。
+`modulation` のキー(いずれも省略可。1項目も無ければ他の項目と合わせて全体で1項目も無いのと同じ扱い):
+
+| キー | 型 | 説明 |
+|---|---|---|
+| `enabled` | bool | 変調ON/OFF(`:MOD:STATe`)。**有効化はパラメータより先、無効化は最後**(下記quirk) |
+| `type` | `"am"` \| `"fm"` \| `"pm"` | 変調タイプ(`:MOD:TYPe`) |
+| `am_depth_percent` | float | AM深さ(%)。0〜120(`:MOD:AM:DEPTh`) |
+| `fm_deviation_hz` | float | FM偏移(Hz)。> 0(`:MOD:FM:DEViation`。上限は搬送波依存のためハードコードしない) |
+| `pm_deviation_deg` | float | PM偏移(度)。0〜360(`:MOD:PM:DEViation`) |
+| `frequency_hz` | float | **変調周波数**(搬送波の`frequency_hz`とは別物)。2 mHz〜1 MHz目安、> 0のみ検証 |
+| `waveform` | string | 変調波形。`sine` / `square` / `triangle` / `upramp` / `dnramp` / `noise` |
+
+返却: `channel` / `requested` / `applied`(read-back値。`modulation` を指定した場合は `applied["modulation"]` にネストして返る)/ `changed`。
 
 動作・規範:
 
-- **送信順は固定**: `:FUNCtion` → `:IMPedance` → `:FREQuency` → `:VOLTage:AMPLitude` → `:VOLTage:OFFSet` → `:PHASe` → `:FUNCtion:SQUare:DUTY` → `:FUNCtion:RAMP:SYMMetry`。インピーダンスと周波数が振幅の、振幅がオフセットの許容範囲を決めるため、**範囲の広い側から順に**送る(ガイド3.25)。各項目は set → エラーキュー確認 → read-back(0.3節)
+- **送信順は固定**: `:FUNCtion` → (`arb_file` があれば `:LOAD:ARBitrary`) → `:IMPedance` → `:FREQuency` → `:VOLTage:AMPLitude` → `:VOLTage:OFFSet` → `:PHASe` → `:FUNCtion:SQUare:DUTY` → `:FUNCtion:RAMP:SYMMetry` → (`modulation` があれば変調ブロック)。インピーダンスと周波数が振幅の、振幅がオフセットの許容範囲を決めるため、**範囲の広い側から順に**送る(ガイド3.25)。`arb_file` は `waveform="arb"` と同じ呼び出しで使えるよう `:FUNCtion` の直後・周波数/振幅より前に送る。各項目は set → エラーキュー確認 → read-back(0.3節)
+- **変調ブロックの送信順(実機quirk対応)**: 実機は **`MOD:STATe` OFF中の変調パラメータ書き込みをエラーなしで無視する**(2026-08-27実測、表示OFFチャンネルへの書き込み無視と同族 → [verification/mho98-afg.md](verification/mho98-afg.md) 6章)。このため有効化時は `TYPe` → `STATe ON` → パラメータの順、無効化時はパラメータ → `STATe OFF`(最後)。パラメータのみ指定で変調がOFFの場合は送信前に `INVALID_PARAMETER` を返し `enabled=true` の併用を促す(`MOD:STATe ON` にしても出力自体はONにならないことを実測確認済み)
+- **`frequency_hz` / `waveform` のルーティング**: 変調の配下(`:MOD:<TYPE>:INTernal:*`)は「今回の呼び出しで指定した `type`」、無ければ「機器の現在の `:MOD:TYPe?`」へ送る。後者は**1回だけ**問い合わせる(検証が全て通った後、送信の直前)
 - **検証は全て送信前**(1項目でも不正なら1コマンドも送らない)。特にチャンネル番号: 実機は `:SOURce3` の**1発でSCPIサーバー全体が沈黙する**(空行付き再接続で復旧)ため、`afg_channels` による範囲検証は必須
 - **範囲外の振幅はサイレントにクランプされる**(HighZ上限20 Vppに対し `50` を送ると `20` になり、**エラーキューには何も積まれない**)。実測で確認した唯一の検出手段が `applied` との突合であり、Tool descriptionでもLLMに `applied` を見るよう明示する
 - **周波数・振幅の上限はハードコードしない**(オプション AFG50/AFG100 と出力インピーダンスに依存する)。下限(> 0)のみ検証し、上限は機器のクランプに委ねて `applied` で見せる
 - 波形依存パラメータ(デューティ・対称性)は**現在の波形に関わらず**保存され、書き込みもエラーにならない(実測)。クライアント側での波形連動チェックは行わない
 - DC / NOISe 中の周波数書き込みは機器が `-200` で明示拒否する(沈黙しない)。クライアント側でゲートせず、set後のエラーキュー確認でそのまま拾う
-- 対応機種はプロファイルの `afg_prefix` / `afg_waveforms` / `afg_impedances` が持つ([device-profiles.md](device-profiles.md) 2.2)。**未宣言の機種は送信前に `UNSUPPORTED_FEATURE`** — DHO800/900の番号なし `:SOURce`(DGモジュール)は別方言なので意図的に宣言していない
+- 対応機種はプロファイルの `afg_prefix` / `afg_waveforms` / `afg_impedances` が持つ([device-profiles.md](device-profiles.md) 2.2)。変調は追加で `afg_mod_types` / `afg_mod_waveforms` を要求する。**未宣言の機種は送信前に `UNSUPPORTED_FEATURE`** — DHO800/900の番号なし `:SOURce`(DGモジュール)は別方言なので意図的に宣言していない
+- **`arb_file` はARBファイルの選択のみ**: 機器内蔵ストレージに既にあるファイルのパスを`:LOAD:ARBitrary`へ指定するだけで、**ファイルの作成・転送・削除は一切行わない**(Requirements.md 3.4)
 
 ### `get_afg_state` — READ_ONLY / Phase 4
 
@@ -368,9 +385,9 @@ FFTの実装:
 
 引数: `channel`(int、任意)。省略時は全チャンネル。
 
-返却: `channel` 指定時は1チャンネル分をフラットに返す(`channel`, `output`, `waveform`, `impedance`, `frequency_hz`, `amplitude_vpp`, `offset_v`, `phase_deg`, `duty_percent`, `symmetry_percent`)。省略時は `{"channels": {"1": {...}, "2": {...}}}`(キーはチャンネル番号の文字列)。
+返却: `channel` 指定時は1チャンネル分をフラットに返す(`channel`, `output`, `waveform`, `impedance`, `frequency_hz`, `amplitude_vpp`, `offset_v`, `phase_deg`, `duty_percent`, `symmetry_percent`, `modulation`)。省略時は `{"channels": {"1": {...}, "2": {...}}}`(キーはチャンネル番号の文字列)。
 
-`output` は現在出力がONかどうかの bool。1チャンネルあたり9クエリ。
+`output` は現在出力がONかどうかの bool。`modulation` は現在**有効なtype配下のみ**を返す(`enabled`, `type`, その type の深さ/偏移キー, `frequency_hz`, `waveform`)。1チャンネルあたり14クエリ(基本9 + 変調5)。
 
 ### `enable_afg` — DANGEROUS_WRITE / Phase 4
 
@@ -400,6 +417,20 @@ FFTの実装:
 - 波形などの設定は保持されるため、`enable_afg` で同じ信号を再び出せる
 - 既にOFFのチャンネルへの呼び出しはエラーではない(冪等)
 - 監査(Before / Action / After)は `enable_afg` と同じく記録する
+
+### `sync_afg_phase` — SAFE_WRITE / Phase 4
+
+両AFGチャンネルの位相を同期する(`:SOURce<n>:PHASe:SYNChronize`、ガイド3.25.7)。ガイドの記載:「実行すると、両方の出力チャンネルがプリセットの周波数・位相設定に従って再設定される。周波数が等しいか整数倍の関係にあるときに、この機能で位相を揃えられる」。
+
+引数: `channel`(int、既定 1)。コマンドの送信先(`:SOURce<n>`)を選ぶだけで、**両チャンネルとも影響を受ける**。
+
+返却: `result: "ok"`。read-back対象を持たないwrite-onlyコマンド(`run` / `stop` / `clear_measurements` と同型)。
+
+動作・規範:
+
+- **SAFE_WRITEの根拠**: 振幅・出力状態(信号が出るかどうか)には一切触れず、プリセットの周波数・位相を再適用するだけの整列操作のため、承認は要求しない
+- チャンネル番号の範囲検証は他のAFG Toolと同じく `afg_channels` に委ね、範囲外(MHO98ならチャンネル3以上)は送信前に `INVALID_PARAMETER`
+- 未対応機種(`afg_prefix` 未宣言)は送信前に `UNSUPPORTED_FEATURE`
 
 ---
 
@@ -453,8 +484,9 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `get_afg_state` | READ_ONLY | 4 |
 | `enable_afg` | DANGEROUS_WRITE | 4 |
 | `disable_afg` | SAFE_WRITE | 4 |
+| `sync_afg_phase` | SAFE_WRITE | 4 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は27(Phase 1: 12 + Phase 2: 7 + Phase 4: 8。`recommend_setup` / `raw_scpi` は未登録)。
+登録Tool数は28(Phase 1: 12 + Phase 2: 7 + Phase 4: 9。`recommend_setup` / `raw_scpi` は未登録)。
 
-将来(Phase 4の残り): AFGの変調・ARB波形ロード(`:LOAD:ARBitrary`)・`:PERiod` / `:VOLTage:HIGH`/`:LOW` / `:PHASe:SYNChronize`、Logic Analyzer。
+将来(Phase 4の残り): `:PERiod` / `:VOLTage:HIGH`/`:LOW`(恒久スキップ。`frequency_hz`/`amplitude_vpp`+`offset_v`で表現可能なため)、DHOファミリの `:SOURce`(番号なし・DGモジュール)対応、Logic Analyzer。
