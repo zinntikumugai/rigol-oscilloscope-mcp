@@ -452,7 +452,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 
 **AI連携**
 
-- [ ] 1.1の3つの利用例(接続指示 / x10プローブで1kHz 3V波形表示 / スクショ保存)がLLMからMCP経由で完遂できる — **LLMホストからの通し確認は未実施**。構成要素は分割して担保済み(MCPプロトコル経由のTool呼び出し: tests/test_server_phase1.py / tests/test_server_phase2.py、FakeScope / 機器操作そのもの: tests/device/ 18件、実機PASS)
+- [ ] 1.1の3つの利用例(接続指示 / x10プローブで1kHz 3V波形表示 / スクショ保存)がLLMからMCP経由で完遂できる — **LLMホストからの通し確認は未実施**。確認手段は [e2e-check-prompt.md](e2e-check-prompt.md)(別セッションのLLMに貼る総合動作確認プロンプト)。構成要素は分割して担保済み(MCPプロトコル経由のTool呼び出し: tests/test_server_phase1.py / tests/test_server_phase2.py、FakeScope / 機器操作そのもの: tests/device/ 18件、実機PASS)
 
 ### 11.3 受入基準(Phase 3)
 
