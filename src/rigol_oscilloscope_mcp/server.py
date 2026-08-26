@@ -611,10 +611,12 @@ def create_server(
         the carrier - 2 mHz to 1 MHz), waveform (sine/square/triangle/upramp/
         dnramp/noise, the modulating waveform). frequency_hz and waveform are
         routed to the type given in the same call, or otherwise to whatever
-        type is currently set on the instrument. Set enabled last (it is
-        applied last internally) once the other modulation parameters look
-        right, since turning modulation on takes effect immediately if the
-        AFG output is already on.
+        type is currently set on the instrument. The instrument silently
+        ignores modulation parameter writes while modulation is off, so pass
+        enabled=true together with the parameters (the server sends the
+        enable before the parameters); parameters alone are rejected while
+        modulation is off. Enabling modulation does NOT turn the output on,
+        but if the output is already on, modulation takes effect immediately.
         """
         return control.configure_afg(
             manager.require_scope(),

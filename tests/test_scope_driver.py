@@ -1828,6 +1828,25 @@ def test_configure_afg_modulation_routes_to_the_current_device_type(
     assert afg_writes(scope) == [":SOURce1:MOD:FM:INTernal:FREQuency 300.0"]
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "D:/x.csv;:SYSTem:ERRor?",  # ';' はSCPIコマンドセパレータ(注入)
+        "D:/x.csv:extra",  # ':' もヘッダ区切りのため接頭辞以外では拒否
+        "D:/x'y.csv",
+    ],
+)
+def test_configure_afg_arb_file_rejects_scpi_metacharacters(
+    driver: ScopeDriver, scope: FakeScope, path: str
+) -> None:
+    """接頭辞以降はホワイトリスト検証(SCPIインジェクション対策)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_afg(1, arb_file=path)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert afg_writes(scope) == []
+
+
 def test_configure_afg_modulation_params_while_off_reject_before_sending(
     driver: ScopeDriver, scope: FakeScope
 ) -> None:

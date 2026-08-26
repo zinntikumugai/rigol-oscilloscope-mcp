@@ -196,9 +196,11 @@ def _optional_number(text: str) -> float | None:
 def _validate_afg_arb_file(value: object) -> str:
     """ARBファイルパスを**送信前**に検証する(ガイド3.25.3)。
 
-    値は引用符無しでそのままコマンドへ埋め込む(SCPIインジェクション対策として
-    空白・制御文字を拒否する)。機器内蔵ストレージ(ローカル `C:/` / USB `D:/`)の
-    既存ファイルを選択するだけで、ファイルの作成・転送・削除は一切行わない。
+    値は引用符無しでそのままコマンドへ埋め込むため、SCPIインジェクション対策
+    としてプレフィクス(`C:/` / `D:/`)以降を**ホワイトリスト**
+    (`[A-Za-z0-9._/-]`)で検証する(`;` はSCPIのコマンドセパレータであり
+    特に危険 — Copilotレビュー指摘)。機器内蔵ストレージの既存ファイルを
+    選択するだけで、ファイルの作成・転送・削除は一切行わない。
     """
     if not isinstance(value, str) or not value:
         raise _invalid(
@@ -209,9 +211,10 @@ def _validate_afg_arb_file(value: object) -> str:
             f"arb_file must start with 'C:/' (local) or 'D:/' (USB): {value!r}",
             {"arb_file": value},
         )
-    if any(ch.isspace() or ord(ch) < 0x20 for ch in value):
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", value[3:]):
         raise _invalid(
-            f"arb_file must not contain whitespace or control characters: {value!r}",
+            "arb_file may contain only letters, digits, '.', '_', '/' and '-' "
+            f"after the drive prefix (';', whitespace etc. are rejected): {value!r}",
             {"arb_file": value},
         )
     if "." not in value.rsplit("/", 1)[-1]:
