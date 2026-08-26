@@ -850,6 +850,80 @@ def test_configure_afg_set_and_readback(
     assert readback["output"] is False
 
 
+def test_configure_afg_modulation_set_and_readback(
+    control: ControlService,
+    driver: ScopeDriver,
+    afg_before: dict,
+) -> None:
+    """変調(AM 50% / 1kHz sine)を設定しread-backで確認する(出力はONにしない)。
+
+    要実機検証: PULSe同様に範囲外値がエラーキュー無しでクランプされる可能性が
+    あるため、他のAFG項目と同じくapplied(read-back値)との突合で確認する。
+    """
+    before_modulation = afg_before["modulation"]
+    _report(f"[before:afg-mod] modulation={before_modulation}")
+
+    try:
+        started = time.perf_counter()
+        result = control.configure_afg(
+            driver,
+            AFG_CHANNEL,
+            modulation={
+                "type": "am",
+                "am_depth_percent": 50.0,
+                "frequency_hz": 1000.0,
+                "waveform": "sine",
+                "enabled": True,
+            },
+        )
+        elapsed = time.perf_counter() - started
+
+        applied = result["applied"]["modulation"]
+        _report(f"[afg-mod] ch{AFG_CHANNEL} applied={applied} 所要 {elapsed:.3f}s")
+
+        assert applied["type"] == "am"
+        assert applied["am_depth_percent"] == pytest.approx(50.0, rel=REL_TOLERANCE)
+        assert applied["frequency_hz"] == pytest.approx(1000.0, rel=REL_TOLERANCE)
+        assert applied["waveform"] == "sine"
+        assert applied["enabled"] is True
+
+        readback = driver.get_afg_config(AFG_CHANNEL)
+        assert readback["modulation"]["enabled"] is True
+        # 出力は設定Toolでは一切触れない
+        assert readback["output"] is False
+    finally:
+        restore_type = before_modulation["type"]
+        depth_key = {"am": "am_depth_percent", "fm": "fm_deviation_hz", "pm": "pm_deviation_deg"}[
+            restore_type
+        ]
+        control.configure_afg(
+            driver,
+            AFG_CHANNEL,
+            modulation={
+                "type": restore_type,
+                depth_key: before_modulation[depth_key],
+                "frequency_hz": before_modulation["frequency_hz"],
+                "waveform": before_modulation["waveform"],
+                "enabled": before_modulation["enabled"],
+            },
+        )
+        after_modulation = driver.get_afg_config(AFG_CHANNEL)["modulation"]
+        _report(f"[restore:afg-mod] modulation={after_modulation}")
+        assert after_modulation == before_modulation, "AFG変調が復元されていません"
+
+
+def test_sync_afg_phase(control: ControlService, driver: ScopeDriver) -> None:
+    """位相同期(`:PHASe:SYNChronize`)を呼び、エラーキューが汚れないことを見る。
+
+    要実機検証: 両チャンネルの周波数・位相を再適用する副作用そのものは
+    read-backでは観測できない(ガイドの記載通りの動作を前提とする)。
+    """
+    result = control.sync_afg_phase(driver, AFG_CHANNEL)
+    _report(f"[afg-sync] result={result}")
+
+    assert result == {"result": "ok"}
+
+
 # -- 10b. 信号発生の出力制御(追加ゲート必須)--------------------------------
 
 

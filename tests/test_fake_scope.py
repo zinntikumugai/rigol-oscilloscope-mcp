@@ -775,3 +775,66 @@ def test_afg_channel3_is_silent(scope: FakeScope) -> None:
 
     with pytest.raises(SilentTimeout):
         scope.handle(":SOURce3:OUTPut:STATe?")
+
+
+# --------------------------------------------------------------------------
+# 変調・ARB選択・位相同期(:SOURce<n>:MOD:* / :LOAD:ARBitrary / :PHASe:SYNChronize)
+# --------------------------------------------------------------------------
+
+
+def test_afg_modulation_defaults_match_the_guide(scope: FakeScope) -> None:
+    """既定値はガイドの初期値そのまま(mod_type=AM)。"""
+    assert scope.handle(":SOURce1:MOD:STATe?") == b"0"
+    assert scope.handle(":SOURce1:MOD:TYPe?") == b"AM"
+    assert scope.handle(":SOURce1:MOD:AM:DEPTh?") == b"1.000000E+2"
+    assert scope.handle(":SOURce1:MOD:AM:INTernal:FREQuency?") == b"1.000000E+2"
+    assert scope.handle(":SOURce1:MOD:AM:INTernal:FUNCtion?") == b"SIN"
+    assert scope.handle(":SOURce1:MOD:FM:DEViation?") == b"1.000000E+3"
+    assert scope.handle(":SOURce1:MOD:PM:DEViation?") == b"9.000000E+1"
+
+
+def test_afg_modulation_params_ignored_while_off(scope: FakeScope) -> None:
+    """実機quirk(2026-08-27実測): MOD:STATe OFF中のパラメータ書き込みは黙って無視。"""
+    scope.handle(":SOURce1:MOD:AM:DEPTh 50")
+
+    assert scope.handle(":SOURce1:MOD:AM:DEPTh?") == b"1.000000E+2"  # 既定100のまま
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_afg_modulation_round_trip(scope: FakeScope) -> None:
+    scope.handle(":SOURce1:MOD:TYPe FM")
+    scope.handle(":SOURce1:MOD:STATe ON")  # 実機quirk: OFF中のパラメータは無視される
+    scope.handle(":SOURce1:MOD:FM:DEViation 2000")
+    scope.handle(":SOURce1:MOD:FM:INTernal:FREQuency 500")
+    scope.handle(":SOURce1:MOD:FM:INTernal:FUNCtion SQUare")
+
+    assert scope.handle(":SOURce1:MOD:TYPe?") == b"FM"
+    assert scope.handle(":SOURce1:MOD:FM:DEViation?") == b"2.000000E+3"
+    assert scope.handle(":SOURce1:MOD:FM:INTernal:FREQuency?") == b"5.000000E+2"
+    assert scope.handle(":SOURce1:MOD:FM:INTernal:FUNCtion?") == b"SQU"
+    assert scope.handle(":SOURce1:MOD:STATe?") == b"1"
+    # ch2 は独立
+    assert scope.handle(":SOURce2:MOD:STATe?") == b"0"
+    assert scope.handle(":SOURce2:MOD:TYPe?") == b"AM"
+
+
+def test_afg_modulation_unknown_type_is_rejected(scope: FakeScope) -> None:
+    with pytest.raises(SilentTimeout):
+        scope.handle(":SOURce1:MOD:TYPe XX")
+
+
+def test_afg_arb_file_round_trip(scope: FakeScope) -> None:
+    """ARBファイルパスは裸文字列のまま(引用符無し)で往復する。"""
+    assert scope.handle(":SOURce1:LOAD:ARBitrary?") == b""
+
+    scope.handle(":SOURce1:LOAD:ARBitrary D:/test.csv")
+
+    assert scope.handle(":SOURce1:LOAD:ARBitrary?") == b"D:/test.csv"
+    # ch2 は独立
+    assert scope.handle(":SOURce2:LOAD:ARBitrary?") == b""
+
+
+def test_afg_phase_sync_is_accepted(scope: FakeScope) -> None:
+    """引数無し・応答無し。エラーキューも積まない。"""
+    assert scope.handle(":SOURce1:PHASe:SYNChronize") is None
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode("ascii")

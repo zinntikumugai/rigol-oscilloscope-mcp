@@ -73,6 +73,9 @@ TOOL_CLASSES: dict[str, OperationClass] = {
     "get_afg_state": OperationClass.READ_ONLY,
     "enable_afg": OperationClass.DANGEROUS_WRITE,
     "disable_afg": OperationClass.SAFE_WRITE,
+    # プリセットの周波数・位相を再適用して両チャンネルの位相を揃えるだけの操作で、
+    # 振幅・出力状態(信号が出るかどうか)には一切触れないため SAFE_WRITE。
+    "sync_afg_phase": OperationClass.SAFE_WRITE,
     # 9. Raw SCPI(開発用・デフォルト無効)
     "raw_scpi": OperationClass.DANGEROUS_WRITE,
 }

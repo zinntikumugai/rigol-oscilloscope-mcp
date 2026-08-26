@@ -81,6 +81,15 @@ dialect:
   afg_impedances:
     highz: OMEG
     "50": FIFTy
+  # 変調(ガイド3.25.15-25)。変調ソースは内蔵のみ(EXTernalは存在しない)
+  afg_mod_types: {am: AM, fm: FM, pm: PM}
+  afg_mod_waveforms:
+    sine: SINusoid
+    square: SQUare
+    triangle: TRIangle
+    upramp: UPRamp
+    dnramp: DNRamp
+    noise: NOISe
   # オプション照会(MHO900専用。DHO800/900には存在しない)。実機検証:
   # docs/verification/mho98-unlicensed.md。*OPT? はRigol全シリーズで未定義
   # ヘッダ(送るとSCPIサーバーが沈黙)なので絶対に使わない。<type>リスト外の

@@ -38,6 +38,7 @@ EXPECTED = {
     "get_afg_state": "READ_ONLY",
     "enable_afg": "DANGEROUS_WRITE",
     "disable_afg": "SAFE_WRITE",
+    "sync_afg_phase": "SAFE_WRITE",
     "raw_scpi": "DANGEROUS_WRITE",
 }
 
