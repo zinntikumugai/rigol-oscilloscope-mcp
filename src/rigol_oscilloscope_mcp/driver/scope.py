@@ -1020,8 +1020,16 @@ class ScopeDriver:
             )
         presence = self.profile.dialect.get("afg_presence_query")
         if presence is not None:
+            # プロファイル誤設定(空文字・非文字列)をそのまま送ると未定義ヘッダに
+            # なり得るため、送信前に検証してフェイルクローズ(ルール2)
+            if not isinstance(presence, str) or not presence.strip():
+                raise _unsupported(
+                    "this model's profile declares an invalid value for "
+                    "querying the generator presence",
+                    {"dialect": "afg_presence_query", "profile": self.profile.name},
+                )
             if self._afg_present is None:
-                self._afg_present = parse_bool(self.session.query(str(presence)))
+                self._afg_present = parse_bool(self.session.query(presence))
             if not self._afg_present:
                 raise _unsupported(
                     "this model has no generator module installed "

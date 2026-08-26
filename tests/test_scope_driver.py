@@ -230,6 +230,19 @@ class _DgStatusScope(FakeScope):
         return super().handle(command)
 
 
+def test_dho900_afg_invalid_presence_query_sends_nothing() -> None:
+    """afg_presence_query が不正値(空文字等)なら送信ゼロでフェイルクローズ。"""
+    scope = _DgStatusScope(dg_status=True)
+    driver = make_driver(scope, "dho900")
+    driver.profile.dialect["afg_presence_query"] = "  "
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_afg_config(1)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
 def test_dho900_afg_without_module_is_unsupported() -> None:
     """DGSTatus=0(非S型)はAFGコマンドを1つも送らず UNSUPPORTED_FEATURE。"""
     scope = _DgStatusScope(dg_status=False)
