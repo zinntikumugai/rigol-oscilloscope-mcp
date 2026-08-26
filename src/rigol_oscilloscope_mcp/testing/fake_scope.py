@@ -74,6 +74,17 @@ def _mn(spec: str) -> str:
     return re.escape(short) + f"(?:{re.escape(long[len(short) :])})?"
 
 
+def _mn_indexed(spec: str) -> str:
+    """末尾の番号をニモニック本体から切り離して正規表現断片を作る。
+
+    `SOURce1` をそのまま `_mn` に渡すと短形が `SOUR1` / 長形が `SOURCE1` となり、
+    共通接頭辞が取れずに壊れたパターン(`SOUR1(?:E1)?`)になる。番号を外して
+    `SOUR(?:CE)?1` を組み立てる(`LSOurce1` → `LSO(?:URCE)?1` も同様)。
+    """
+    body = spec.rstrip("0123456789")
+    return _mn(body) + spec[len(body) :]
+
+
 def _normalize(token: str, specs: tuple[str, ...]) -> str | None:
     """列挙値トークンを短形式へ正規化する。未知なら None。"""
     text = token.strip().upper()
@@ -345,6 +356,84 @@ _AFG_MOD_DEFAULTS: dict[str, dict[str, object]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# MATH演算(:MATH<n> / MHO900プログラミングガイド 3.16章)
+# ---------------------------------------------------------------------------
+
+#: MATH演算チャンネル数(ガイド3.16: <n> = 1〜4)
+MATH_COUNT = 4
+
+_MATH_OPERATORS = (
+    "ADD", "SUBTract", "MULTiply", "DIVision", "AND", "OR", "XOR", "NOT", "FFT",
+    "INTG", "DIFF", "SQRT", "LG", "LN", "EXP", "ABS", "LPASs", "HPASs", "BPASs",
+    "BSTop", "AXB",
+)
+#: 演算ソース(ガイド3.16.3/3.16.4)。MATH<m> は m<n のみ有効だが、
+#: そのカスケード則の検証はドライバ側の責務(フェイクは形状のみ受理)。
+_MATH_SOURCES = (
+    tuple(f"CHANnel{n}" for n in range(1, 5))
+    + tuple(f"REF{n}" for n in range(1, 11))
+    + tuple(f"MATH{n}" for n in range(1, MATH_COUNT))
+)
+#: 論理演算ソース(ガイド3.16.5/3.16.6)
+_MATH_LSOURCES = tuple(f"D{n}" for n in range(16)) + tuple(
+    f"CHANnel{n}" for n in range(1, 5)
+)
+_MATH_FFT_WINDOWS = (
+    "RECTangle", "BLACkman", "HANNing", "HAMMing", "FLATtop", "TRIangle",
+)
+_MATH_FFT_UNITS = ("VRMS", "DB")
+_MATH_FFT_MODES = ("NORMal", "AVERage", "MAXHold")
+_MATH_FFT_SEARCH_ORDERS = ("AMPorder", "FREQorder")
+_MATH_FILTER_TYPES = ("LPASs", "HPASs", "BPASs", "BSTop")
+
+#: MATH演算の属性: (内部キー, ニモニック仕様, 型, 既定値)。
+#: 型 "nr3" は指数1桁NR3(ガイドの返却例 `2.000000E-1` と一致)。
+#: 既定値はガイド3.16章の Default 列。ただし SCALe / FILTer:W1 / W2 は設定依存の
+#: 動的値(Default欄が "Refer to Remarks")、SEARch:NUM / THReshold は逐語抽出が
+#: ページ跨ぎで欠落しているため、いずれも代表値を置いている(実機未検証)。
+#: HSCale / HCENter は意図的に非対応(FREQuency:STARt/END で表現する)。
+_MATH_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("display", "DISPlay", "bool", False),
+    ("operator", "OPERator", _MATH_OPERATORS, "ADD"),
+    ("source1", "SOURce1", _MATH_SOURCES, "CHAN1"),
+    ("source2", "SOURce2", _MATH_SOURCES, "CHAN1"),
+    ("lsource1", "LSOurce1", _MATH_LSOURCES, "CHAN1"),
+    ("lsource2", "LSOurce2", _MATH_LSOURCES, "CHAN1"),
+    ("scale", "SCALe", "nr3", 1.0),
+    ("offset", "OFFSet", "nr3", 0.0),
+    ("invert", "INVert", "bool", False),
+    ("fft_source", "FFT:SOURce", _MATH_SOURCES, "CHAN1"),
+    ("fft_window", "FFT:WINDow", _MATH_FFT_WINDOWS, "HANN"),
+    ("fft_unit", "FFT:UNIT", _MATH_FFT_UNITS, "DB"),
+    ("fft_mode", "FFT:MODE", _MATH_FFT_MODES, "NORM"),
+    ("fft_avcnt", "FFT:AVCNt", "int", 10),
+    ("fft_scale", "FFT:SCALe", "nr3", 2.0),
+    ("fft_offset", "FFT:OFFSet", "nr3", 0.0),
+    ("fft_freq_start", "FFT:FREQuency:STARt", "nr3", 1.0),
+    ("fft_freq_end", "FFT:FREQuency:END", "nr3", 1.0e7),
+    ("fft_search", "FFT:SEARch:ENABle", "bool", False),
+    ("fft_search_num", "FFT:SEARch:NUM", "int", 5),
+    ("fft_search_threshold", "FFT:SEARch:THReshold", "nr3", -40.0),
+    ("fft_search_excursion", "FFT:SEARch:EXCursion", "nr3", 1.8),
+    ("fft_search_order", "FFT:SEARch:ORDer", _MATH_FFT_SEARCH_ORDERS, "AMP"),
+    ("filter_type", "FILTer:TYPE", _MATH_FILTER_TYPES, "LPAS"),
+    ("filter_w1", "FILTer:W1", "nr3", 1.0e6),
+    ("filter_w2", "FILTer:W2", "nr3", 1.0e7),
+)
+
+#: `:MATH<n>:FFT:SEARch:RES?` の定型ピーク表(ガイド3.16.30の返却例そのまま)
+_MATH_FFT_PEAKS = (
+    "1,2.50000MHz,-24.98dBV",
+    "2,3.50000MHz,-27.84dBV",
+    "3,4.50000MHz,-30.04dBV",
+    "4,5.50125MHz,-31.5dBV",
+    "5,6.50125MHz,-32.34dBV",
+)
+
+_MATH_SOURCE = _mn("MATH") + rf"([1-{MATH_COUNT}])"
+
+
 class FakeScope:
     """MHO98方言のフェイク機器(SCPIコマンド1件単位で応答する)。"""
 
@@ -410,6 +499,11 @@ class FakeScope:
                 "arb_path": "",
             }
             for n in range(1, AFG_COUNT + 1)
+        }
+        # MATH演算(4ch)。既定はガイド3.16章の初期値
+        self.math: dict[int, dict] = {
+            n: {key: default for key, _, _, default in _MATH_PROPS}
+            for n in range(1, MATH_COUNT + 1)
         }
         # Resultビューの有効化済み測定項目(:MEASure:ITEM? でも追加される — issue #16)
         self.measurement_items: list[str] = []
@@ -598,7 +692,9 @@ class FakeScope:
             ),
             (
                 rf"{waveform}:{_mn('SOURce')}\s+{_VALUE}",
-                lambda m: self._set_waveform("source", self._channel_token(m.group(1))),
+                lambda m: self._set_waveform(
+                    "source", self._waveform_source_token(m.group(1))
+                ),
             ),
             (
                 rf"{waveform}:{_mn('MODE')}\?",
@@ -653,6 +749,7 @@ class FakeScope:
         entries += self._bus_entries()
         entries += self._afg_entries()
         entries += self._afg_mod_entries()
+        entries += self._math_entries()
         return tuple(
             (re.compile(pattern, re.IGNORECASE), handler)
             for pattern, handler in entries
@@ -830,6 +927,32 @@ class FakeScope:
         ]
         return entries
 
+    def _math_entries(self) -> list[tuple[str, Callable]]:
+        """MATH演算のディスパッチ表(`:MATH1`〜`:MATH4` のみ)。
+
+        `:MATH5` は `[1-4]` に一致せず、実機同様に沈黙する。スコープ外のサブツリー
+        (GRID / EXPand / RESet / WAVetype / SENSitivity / DISTance / THReshold /
+        WINDow:TITLe? / LABel:SHOW / DISMode / FFT:HSCale / FFT:HCENter)も同様。
+        """
+        math = rf":?{_MATH_SOURCE}"
+        entries: list[tuple[str, Callable]] = []
+        for key, spec, kind, _default in _MATH_PROPS:
+            path = ":".join(_mn_indexed(part) for part in spec.split(":"))
+            entries.append(
+                (
+                    rf"{math}:{path}\?",
+                    lambda m, k=key, t=kind: self._math_query(m, k, t),
+                )
+            )
+            entries.append(
+                (
+                    rf"{math}:{path}\s+{_VALUE}",
+                    lambda m, k=key, t=kind: self._math_write(m, k, t, m.group(2)),
+                )
+            )
+        entries.append((rf"{math}:{_mn('FFT')}:{_mn('SEARch')}:RES\?", self._math_peaks))
+        return entries
+
     # -- 内部: ハンドラ ---------------------------------------------------
 
     def _system_error(self, match: re.Match[str]) -> bytes:
@@ -849,6 +972,17 @@ class FakeScope:
         if match is None:
             raise self._silent(OUT_OF_RANGE)
         return f"CHAN{match.group(1)}"
+
+    def _waveform_source_token(self, token: str) -> str:
+        """波形ソースは `{CHANnel1-4|MATH1-4}` を受理する(ガイド3.28.1)。
+
+        トリガソースや測定ソースは MATH を取らないため、`_channel_token` 自体は
+        広げない。
+        """
+        match = re.fullmatch(_MATH_SOURCE, token.strip(), re.IGNORECASE)
+        if match is not None:
+            return f"MATH{match.group(1)}"
+        return self._channel_token(token)
 
     def _channel_query(self, key: str, number: int) -> bytes:
         state = self.channels[number]
@@ -889,9 +1023,16 @@ class FakeScope:
         yorigin は「垂直リファレンス位置からのずれ」を生カウントで表した動的値で、
         `offset / yincrement` に等しい(実機実測: offset -0.064 V → yorigin -9.0)。
         生波形データ自体は offset を変えても変化しない。
+
+        MATHソースでは垂直状態をMATHチャンネル側から取る(yincrement はアナログch
+        と同じ定数のまま — FFTトレースのプリアンブル解釈は要実機検証)。
         """
-        number = int(str(self.waveform["source"]).removeprefix("CHAN"))
-        yorigin = round(float(self.channels[number]["offset"]) / YINCREMENT)
+        source = str(self.waveform["source"])
+        if source.startswith("MATH"):
+            offset = float(self.math[int(source.removeprefix("MATH"))]["offset"])
+        else:
+            offset = float(self.channels[int(source.removeprefix("CHAN"))]["offset"])
+        yorigin = round(offset / YINCREMENT)
         return f"{PREAMBLE_HEAD},{yorigin},{YREFERENCE}".encode("ascii")
 
     def _timebase_scale_query(self, match: re.Match[str]) -> bytes:
@@ -1050,6 +1191,43 @@ class FakeScope:
         """ARBファイルパスを裸文字列のまま保存する(引用符無し・往復のみ)。"""
         self._afg(match)["arb_path"] = match.group(2)
         return None
+
+    # -- 内部: MATH演算 ---------------------------------------------------
+
+    def _math(self, match: re.Match[str]) -> dict:
+        return self.math[int(match.group(1))]
+
+    def _math_query(self, match: re.Match[str], key: str, kind: object) -> bytes:
+        value = self._math(match)[key]
+        if kind == "bool":
+            return b"1" if value else b"0"
+        if kind == "nr3":
+            return _nr3_single_digit_exponent(float(value)).encode("ascii")
+        return str(value).encode("ascii")
+
+    def _math_write(
+        self, match: re.Match[str], key: str, kind: object, token: str
+    ) -> None:
+        if kind == "bool":
+            value: object = self._on_off(token)
+        elif kind == "nr3":
+            value = self._float(token)
+        elif kind == "int":
+            value = self._int(token)
+        else:
+            value = self._enum(token, kind)  # 列挙(仕様タプル)
+        self._math(match)[key] = value
+        return None
+
+    def _math_peaks(self, match: re.Match[str]) -> bytes:
+        """ピーク探索結果テーブル(ガイド3.16.30)。
+
+        探索が無効なときの実機挙動は未確認(要実機検証)。`_bus_data` の
+        イベントテーブル無効時と同じ流儀で、ここでは空応答を返す。
+        """
+        if not self._math(match)["fft_search"]:
+            return b""
+        return "\n".join(_MATH_FFT_PEAKS).encode("ascii")
 
     def _measure_item(self, match: re.Match[str]) -> bytes:
         item = match.group(1).strip().upper()

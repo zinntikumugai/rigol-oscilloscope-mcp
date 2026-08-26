@@ -2116,3 +2116,48 @@ def test_sync_afg_phase_unsupported_profile_sends_nothing(
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# MATH演算(:MATH<n>)のゲート
+# --------------------------------------------------------------------------
+
+
+def test_math_channels_comes_from_the_profile(
+    driver: ScopeDriver, generic_driver: ScopeDriver
+) -> None:
+    """MHO98は4ch。未宣言のgenericは 0(= 非対応)。"""
+    assert driver.math_channels == 4
+    assert generic_driver.math_channels == 0
+
+
+def test_math_prefix_builds_the_command_head(driver: ScopeDriver) -> None:
+    assert driver._math_prefix(3) == (3, ":MATH3")
+
+
+def test_math_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`math_channels` 未宣言のプロファイルへは1バイトも送らない。"""
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver._math_prefix(1)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_math_channel_out_of_range_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`:MATH5` は実機のSCPIサーバーを沈黙させ得るため、送信前に拒否する。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver._math_prefix(5)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver._math_prefix(0)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []

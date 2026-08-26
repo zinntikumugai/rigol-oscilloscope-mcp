@@ -838,3 +838,122 @@ def test_afg_phase_sync_is_accepted(scope: FakeScope) -> None:
     """引数無し・応答無し。エラーキューも積まない。"""
     assert scope.handle(":SOURce1:PHASe:SYNChronize") is None
     assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode("ascii")
+
+
+# --------------------------------------------------------------------------
+# MATH演算(:MATH<n> / MHO900プログラミングガイド 3.16章)
+# --------------------------------------------------------------------------
+
+
+def test_math_defaults_match_the_guide(scope: FakeScope) -> None:
+    """既定値・応答形式はガイド3.16章の初期値そのまま(列挙は短形で返る)。"""
+    assert scope.handle(":MATH1:DISPlay?") == b"0"
+    assert scope.handle(":MATH1:OPERator?") == b"ADD"
+    assert scope.handle(":MATH1:SOURce1?") == b"CHAN1"
+    assert scope.handle(":MATH1:SOURce2?") == b"CHAN1"
+    assert scope.handle(":MATH1:LSOurce1?") == b"CHAN1"
+    assert scope.handle(":MATH1:OFFSet?") == b"0.000000E+0"
+    assert scope.handle(":MATH1:INVert?") == b"0"
+    assert scope.handle(":MATH1:FFT:SOURce?") == b"CHAN1"
+    assert scope.handle(":MATH1:FFT:WINDow?") == b"HANN"
+    assert scope.handle(":MATH1:FFT:UNIT?") == b"DB"
+    assert scope.handle(":MATH1:FFT:MODE?") == b"NORM"
+    assert scope.handle(":MATH1:FFT:AVCNt?") == b"10"
+    assert scope.handle(":MATH1:FFT:FREQuency:STARt?") == b"1.000000E+0"
+    assert scope.handle(":MATH1:FFT:FREQuency:END?") == b"1.000000E+7"
+    assert scope.handle(":MATH1:FFT:SEARch:ENABle?") == b"0"
+    assert scope.handle(":MATH1:FFT:SEARch:ORDer?") == b"AMP"
+    assert scope.handle(":MATH1:FILTer:TYPE?") == b"LPAS"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_math_short_form_mnemonics_are_accepted(scope: FakeScope) -> None:
+    """末尾に番号が付くニモニックも短形(`SOUR1` / `LSO1`)で受理する。"""
+    assert scope.handle(":MATH1:SOUR1?") == b"CHAN1"
+    assert scope.handle(":MATH1:LSO1?") == b"CHAN1"
+    assert scope.handle(":MATH1:LSO2?") == b"CHAN1"
+
+
+def test_math_round_trip(scope: FakeScope) -> None:
+    """書き込み → クエリで機器の短形トークン / NR3(指数1桁)が返る。"""
+    scope.handle(":MATH1:DISPlay ON")
+    scope.handle(":MATH1:OPERator FFT")
+    scope.handle(":MATH1:SOURce2 CHANnel3")
+    scope.handle(":MATH1:SCALe 0.2")
+    scope.handle(":MATH1:INVert ON")
+    scope.handle(":MATH1:FFT:WINDow BLACkman")
+    scope.handle(":MATH1:FFT:UNIT VRMS")
+    scope.handle(":MATH1:FFT:AVCNt 100")
+    scope.handle(":MATH1:FFT:SEARch:ORDer FREQorder")
+    scope.handle(":MATH1:FILTer:TYPE BSTop")
+    scope.handle(":MATH1:FILTer:W1 2000000")
+
+    assert scope.handle(":MATH1:DISPlay?") == b"1"
+    assert scope.handle(":MATH1:OPERator?") == b"FFT"
+    assert scope.handle(":MATH1:SOURce2?") == b"CHAN3"
+    assert scope.handle(":MATH1:SCALe?") == b"2.000000E-1"
+    assert scope.handle(":MATH1:INVert?") == b"1"
+    assert scope.handle(":MATH1:FFT:WINDow?") == b"BLAC"
+    assert scope.handle(":MATH1:FFT:UNIT?") == b"VRMS"
+    assert scope.handle(":MATH1:FFT:AVCNt?") == b"100"
+    assert scope.handle(":MATH1:FFT:SEARch:ORDer?") == b"FREQ"
+    assert scope.handle(":MATH1:FILTer:TYPE?") == b"BST"
+    assert scope.handle(":MATH1:FILTer:W1?") == b"2.000000E+6"
+    # 他のMATHチャンネルは独立
+    assert scope.handle(":MATH2:OPERator?") == b"ADD"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_math_unknown_operator_is_rejected(scope: FakeScope) -> None:
+    with pytest.raises(SilentTimeout):
+        scope.handle(":MATH1:OPERator NOPE")
+
+
+def test_math_channel5_is_silent(scope: FakeScope) -> None:
+    """`:MATH5` はどのパターンにも一致せず沈黙する(実機同様)。"""
+    with pytest.raises(SilentTimeout):
+        scope.handle(":MATH5:DISPlay?")
+
+    with pytest.raises(SilentTimeout):
+        scope.handle(":MATH5:OPERator ADD")
+
+
+def test_math_fft_peak_table_requires_search_enabled(scope: FakeScope) -> None:
+    """ピーク表はサーチ有効時のみ。無効時は空応答(要実機検証)。"""
+    assert scope.handle(":MATH1:FFT:SEARch:RES?") == b""
+
+    scope.handle(":MATH1:FFT:SEARch:ENABle ON")
+    table = scope.handle(":MATH1:FFT:SEARch:RES?")
+
+    assert table is not None
+    lines = table.decode("ascii").splitlines()
+    assert lines[0] == "1,2.50000MHz,-24.98dBV"
+    assert lines[-1] == "5,6.50125MHz,-32.34dBV"
+    # 他チャンネルのサーチ状態には影響しない
+    assert scope.handle(":MATH2:FFT:SEARch:RES?") == b""
+
+
+def test_waveform_source_accepts_math(scope: FakeScope) -> None:
+    """`:WAVeform:SOURce MATH<n>` を受理する(ガイド3.28.1)。"""
+    assert scope.handle(":WAVeform:SOURce MATH2") is None
+    assert scope.handle(":WAV:SOUR?") == b"MATH2"
+    assert scope.handle(":WAVeform:PREamble?") == (
+        b"0,0,1000,1,2.000000E-6,-1.000000E-3,0.000000,6.8267E-02,0,128"
+    )
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_waveform_preamble_follows_the_math_offset(scope: FakeScope) -> None:
+    """MATHソースのyoriginはMATHチャンネル側のoffsetから決まる。"""
+    scope.handle(":WAVeform:SOURce MATH2")
+    scope.handle(":MATH2:OFFSet -0.6827")
+
+    preamble = scope.handle(":WAVeform:PREamble?")
+
+    assert preamble is not None
+    assert preamble.decode("ascii").split(",")[8] == "-10"
+
+
+def test_waveform_source_rejects_math5(scope: FakeScope) -> None:
+    with pytest.raises(SilentTimeout):
+        scope.handle(":WAVeform:SOURce MATH5")
