@@ -12,3 +12,23 @@ confidence: guide
 capabilities:
   analog_channels: 4
   digital_channels: 16 # D0-D15(シリーズ全体で搭載。LA操作自体は未実装)
+  # 内蔵ジェネレータはS型(DHO914S/924S)のみ搭載・1ch。搭載有無は実行時に
+  # dialect の afg_presence_query で照会する(下記)
+  afg_channels: 1
+
+dialect:
+  # 内蔵ジェネレータ(DHO800/900ガイド3.25)。**番号なし :SOURce**(MHO900の
+  # :SOURce<n> とは別方言)。インピーダンス設定・変調(:MOD)配下は本ガイドの
+  # 範囲で未検証のため未宣言(不在=ゲート)。振幅<amp>の単位はガイド上 V 表記で
+  # Vppかどうか未確認(要実機検証)
+  afg_prefix: ":SOURce"
+  afg_waveforms:
+    sine: SINusoid
+    square: SQUare
+    ramp: RAMP
+    dc: DC
+    noise: NOISe
+    arb: ARB
+  # ガイド3.24.14: DGモジュール(=ジェネレータ)搭載有無の照会。0なら
+  # AFGコマンドを1つも送らず UNSUPPORTED_FEATURE(S型以外の安全ゲート)
+  afg_presence_query: ":SYSTem:DGSTatus?"
