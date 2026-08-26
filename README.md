@@ -28,10 +28,10 @@ GUI自動操作は使わない。
 GitHubリポジトリからの `uvx` 起動を標準とする。
 
 ```bash
-uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.2 rigol-oscilloscope-mcp
+uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.3 rigol-oscilloscope-mcp
 ```
 
-既定でタグ(`@v0.1.2`)にバージョンを固定している。最新の開発版(main)を使う場合は `@v0.1.2` を外す。
+既定でタグ(`@v0.1.3`)にバージョンを固定している。最新の開発版(main)を使う場合は `@v0.1.3` を外す。
 
 ### Claude Code — プラグイン(推奨)
 
@@ -51,7 +51,7 @@ uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.2 ri
   "mcpServers": {
     "rigol-oscilloscope": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.2", "rigol-oscilloscope-mcp"],
+      "args": ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.3", "rigol-oscilloscope-mcp"],
       "env": { "RIGOL_MCP_SCREENSHOT_DIR": "~/scope-captures" }
     }
   }
@@ -74,7 +74,7 @@ codex plugin install rigol-oscilloscope
 ```toml
 [mcp_servers.rigol-oscilloscope]
 command = "uvx"
-args = ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.2", "rigol-oscilloscope-mcp"]
+args = ["--from", "git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.3", "rigol-oscilloscope-mcp"]
 
 [mcp_servers.rigol-oscilloscope.env]
 RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
@@ -128,7 +128,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 ホスト側のMCP設定や会話フローを、オシロスコープを用意せずに確認できる。
 
 ```bash
-RIGOL_MCP_FAKE=1 uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.2 rigol-oscilloscope-mcp
+RIGOL_MCP_FAKE=1 uvx --from git+https://github.com/zinntikumugai/rigol-oscilloscope-mcp@v0.1.3 rigol-oscilloscope-mcp
 ```
 
 ## 開発
