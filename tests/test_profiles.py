@@ -243,7 +243,36 @@ def test_dho900_inherits_dho800() -> None:
     assert dho900.capabilities["analog_channels"] == 4
 
 
-@pytest.mark.parametrize("name", ["dho800", "dho900"])
+
+
+def test_load_dho1000_profile_fields() -> None:
+    """DHO1000/4000ガイド(PGA34101-1110)の逐語解読のみ(confidence: guide)。"""
+    p = load_profile("dho1000")
+
+    assert p.confidence == "guide"
+    assert p.capabilities["analog_channels"] == 4
+    assert p.capabilities["afg_channels"] == 0  # ガイドに:SOURce章が無い
+    assert p.capabilities["digital_channels"] == 0  # :LA章も無い
+    # 50Ωは「not supported by the DHO1000 series」(ガイド3.9.8)
+    assert p.supports("impedance_control") is False
+    assert p.supports("impedance_50ohm") is False
+
+
+def test_dho4000_inherits_dho1000_and_enables_50ohm() -> None:
+    """DHO4000との差分は入力インピーダンスのみ(ガイド3.9.8)。"""
+    dho1000 = load_profile("dho1000")
+    dho4000 = load_profile("dho4000")
+
+    assert dho4000.confidence == "guide"
+    assert set(dho4000.dialect) == set(dho1000.dialect)
+    assert dho4000.dialect["measurement_items"] == dho1000.dialect["measurement_items"]
+    assert dho4000.supports("impedance_control") is True
+    assert dho4000.supports("impedance_50ohm") is True
+    assert dho4000.capabilities["analog_channels"] == 4
+
+
+
+@pytest.mark.parametrize("name", ["dho800", "dho900", "dho1000", "dho4000"])
 def test_dho_profiles_declare_in_scope_dialect(name: str) -> None:
     """ガイド解読で確定した範囲(コア読み書き+画面+測定消去+autoset)のみ。"""
     p = load_profile(name)
@@ -258,7 +287,7 @@ def test_dho_profiles_declare_in_scope_dialect(name: str) -> None:
     assert p.measurement_mnemonic("duty") == "PDUTy"
 
 
-@pytest.mark.parametrize("name", ["dho800", "dho900"])
+@pytest.mark.parametrize("name", ["dho800", "dho900", "dho1000", "dho4000"])
 def test_dho_profiles_do_not_declare_unverified_features(name: str) -> None:
     """デコード/AFG/オプション照会は実機検証まで未宣言 — 不在がそのままゲート。"""
     p = load_profile(name)
@@ -283,6 +312,9 @@ def test_dho_profiles_do_not_declare_unverified_features(name: str) -> None:
         ("DHO802", "dho800"),
         ("DHO814", "dho800"),
         ("DHO924S", "dho900"),
+        ("DHO1072", "dho1000"),
+        ("DHO1104", "dho1000"),
+        ("DHO4804", "dho4000"),
         ("DHO914", "dho900"),
         ("MHO98", "mho98"),
         ("DS1054Z", GENERIC),

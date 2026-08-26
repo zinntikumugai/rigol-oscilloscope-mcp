@@ -54,6 +54,6 @@ skills/ + .claude-plugin/ + .codex-plugin/ + .agents/(Claude/Codex両プラグ�
 
 ## 検証(タスク完了の条件)
 
-1. `uv run pytest` 全件グリーン(現在1120件+device 26件skip)
+1. `uv run pytest` 全件グリーン(現在1129件+device 26件skip)
 2. `git grep "172\.16\."` が空
 3. 機器通信に触れた変更は実機スモーク(`-m device` のread-onlyスイート)を実行し、結果を `docs/verification/`(IP・シリアル非記載)に記録する
