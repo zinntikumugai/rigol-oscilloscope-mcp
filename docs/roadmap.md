@@ -40,7 +40,7 @@ MHO98は2ch・100 MHz・1 GSa/s のAFGを搭載する。実測根拠は [verific
 - **出力制御 `enable_afg` / `disable_afg` も実装済み**(PR-AFG2)。**出力ONのみ DANGEROUS_WRITE**(confirmトークン必須。トークンはチャンネル単位)で、DUTへ信号を注入する操作であるため物理確認の促しをリスク文言とTool descriptionの双方に置く。**出力OFFは承認を要求しない**(緊急停止をブロックしないため SAFE_WRITE)
 - capabilitiesの `afg_channels` で機種差を表現する(**範囲外の `:SOURce3` は実機のSCPIサーバーを沈黙させる**ため、番号検証は送信前に必須)
 - 残件: 変調(AM/FM/PM ほか)、`:LOAD:ARBitrary`(ARB波形のロード)、`:PERiod` / `:VOLTage:HIGH`・`:LOW`(周波数・振幅で表せる別表現)、`:PHASe:SYNChronize`(2ch間の位相同期)、DHO800/900ファミリの番号なし `:SOURce`(DGモジュール。別方言のため未宣言)。必要性が出るまで着手しない
-- 残件(実機検証): **ループバックFFT検証はBNCケーブル待ちで未実施**(`RIGOL_TEST_AFG_LOOPBACK=1` ゲート。テスト `test_afg_loopback_fft` は実装済み)。詳細は [verification/mho98-afg.md](verification/mho98-afg.md) 4章
+- **ループバックFFT・フィードバック検査・全13波形の実機検査は完了**(2026-08-26。[verification/mho98-afg.md](verification/mho98-afg.md) 5章)
 
 ### 2.4 ホスト側高度解析
 
