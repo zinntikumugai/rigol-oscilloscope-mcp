@@ -38,6 +38,12 @@ def generic_driver(scope: FakeScope) -> ScopeDriver:
     return make_driver(scope, "rigol-generic")
 
 
+@pytest.fixture
+def dho_driver(scope: FakeScope) -> ScopeDriver:
+    """ガイドベースのDHO900プロファイル(方言差の検証用。実機未検証)。"""
+    return make_driver(scope, "dho900")
+
+
 def sent(scope: FakeScope, needle: str) -> list[str]:
     return [c for c in scope.command_log if needle in c.upper()]
 
@@ -225,6 +231,53 @@ def test_clear_measurements_unsupported_profile_sends_nothing(
 ) -> None:
     with pytest.raises(ScopeError) as excinfo:
         generic_driver.clear_measurements()
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# DHO800/900 方言(ガイドベース・実機未検証)
+# --------------------------------------------------------------------------
+
+
+def test_dho_autoset_sends_the_dialect_command(
+    dho_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.command_log.clear()
+
+    dho_driver.autoset()
+
+    assert [c for c in scope.command_log if "?" not in c] == [":AUToset"]
+
+
+def test_dho_clear_measurements_sends_clear_not_delete(
+    dho_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """DHO800/900系のニモニックは :MEASure:CLEar(ガイド3.17.3)。"""
+    scope.command_log.clear()
+
+    dho_driver.clear_measurements()
+
+    assert [c for c in scope.command_log if "?" not in c] == [":MEASure:CLEar"]
+
+
+def test_dho_screenshot_sends_png_argument(
+    dho_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """DHO系の既定はBMPなので、PNG引数を付けたコマンドをそのまま送る。"""
+    scope.command_log.clear()
+
+    assert dho_driver.capture_screenshot_bytes().startswith(PNG_MAGIC)
+    assert scope.command_log == [":DISPlay:DATA? PNG"]
+
+
+def test_dho_decode_is_unsupported_and_sends_nothing(
+    dho_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """デコードは実機検証まで未宣言 — 不在がそのままゲート(送信ゼロ)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        dho_driver.configure_decode(1, "uart")
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert scope.command_log == []

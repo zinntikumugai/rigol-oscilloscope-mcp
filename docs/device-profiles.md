@@ -15,13 +15,19 @@
 *IDN? → "RIGOL TECHNOLOGIES,<model>,<serial>,<firmware>"
    │
    ├─ 1. モデル完全一致プロファイル   (例: MHO98)        … 信頼度 verified
-   ├─ 2. ファミリプロファイル         (例: DHO900系)     … 信頼度 family
-   └─ 3. 汎用Rigolプロファイル        (フォールバック)   … 信頼度 generic
+   ├─ 2. ファミリプロファイル         (実機検証2機種〜)  … 信頼度 family
+   ├─ 3. ガイドベースプロファイル     (例: DHO800/900)   … 信頼度 guide
+   └─ 4. 汎用Rigolプロファイル        (フォールバック)   … 信頼度 generic
 ```
 
-- **verified**: 実機検証済みの機種。quirk・制限値がプロファイルに記録されている
-- **family**: 同系列機種のプロファイルを適用。ニモニックは概ね互換だが未検証項目あり
-- **generic**: 未知のRigol機種。共通性の高いSCPIコマンドのみでベストエフォート動作
+| 信頼度 | 根拠 | 意味 |
+|---|---|---|
+| `verified` | 実機検証 | quirk・制限値がプロファイルに記録されている |
+| `family` | 同系列機種の実機検証 | ニモニックは概ね互換だが未検証項目あり |
+| `guide` | 公式プログラミングガイドの逐語解読のみ | **実機未検証**。ニモニックはガイド記載どおりだが、quirk(不正ニモニック時の沈黙挙動、scale値のスナップ有無、NR3の指数桁数)と limits の境界値は**未確認**。宣言範囲外の機能は `UNSUPPORTED_FEATURE` に倒す(6章) |
+| `generic` | なし(共通部分のみ) | 未知のRigol機種。共通性の高いSCPIコマンドのみでベストエフォート動作 |
+
+同じモデル文字列に複数のプロファイルが一致した場合は、この表の上から順(verified → family → guide → generic)に優先される。
 
 解決したプロファイル名と信頼度は `scope_identify` / `get_capabilities` の返却に必ず含め、generic時はdegraded動作であることをLLMへ明示する。
 
@@ -177,5 +183,43 @@ MHO98では不正なクエリに対し機器が**無応答**となり、クラ�
 
 - プロファイルはパッケージ同梱の `profiles/*.yaml` とし、リリースに含めて配布する
 - 新機種の対応手順: (1) generic で接続し動作確認 → (2) 実機検証結果を quirk として記録 → (3) verified プロファイルを追加
+- ガイドしか根拠が無い段階では `confidence: guide` で登録し、宣言はガイドで逐語確認できたニモニックだけに絞る(6章)
 - ファミリプロファイル(例: DHO900系)は、同系機種の検証結果が2機種以上揃った段階で共通部分を括り出して作成する(先回りで作らない)
 - プロファイルの適用結果(名前・信頼度)は監査ログに記録する
+
+## 6. ガイドベースプロファイル: DHO800 / DHO900
+
+出典は公式の **DHO800/DHO900 Programming Guide(PGA39106-1110)** のみで、**実機は未検証**(`confidence: guide`)。ガイドに逐語で載っているニモニックだけを宣言し、実機挙動に依存する項目は宣言しない。
+
+| プロファイル | `match` | 継承 | 対象機種 |
+|---|---|---|---|
+| `dho800` | `^DHO8[0-9]{2}` | `rigol-generic` | DHO802 / DHO804 / DHO812 / DHO814 |
+| `dho900` | `^DHO9[0-9]{2}` | `dho800` | DHO914 / DHO914S / DHO924 / DHO924S(LA D0-D15) |
+
+`mho98` の `match` は `^MHO9[0-9]` であり先頭文字が違うため、DHO9xx とは衝突しない。
+
+### 6.1 宣言する範囲(ガイドで確定できたもの)
+
+- コアの読み取り・チャンネル/タイムベース/トリガ設定・アクイジション(全機種共通のニモニック)
+- `screenshot_command: ":DISPlay:DATA? PNG"` — ガイド3.9.7の `<type>`={BMP|PNG|JPG} は**既定がBMP**なので、MHO98と違い**PNG引数が必須**
+- `measurement_clear: ":MEASure:CLEar"` — ガイド3.17.3(MHO900の `:MEASure:DELete` とはニモニックが分岐する)
+- `autoset_command: ":AUToset"` — ガイド3.2.1(MHO900と同じ)
+- `measurement_items` 10項目 — ガイド3.17.2。`VAVG` の綴りもMHO900と同一
+- `bwlimit_on: "20M"` — ガイド3.6.1(選択肢は `OFF|20M` のみ)
+- `limits.probe_ratio` 24値 — ガイド3.6.8。**要実機検証**
+
+quirk系(`invalid_query_behavior` / `error_queue_stale_on_connect` / `snaps_to_125` / `nr3_single_digit_exponent`)は実機で観測していないため独自宣言せず、`rigol-generic` の保守的な既定を継承する。
+
+### 6.2 意図的に宣言しない範囲(実機検証まで据え置き)
+
+以下は**キーの不在がそのままゲート**(4.2の原則)で、DHO機ではToolが `UNSUPPORTED_FEATURE` を返し実機へは1バイトも送らない。実機で1台でも検証できた時点で宣言を追加し、`verified` へ昇格させる。
+
+- **シリアルデコード**(`protocol_decode: false`、`decode_protocols` / `decode_formats` / `decode_buses` 未宣言)
+- **AFG**(`afg_channels: 0`、`afg_prefix` ほか未宣言)。DHO914S/924S は1chのジェネレータを内蔵するが、DHO系は**番号なしの `:SOURce`** でMHO900の `:SOURce<n>` とは別方言
+- **ロジックアナライザ**(`digital_channels` は情報として持つがLA操作Tool自体が未実装)
+- **オプション照会**(`:SYSTem:OPTion:*` はMHO900専用でDHOのガイドに存在しない)
+- **50Ω入力**(`impedance_control: false`。DHO800/900の入力は1MΩ固定)
+
+### 6.3 既知の制限
+
+DHO802 / DHO812 は**2ch(+EXT)**だが、プロファイルスキーマは「同一 `match` 内での機種別ch数」を表現できないため `analog_channels: 4` を宣言している。範囲外のCH3/CH4への操作は機器側の拒否に委ねる(モデル別プロファイルを増やすより、実機検証時に判断する)。

@@ -1,0 +1,14 @@
+# ガイドベースプロファイル: DHO900シリーズ(docs/device-profiles.md 6章)
+# 出典: DHO800/DHO900 Programming Guide PGA39106-1110(dho800.yaml と同一)
+# **実機未検証**(confidence: guide)。SCPIはDHO800と同一系統のため差分のみ宣言する。
+# DHO914S/924S は1chのAFGを内蔵するが、DHO系のジェネレータは番号なし `:SOURce`
+# (MHO900の `:SOURce<n>` とは別方言)で実機未検証のため afg_* は未宣言。
+# LAデコード・オプション照会も同様に未宣言 — 不在がそのままゲート
+model: DHO900 # ラインナップ: DHO914 / DHO914S / DHO924 / DHO924S(全て4ch)
+match: "^DHO9[0-9]{2}"
+inherits: dho800
+confidence: guide
+
+capabilities:
+  analog_channels: 4
+  digital_channels: 16 # D0-D15(シリーズ全体で搭載。LA操作自体は未実装)
