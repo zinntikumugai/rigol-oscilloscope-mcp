@@ -59,19 +59,12 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 
 | Phase | 機能 | ガイド節 | 方針 |
 |---|---|---|---|
-| M1 | **:MATH<n>** 演算(加減乗除・FFT・微積分・フィルタ・論理) | 3.16 | `configure_math`(SAFE_WRITE)+ `get_math_state`(READ_ONLY)の2 Tool。FFTピークサーチ結果(`:MATH<n>:FFT:SEARch:RES?`)は `get_math_state` の返却に含める(Tool追加しない)。MATHトレースの波形取得は `capture_waveform` / `analyze_waveform` の `source` 引数拡張で実現(`read_samples` 経路を流用)。プロファイルに `math_channels` + `math_operators` 対応表を宣言 |
+| M1 | **:MATH<n>** 演算(加減乗除・FFT・微積分・フィルタ・論理) | 3.16 | **実装済み**(下記 2.5.1) |
 | M2 | **:CURSor** カーソル測定 | 3.8 | manual/track/XY。設定+ΔX/ΔY等の読み取り |
 | M2 | **:COUNter** 周波数カウンタ | 3.7 | enable/source/mode + `:VALue` 読み。実装コスト極小 |
 | M2 | **:DVM** 電圧計 | 3.10 | 同上(4コマンドのみ) |
 | M2 | **:HISTogram** ヒストグラム | 3.11 | `:STATistics:RESult` で統計テキスト取得 |
 | M3 | **:REFerence** リファレンス波形 | 3.20 | 保存→比較ワークフロー。REF波形の読み出し可否は要確認 |
-
-**M1(MATH)の要検証点:**
-
-1. `:WAVeform:SOURce MATH<n>` の可否 — ガイド3.28.1の逐語確認が先(不可ならMATHトレース取得は画面キャプチャ頼みになり価値半減)
-2. MATH無効時のクエリ挙動(沈黙の有無)— :BUSと同様、送信前ガード(プロファイル宣言の不在ゲート)で対処
-3. FFTトレースのプリアンブル解釈(横軸Hz時のxincrement / xorigin)— 実機検証項目
-4. ホスト側FFT(`analyze_waveform`)との棲み分け: 機上FFTは「画面に出る(人間が確認できる)」「ピーク表がテキストで取れる(波形転送ゼロ)」点で別価値
 
 **見送り(再検討の条件つき):**
 
@@ -84,6 +77,30 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 | :QUICk / :LAN / :SAVE | 3.18/3.14/3.21 | ボタン割当・ネット設定・本体保存はMCPから触る価値薄 |
 
 (:LA は 2.2 に既載のため本表から除外)
+
+### 2.5.1 M1: MATH演算(実装完了・実機検証は残件)
+
+**`configure_math`(SAFE_WRITE)と `get_math_state`(READ_ONLY)を実装済み**([tools.md](tools.md) 11章)。ホスト側FFT(`analyze_waveform`)との棲み分けは当初の想定どおり — 機上FFTは「画面に出る(人間が確認できる)」「ピーク表がテキストで取れる(波形転送ゼロ)」点で別価値がある。
+
+- **`configure_math`**: 演算子21種(加減乗除・論理4種・FFT・微積分系・デジタルフィルタ4種・AXB)、算術ソース(`source1` / `source2`)と論理ソース(`lsource1` / `lsource2`)、垂直(`scale` / `offset_v` / `invert`)、`fft` サブ辞書(入力ch・窓・単位・モード・平均回数・縦軸・表示周波数範囲・ピーク探索6項目)、`filter` サブ辞書(種別・W1・W2)。**送信順は表示ONが先頭・OFFが末尾**に固定(表示OFF中の書き込み無視quirk対策)。検証は全て送信前で、不正が1つでもあれば1コマンドも送らない
+- **`get_math_state`**: 演算子に応じた条件付き読み取り(未検証サブツリーを突かない)。`:MATH<n>:FFT:SEARch:RES?` のピーク表は当初方針どおり**Toolを増やさず**返却の `peaks` に含める(解釈できない行は `raw` + `peak_warnings` で fail-open)
+- **波形取得**: 当初の「`source` 引数拡張」ではなく**既存の `channel` 引数を拡張**する形で実現した(引数を増やさない)。`capture_waveform` / `analyze_waveform` が `"MATH1"`〜`"MATH4"` を受理し、`read_samples` 経路をそのまま流用する。FFT演算のトレースは `x_unit: "Hz"` を付けて `effective_sample_rate_sa_per_s` を省き、`analyze_waveform` では**取得前に `INVALID_PARAMETER` で拒否**する(横軸が周波数のトレースに時間軸統計・ホスト側FFTは意味を持たないため)
+- **プロファイル宣言**: capabilities に `math_channels` / `ref_channels`、dialect に `math_operators` / `math_fft_windows` / `math_fft_units` / `math_fft_modes` / `math_fft_search_orders` / `math_filter_types`(`mho98.yaml` のみ。[device-profiles.md](device-profiles.md) 2.1 / 2.2)。`:MATH<n>` はファミリ分岐の実例が無いため `math_prefix` 方言は作らず、`math_channels` の宣言の不在をそのままゲートにしている
+- **`:WAVeform:SOURce MATH<n>` の可否は解決済み**: ガイド3.28.1に `{CHANnel1-4|MATH1-4}` と逐語で記載があり(`NORMal` モード限定 = 既定で使用しているモード)、M1最大のリスクだった「取得不能なら画面キャプチャ頼み」は回避できた
+
+**意図的にスキップ(ガイド3.16にあるが実装しない):**
+
+- `:FFT:HSCale` / `:FFT:HCENter` — `fft.freq_start_hz` / `fft.freq_end_hz` で表現できる別表現(AFGの `:PERiod` 恒久スキップと同じ原則)
+- `GRID` / `EXPand` / `RESet` / `WAVetype` / `SENSitivity` / `DISTance` / `THReshold`(論理演算のしきい値)/ `WINDow:TITLe?` / `LABel:SHOW` / `DISMode` — 画面装飾・本体UI寄りの項目で、MCPから触る価値が薄い
+
+**残件(実機検証。記録先は [verification/mho98-math.md](verification/mho98-math.md) — 現時点では手順のみのスケルトンで、実測結果は未記入):**
+
+1. **MATH表示OFF時のクエリ挙動(沈黙の有無)** — fail-dangerousのため最初に確認する。沈黙する場合は `get_math_state` が先頭で読む `:DISPlay?` を短絡点にする
+2. `:MATH1:OPERator?` の工場出荷デフォルトreadbackトークン(短形の実測裏取り)
+3. **FFTトレースのプリアンブル解釈**(横軸Hz時の xincrement / xorigin)と、`:FFT:SEARch:RES?` の実フォーマット(`UNIT VRMS` / `DB` の両方、行区切りが改行か `;` か)。**LAN transportの `query()` は1行しか読まないため、真に複数行で返る場合は切り詰められる**(実装が明示している未解決リスク)
+4. `configure_math` の往復(現在値取得 → set → readback → finally復元)
+5. 表示OFF中の書き込み無視quirkの有無 — 結果次第でAFG式の送信前拒否を追加する
+6. FFT + ピーク表 + `capture_waveform("MATH1")` のE2E(`x_unit` と `note` の文言を確定する)
 
 ## 3. プラグイン化(完了・要件へ昇格)
 

@@ -21,7 +21,7 @@ mise外のシェルでは `mise exec -- uv run ...` を使う。
 ## アーキテクチャ
 
 ```
-server.py(FastMCP、28 Tool、同期def+lock直列化)
+server.py(FastMCP、30 Tool、同期def+lock直列化)
   → service/(connection / state / measurement / waveform / analysis / screenshot / control / decode / paths)
   → safety/(操作クラス表 / confirmトークン / 監査ログJSONL)
   → driver/(session: drain・set_and_verify / scope: プロファイル対応SCPI生成 / decode: :BUS変換表)
