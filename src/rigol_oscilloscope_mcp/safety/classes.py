@@ -76,6 +76,13 @@ TOOL_CLASSES: dict[str, OperationClass] = {
     # プリセットの周波数・位相を再適用して両チャンネルの位相を揃えるだけの操作で、
     # 振幅・出力状態(信号が出るかどうか)には一切触れないため SAFE_WRITE。
     "sync_afg_phase": OperationClass.SAFE_WRITE,
+    # 8. MATH演算(tools.md、Phase M1)
+    # configure_math はオシロ内蔵の演算トレース(表示・解析層)だけを変える完全に
+    # 可逆な操作で、取り込み設定にも出力にも触れないため configure_decode と同じ
+    # SAFE_WRITE。50Ω・信号出力のような引数依存の昇格も無い(演算子と引数の
+    # 結合制約は機器のエラーキューが返す)。
+    "configure_math": OperationClass.SAFE_WRITE,
+    "get_math_state": OperationClass.READ_ONLY,
     # 9. Raw SCPI(開発用・デフォルト無効)
     "raw_scpi": OperationClass.DANGEROUS_WRITE,
 }

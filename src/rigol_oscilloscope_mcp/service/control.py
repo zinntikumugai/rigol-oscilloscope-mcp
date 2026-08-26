@@ -413,6 +413,65 @@ class ControlService:
             record.after({})
         return {"result": "ok"}
 
+    def configure_math(
+        self,
+        driver: ScopeDriver,
+        channel: int = 1,
+        *,
+        display: bool | None = None,
+        operator: str | None = None,
+        source1: str | None = None,
+        source2: str | None = None,
+        lsource1: str | None = None,
+        lsource2: str | None = None,
+        scale: float | None = None,
+        offset_v: float | None = None,
+        invert: bool | None = None,
+        fft: dict | None = None,
+        # `filter` は組込み名と重なるが、Tool引数名(ガイドの :FILTer)を優先する
+        filter: dict | None = None,
+    ) -> dict:
+        """MATH演算を設定する(SAFE_WRITE)。未指定の項目は変更しない。
+
+        configure_decode と同じ根拠で承認は要求しない: 表示・解析層のみを変える
+        完全に可逆な操作で、取り込み設定にも出力にも触れない。引数依存の昇格も無い。
+        """
+        items = {
+            "display": display,
+            "operator": operator,
+            "source1": source1,
+            "source2": source2,
+            "lsource1": lsource1,
+            "lsource2": lsource2,
+            "scale": scale,
+            "offset_v": offset_v,
+            "invert": invert,
+            "fft": fft,
+            "filter": filter,
+        }
+        requested = _specified(items)
+        if not requested:
+            raise _invalid(
+                "No item to change was specified "
+                f"(specify at least one of {' / '.join(items)})",
+                {"channel": channel},
+            )
+
+        args = {"channel": channel, **requested}
+        with self._audited("configure_math", args) as record:
+            before = driver.get_math_config(channel)
+            record.before(before)
+            applied = driver.configure_math(channel, **requested)
+            after = driver.get_math_config(channel)
+            record.after(after)
+
+        return {
+            "channel": after["channel"],
+            "requested": requested,
+            "applied": applied,
+            "changed": before != after,
+        }
+
     # -- Acquisition ------------------------------------------------------
 
     def run(self, driver: ScopeDriver) -> dict:

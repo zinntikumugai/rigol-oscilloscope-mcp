@@ -345,9 +345,19 @@ def create_server(
     def capture_waveform(channel: str, max_points: int | None = None) -> dict:
         """Capture waveform data and return it converted to volts (V).
 
+        channel is "CH1"-"CH4" or a math trace "MATH1"-"MATH4" (configure one
+        with configure_math). A math trace is read as the data currently
+        displayed on screen, so turn its display on first.
+
         When there are many points the data is written to a CSV file and its
         path is returned in data_file. Screen data may be decimated, so read the
         effective sample rate as the reciprocal of sample_interval_s.
+
+        A math trace using the fft operator has a frequency x axis: it returns
+        x_unit "Hz" (sample_interval_s is then the frequency step in hertz and
+        time_origin_s the start frequency) and no
+        effective_sample_rate_sa_per_s. Every other source keeps the time axis
+        and the usual shape.
         """
         return service.capture_waveform(
             manager.require_scope(), resolved_config, channel, max_points
@@ -366,6 +376,12 @@ def create_server(
         when omitted). stats gives min/max/mean/rms/std/vpp in volts; fft gives
         the dominant frequency and the strongest peaks. Frequency accuracy is
         limited by frequency_resolution_hz, so do not read more digits than that.
+
+        channel is "CH1"-"CH4" or a math trace "MATH1"-"MATH4". A math trace
+        using the fft operator is rejected: its x axis is already frequency, so
+        time-domain statistics and a host-side FFT are meaningless. Read the
+        instrument's own peak table with get_math_state, or fetch the spectrum
+        points with capture_waveform.
         """
         return service.analyze_waveform(
             manager.require_scope(), resolved_config, channel, analyses, max_points
@@ -710,6 +726,115 @@ def create_server(
         both generator channels are affected.
         """
         return control.sync_afg_phase(manager.require_scope(), channel)
+
+    # -- MATH演算(tools.md、Phase M1)--------------------------------------
+
+    @_register
+    def configure_math(
+        channel: int = 1,
+        display: bool | None = None,
+        operator: str | None = None,
+        source1: str | None = None,
+        source2: str | None = None,
+        lsource1: str | None = None,
+        lsource2: str | None = None,
+        scale: float | None = None,
+        offset_v: float | None = None,
+        invert: bool | None = None,
+        fft: dict | None = None,
+        filter: dict | None = None,
+    ) -> dict:
+        """Configure a math (waveform arithmetic) trace. Omitted items are left unchanged.
+
+        This computes a new trace inside the instrument from channels already
+        being acquired; it changes nothing about the acquisition itself and
+        drives no output. channel is the math trace 1-4 (see get_capabilities
+        math_channels). Specify at least one item to change. Read the result
+        back with get_math_state, and fetch the trace with
+        capture_waveform(channel="MATH1").
+
+        operator is add / subtract / multiply / divide / and / or / xor / not /
+        fft / integrate / differentiate / sqrt / log10 / ln / exp / abs /
+        lowpass / highpass / bandpass / bandstop / axb.
+
+        source1 and source2 are the operands of the arithmetic operators:
+        "CH1"-"CH4", "REF1"-"REF10", or another math trace "MATH1"-"MATH4".
+        A math trace may only use a LOWER-numbered one (MATH2 can read MATH1,
+        never MATH2 or MATH3), so cascade upwards.
+        lsource1 and lsource2 are the operands of the logic operators
+        (and / or / xor / not) and take "D0"-"D15" or "CH1"-"CH4" instead.
+        scale is the vertical scale per division and offset_v the vertical
+        offset in volts of the resulting trace; invert flips it vertically.
+
+        fft is a dict for the fft operator, with any of: source (the input
+        channel of the FFT - this is what selects it, not source1), window
+        (rectangle / blackman / hanning / hamming / flattop / triangle), unit
+        (vrms / db), mode (normal / average / maxhold), average_count (2-1000),
+        scale and offset (vertical, in the unit above), freq_start_hz and
+        freq_end_hz (the displayed span in hertz), search_enabled (bool, turns
+        the instrument's peak table on), search_num (how many peaks),
+        search_threshold and search_excursion (in the vertical unit), and
+        search_order (amplitude / frequency). Read the peaks themselves back
+        with get_math_state.
+
+        filter is a dict for the lowpass / highpass / bandpass / bandstop
+        operators, with any of: type (lowpass / highpass / bandpass /
+        bandstop), w1_hz and w2_hz (the cut-off frequencies in hertz; w1 must
+        be below w2 for bandpass and bandstop).
+
+        Which parameters are valid depends on the operator, and the instrument
+        enforces that: scale and offset_v do not exist for the logic operators
+        or for fft (fft has its own scale and offset inside the fft dict), and
+        a rejected write is reported as an error. Set the operator in the same
+        call as its parameters. The device may snap values, so trust applied
+        (the read-back value), not requested.
+        """
+        return control.configure_math(
+            manager.require_scope(),
+            channel,
+            display=display,
+            operator=operator,
+            source1=source1,
+            source2=source2,
+            lsource1=lsource1,
+            lsource2=lsource2,
+            scale=scale,
+            offset_v=offset_v,
+            invert=invert,
+            fft=fft,
+            filter=filter,
+        )
+
+    @_register
+    def get_math_state(channel: int | None = None) -> dict:
+        """Return the math trace settings (channel, display, operator, sources).
+
+        With channel given (1-4), that trace's settings are returned flat. With
+        channel omitted, every math trace is returned under channels, keyed by
+        the trace number as a string: {"channels": {"1": {...}, ..., "4": {...}}}.
+
+        Only the keys that mean something for the current operator are read:
+        scale and offset_v for the arithmetic operators, lsource1 and lsource2
+        for the logic ones, an fft dict for the fft operator and a filter dict
+        for the filter ones. With the fft operator and search_enabled true, the
+        instrument's own peak table is returned in peaks, each entry having
+        index, frequency_hz, amplitude and amplitude_unit (lines that could not
+        be parsed are returned raw and noted in peak_warnings).
+
+        This is read-only and never changes the display. It costs a few queries
+        per trace (about 20 for an fft trace).
+        """
+        driver = manager.require_scope()
+        if channel is not None:
+            return driver.get_math_config(channel)
+        # 非対応機では math_channels が 0。1本だけ問い合わせて
+        # UNSUPPORTED_FEATURE を返させる(空dictを「正常」に見せない)
+        count = driver.math_channels or 1
+        return {
+            "channels": {
+                str(n): driver.get_math_config(n) for n in range(1, count + 1)
+            }
+        }
 
     # -- Acquisition(tools.md 4章)-----------------------------------------
 

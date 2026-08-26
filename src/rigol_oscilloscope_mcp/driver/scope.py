@@ -169,10 +169,13 @@ _MATH_VERTICAL_ITEMS: tuple[tuple[str, str, object], ...] = (
     ("invert", ":INVert", "bool"),
 )
 
-#: FFTサブツリー(ガイド3.16.15-29)。HSCale / HCENter は意図的に非対応
+#: FFTサブツリー(ガイド3.16.14-29)。HSCale / HCENter は意図的に非対応
 #: (freq_start_hz / freq_end_hz で表現する)。average_count の範囲はガイド逐語。
 #: search_num の範囲はガイド抽出がページ跨ぎで欠落しているため上限を置かない。
+#: `source` はFFT演算の入力ch(`:SOURce1` ではなくこちらが使われる)。トークンの
+#: 規則は `:SOURce1` と同じ("source" 種別)。
 _MATH_FFT_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":FFT:SOURce", "source"),
     ("window", ":FFT:WINDow", ("enum", "math_fft_windows", "the FFT window")),
     ("unit", ":FFT:UNIT", ("enum", "math_fft_units", "the FFT vertical unit")),
     ("mode", ":FFT:MODE", ("enum", "math_fft_modes", "the FFT operation mode")),

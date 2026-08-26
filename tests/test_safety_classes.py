@@ -39,6 +39,8 @@ EXPECTED = {
     "enable_afg": "DANGEROUS_WRITE",
     "disable_afg": "SAFE_WRITE",
     "sync_afg_phase": "SAFE_WRITE",
+    "configure_math": "SAFE_WRITE",
+    "get_math_state": "READ_ONLY",
     "raw_scpi": "DANGEROUS_WRITE",
 }
 

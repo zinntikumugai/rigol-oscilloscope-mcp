@@ -2237,6 +2237,30 @@ def test_configure_math_fft_subtree_uses_guide_mnemonics(
     }
 
 
+def test_configure_math_fft_source_uses_its_own_command(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """FFTの入力chは `:FFT:SOURce`(`:SOURce1` ではない。ガイド3.16.14)。"""
+    applied = driver.configure_math(2, operator="fft", fft={"source": "CH3"})
+
+    assert math_writes(scope) == [
+        ":MATH2:OPERator FFT",
+        ":MATH2:FFT:SOURce CHANnel3",
+    ]
+    assert applied["fft"]["source"] == "CH3"
+
+
+def test_configure_math_fft_source_obeys_the_cascade_rule(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`SOURce1` と同じトークン検証(カスケードは m<n のみ)。送信ゼロで拒否。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_math(1, fft={"source": "MATH2"})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
 def test_configure_math_filter_subtree(driver: ScopeDriver, scope: FakeScope) -> None:
     applied = driver.configure_math(
         1, operator="bandpass", filter={"type": "bandpass", "w1_hz": 1e5, "w2_hz": 1e6}
@@ -2469,6 +2493,7 @@ def test_get_math_config_fft_reads_the_subtree_without_peaks(
     scope.math[1]["operator"] = "FFT"
     config = driver.get_math_config(1)
 
+    assert config["fft"]["source"] == "CH1"
     assert config["fft"]["window"] == "hanning"
     assert config["fft"]["unit"] == "db"
     assert config["fft"]["search_enabled"] is False
