@@ -1560,6 +1560,26 @@ def test_configure_math_reports_changed(
     assert service.configure_math(driver, 1, operator="fft")["changed"] is False
 
 
+def test_configure_math_changed_ignores_dynamic_peaks(
+    service: ControlService, driver: ScopeDriver, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ピーク表は測定のたびに変わるので changed の判定材料にしない。
+
+    設定が同一でも peaks が動くだけで changed=True になっていた(Copilotレビュー指摘)。
+    """
+    service.configure_math(driver, 1, operator="fft", fft={"search_enabled": True})
+
+    reads = iter(
+        [
+            {"channel": 1, "operator": "fft", "peaks": [{"index": 1}]},
+            {"channel": 1, "operator": "fft", "peaks": [{"index": 2}]},
+        ]
+    )
+    monkeypatch.setattr(driver, "get_math_config", lambda channel: next(reads))
+
+    assert service.configure_math(driver, 1, operator="fft")["changed"] is False
+
+
 def test_configure_math_rejects_all_none(
     service: ControlService, driver: ScopeDriver, scope: FakeScope
 ) -> None:

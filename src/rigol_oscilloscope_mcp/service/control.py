@@ -71,6 +71,16 @@ def _specified(values: dict) -> dict:
     return {key: value for key, value in values.items() if value is not None}
 
 
+#: `get_math_config` の返却のうち、設定ではなく測定結果として毎回変わりうるキー。
+#: `changed` の判定から除く(監査ログには完全なスナップショットを残す)。
+_MATH_DYNAMIC_KEYS = ("peaks", "peak_warnings")
+
+
+def _math_settings(state: dict) -> dict:
+    """MATH状態から設定項目だけを取り出す(ピーク表などの動的値を除く)。"""
+    return {key: value for key, value in state.items() if key not in _MATH_DYNAMIC_KEYS}
+
+
 def _is_restricted_impedance(impedance: str | None) -> bool:
     """`"50"` のみ昇格対象。表記ゆれ(前後空白)は吸収する。"""
     return isinstance(impedance, str) and impedance.strip() == RESTRICTED_IMPEDANCE
@@ -469,7 +479,7 @@ class ControlService:
             "channel": after["channel"],
             "requested": requested,
             "applied": applied,
-            "changed": before != after,
+            "changed": _math_settings(before) != _math_settings(after),
         }
 
     # -- Acquisition ------------------------------------------------------
