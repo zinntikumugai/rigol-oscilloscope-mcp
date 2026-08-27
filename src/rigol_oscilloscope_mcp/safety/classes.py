@@ -83,7 +83,21 @@ TOOL_CLASSES: dict[str, OperationClass] = {
     # 結合制約は機器のエラーキューが返す)。
     "configure_math": OperationClass.SAFE_WRITE,
     "get_math_state": OperationClass.READ_ONLY,
-    # 9. Raw SCPI(開発用・デフォルト無効)
+    # 9. カーソル・周波数カウンタ・電圧計・ヒストグラム(tools.md、Phase M2)
+    # いずれも configure_decode / configure_math と同じ根拠で SAFE_WRITE: 画面の
+    # カーソルと測定表示・統計だけを変える完全に可逆な操作で、取り込み設定にも
+    # 出力にも触れない(信号は1mVも外へ出ない)。50Ω・信号出力のような引数依存の
+    # 昇格も無く、モードとの結合制約(Totalize時の NDIGits 等)は機器のエラー
+    # キューが返す。統計のクリア/リセット(configure_meter の clear_totalize、
+    # configure_histogram の reset)も消えるのは機器が数えた統計だけで、利用者の
+    # 設定は失われないため昇格させない。
+    "configure_cursor": OperationClass.SAFE_WRITE,
+    "get_cursor_measurement": OperationClass.READ_ONLY,
+    "configure_meter": OperationClass.SAFE_WRITE,
+    "get_meter_value": OperationClass.READ_ONLY,
+    "configure_histogram": OperationClass.SAFE_WRITE,
+    "get_histogram_result": OperationClass.READ_ONLY,
+    # 10. Raw SCPI(開発用・デフォルト無効)
     "raw_scpi": OperationClass.DANGEROUS_WRITE,
 }
 

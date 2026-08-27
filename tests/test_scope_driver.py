@@ -2990,9 +2990,15 @@ def test_get_meter_config_returns_semantic_values(
 def test_get_meter_value_reads_the_current_command(
     driver: ScopeDriver, scope: FakeScope
 ) -> None:
-    """現在値は `:COUNter:CURRent?` / `:DVM:CURRent?`(`:VALue` は存在しない)。"""
+    """現在値は `:COUNter:CURRent?` / `:DVM:CURRent?`(`:VALue` は存在しない)。
+
+    無効な計は現在値を問い合わせないので、有効化してから読む(実機と同じ前提)。
+    """
+    scope.counter["enable"] = True
+    scope.dvm["enable"] = True
+
     assert driver.get_meter_value("counter") == pytest.approx(1.0e3)
-    assert scope.command_log == [":COUNter:CURRent?"]
+    assert scope.command_log == [":COUNter:ENABle?", ":COUNter:CURRent?"]
 
     assert driver.get_meter_value("dvm") == pytest.approx(0.35)
     assert scope.command_log[-1] == ":DVM:CURRent?"
@@ -3001,10 +3007,42 @@ def test_get_meter_value_reads_the_current_command(
 def test_get_meter_value_reports_an_invalid_reading_as_none(
     driver: ScopeDriver, scope: FakeScope
 ) -> None:
+    scope.counter["enable"] = True
     scope.counter["mode"] = "TOT"
     scope.counter["total"] = 9.9e37
 
     assert driver.get_meter_value("counter") is None
+
+
+def test_get_meter_value_while_disabled_does_not_query_the_current(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """M2実機実測: 無効な電圧計の `:DVM:CURRent?` は**空応答**でパースできない。
+
+    無効な計を読むのは普通の操作なので機器故障(SCPI_ERROR)に見せてはならない。
+    `:ENABle?` を先に読み、無効なら現在値クエリ自体を送らない。
+    """
+    assert driver.get_meter_value("dvm") is None
+    assert scope.command_log == [":DVM:ENABle?"]
+
+    scope.command_log.clear()
+    assert driver.get_meter_value("counter") is None
+    assert scope.command_log == [":COUNter:ENABle?"]
+
+
+def test_get_meter_value_tolerates_a_blank_current_response(
+    driver: ScopeDriver, scope: FakeScope, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """有効化直後に空応答が返る取り合わせでも、パースエラーにはしない。"""
+    scope.dvm["enable"] = True
+    real_query = driver.session.query
+    monkeypatch.setattr(
+        driver.session,
+        "query",
+        lambda command: "" if command.endswith(":CURRent?") else real_query(command),
+    )
+
+    assert driver.get_meter_value("dvm") is None
 
 
 def test_clear_counter_totalize_sends_the_action_command(
@@ -3123,27 +3161,87 @@ def test_get_histogram_config_returns_semantic_values(
 def test_get_histogram_result_keeps_the_raw_response(
     driver: ScopeDriver, scope: FakeScope
 ) -> None:
-    """統計表の列の意味はガイド欠落で不明。生文字列を必ず残す(fail-open)。"""
+    """機器がラベル付きで返す統計値を正規化キーで返す。生文字列も必ず残す。"""
+    scope.histogram["enable"] = True
+
     result = driver.get_histogram_result()
 
-    assert result["raw"][0].startswith('[["92"')
-    assert result["rows"][0][:4] == ["92", "1", "0", "Vpp"]
-    assert result["rows"][0][5] == "374hits"
+    assert result["raw"].startswith("[Sum:374hits,")
+    assert result["stats"]["sum"] == pytest.approx(374.0)
+    assert result["stats"]["sum_unit"] == "hits"
+    assert result["stats"]["min"] == pytest.approx(-0.9999)
+    assert result["stats"]["min_unit"] == "V"
+    assert result["stats"]["mean_plus_sigma"] == pytest.approx(0.581421)
     assert "warnings" not in result
+
+
+def test_get_histogram_result_reads_one_line_not_a_multi_line_table(
+    driver: ScopeDriver, scope: FakeScope, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M2実機実測: 統計応答は終端の空行を持たない1行。
+
+    `query_lines` は空行が来るまで読むため、実機ではソケットのタイムアウトまで
+    固まってしまう(FFTピーク表とは書式が違う)。必ず `query` で読むこと。
+    """
+    scope.histogram["enable"] = True
+
+    def _forbidden(command: str) -> list[str]:
+        raise AssertionError(f"query_lines must not be used here: {command}")
+
+    monkeypatch.setattr(driver.session, "query_lines", _forbidden)
+
+    assert driver.get_histogram_result()["stats"]["max"] == pytest.approx(1.562)
 
 
 def test_get_histogram_result_warns_on_an_unparsable_response(
     driver: ScopeDriver, scope: FakeScope, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    scope.histogram["enable"] = True
+    real_query = driver.session.query
     monkeypatch.setattr(
-        driver.session, "query_lines", lambda command: ["something else"]
+        driver.session,
+        "query",
+        lambda command: (
+            "something else" if "STATistics" in command else real_query(command)
+        ),
     )
 
     result = driver.get_histogram_result()
 
-    assert result["raw"] == ["something else"]
-    assert "rows" not in result
+    assert result["raw"] == "something else"
+    assert "stats" not in result
     assert result["warnings"]
+
+
+def test_get_histogram_result_while_disabled_skips_the_statistics_query(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """M2実機実測: 無効時の統計クエリは `[]` を返す上に**エラーキューを汚す**。
+
+    無効なら問い合わせ自体を送らず、なぜ空なのかを warnings で伝える。
+    """
+    result = driver.get_histogram_result()
+
+    assert scope.command_log == [":HISTogram:ENABle?"]
+    assert result["raw"] == ""
+    assert "stats" not in result
+    assert "disabled" in result["warnings"][0]
+
+
+def test_get_histogram_result_while_disabled_leaves_the_error_queue_clean(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """回帰: 汚れたエラーキューは**次の無関係な書き込み**に化けて出る。
+
+    修正前は統計クエリが積んだ -200 を後続の set_and_verify が拾い、
+    まったく別のコマンドが SCPI_ERROR で落ちていた。
+    """
+    driver.get_histogram_result()
+
+    applied = driver.configure_histogram(height=3)
+
+    assert applied == {"height": 3}
+    assert not scope.error_queue
 
 
 def test_reset_histogram_sends_the_action_command(

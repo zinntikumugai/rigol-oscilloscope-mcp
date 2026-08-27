@@ -81,6 +81,21 @@ def _math_settings(state: dict) -> dict:
     return {key: value for key, value in state.items() if key not in _MATH_DYNAMIC_KEYS}
 
 
+#: TRACkモードのカーソルは**Y位置が波形に追従して機器側で動く**。設定として
+#: 指定していなくても読むたびに変わるため、`changed` の判定から除く
+#: (MANualのY位置は利用者が決める設定値なので除かない)。
+_CURSOR_TRACKED_KEYS = ("ay", "by")
+
+
+def _cursor_settings(state: dict) -> dict:
+    """カーソル状態から設定項目だけを取り出す(TRACkの追従Y位置を除く)。"""
+    if state.get("mode") != "track":
+        return state
+    return {
+        key: value for key, value in state.items() if key not in _CURSOR_TRACKED_KEYS
+    }
+
+
 def _is_restricted_impedance(impedance: str | None) -> bool:
     """`"50"` のみ昇格対象。表記ゆれ(前後空白)は吸収する。"""
     return isinstance(impedance, str) and impedance.strip() == RESTRICTED_IMPEDANCE
@@ -480,6 +495,196 @@ class ControlService:
             "requested": requested,
             "applied": applied,
             "changed": _math_settings(before) != _math_settings(after),
+        }
+
+    # -- カーソル・計測器・ヒストグラム(Phase M2)-------------------------
+
+    def configure_cursor(
+        self,
+        driver: ScopeDriver,
+        *,
+        mode: str | None = None,
+        # `type` は組込み名と重なるが、Tool引数名(ガイドの :TYPE)を優先する
+        type: str | None = None,
+        source: str | None = None,
+        source1: str | None = None,
+        source2: str | None = None,
+        ax: float | None = None,
+        ay: float | None = None,
+        bx: float | None = None,
+        by: float | None = None,
+    ) -> dict:
+        """カーソル測定を設定する(SAFE_WRITE)。未指定の項目は変更しない。
+
+        configure_math / configure_decode と同じ根拠で承認は要求しない: 画面の
+        カーソルを動かすだけの完全に可逆な操作で、取り込み設定にも出力にも触れない。
+
+        `changed` の判定はカーソルの**設定**だけで行う(読み値 —
+        ΔX・ΔY等 — は get_cursor_measurement の責務で、常に動く)。
+        """
+        items = {
+            "mode": mode,
+            "type": type,
+            "source": source,
+            "source1": source1,
+            "source2": source2,
+            "ax": ax,
+            "ay": ay,
+            "bx": bx,
+            "by": by,
+        }
+        requested = _specified(items)
+        if not requested:
+            raise _invalid(
+                "No item to change was specified "
+                f"(specify at least one of {' / '.join(items)})",
+                {},
+            )
+
+        with self._audited("configure_cursor", requested) as record:
+            before = driver.get_cursor_config()
+            record.before(before)
+            applied = driver.configure_cursor(**requested)
+            after = driver.get_cursor_config()
+            record.after(after)
+
+        return {
+            "mode": after["mode"],
+            "requested": requested,
+            "applied": applied,
+            "changed": _cursor_settings(before) != _cursor_settings(after),
+        }
+
+    def configure_meter(
+        self,
+        driver: ScopeDriver,
+        kind: str,
+        *,
+        enabled: bool | None = None,
+        source: str | None = None,
+        mode: str | None = None,
+        digits: int | None = None,
+        totalize_enabled: bool | None = None,
+        clear_totalize: bool | None = None,
+    ) -> dict:
+        """周波数カウンタ / 電圧計を設定する(SAFE_WRITE)。未指定の項目は変更しない。
+
+        承認を要求しない根拠は configure_cursor と同じ(測定表示のみ)。
+
+        `clear_totalize` は設定ではなく総カウントの一発クリアなので、**設定を
+        送り終えた後**に実行する(「モードを変えて数え直す」が1往復で済む)。
+        カウンタ専用の統計なので、電圧計へ指定すれば送信前に拒否する。
+        設定を1つも伴わないクリアだけの呼び出しも受け付ける。
+        """
+        items = {
+            "enabled": enabled,
+            "source": source,
+            "mode": mode,
+            "digits": digits,
+            "totalize_enabled": totalize_enabled,
+            "clear_totalize": clear_totalize,
+        }
+        requested = _specified(items)
+        if not requested:
+            raise _invalid(
+                "No item to change was specified "
+                f"(specify at least one of {' / '.join(items)})",
+                {"kind": kind},
+            )
+        if clear_totalize is not None and kind != "counter":
+            raise _invalid(
+                "clear_totalize is only available for the counter meter "
+                f"(kind is {kind!r}): the totalized count is a counter statistic",
+                {"kind": kind},
+            )
+
+        settings = {
+            key: value for key, value in requested.items() if key != "clear_totalize"
+        }
+        args = {"kind": kind, **requested}
+        with self._audited("configure_meter", args) as record:
+            before = driver.get_meter_config(kind)
+            record.before(before)
+            # 設定が空(クリアのみ)なら設定コマンドは1件も送らない
+            applied = (
+                driver.configure_meter(kind, **settings)
+                if settings
+                else {"kind": kind}
+            )
+            if clear_totalize:
+                driver.clear_counter_totalize()
+                applied["clear_totalize"] = True
+            after = driver.get_meter_config(kind)
+            record.after(after)
+
+        return {
+            "kind": after["kind"],
+            "requested": requested,
+            "applied": applied,
+            "changed": before != after,
+        }
+
+    def configure_histogram(
+        self,
+        driver: ScopeDriver,
+        *,
+        enabled: bool | None = None,
+        # `type` は組込み名と重なるが、Tool引数名(ガイドの :TYPE)を優先する
+        type: str | None = None,
+        source: str | None = None,
+        height: int | None = None,
+        left_s: float | None = None,
+        right_s: float | None = None,
+        bottom_v: float | None = None,
+        top_v: float | None = None,
+        reset: bool | None = None,
+    ) -> dict:
+        """ヒストグラムを設定する(SAFE_WRITE)。未指定の項目は変更しない。
+
+        承認を要求しない根拠は configure_cursor と同じ(表示・解析層のみ)。
+
+        `reset` は設定ではなく統計の一発リセットなので、**設定を送り終えた後**に
+        実行する(「対象を変えて取り直す」が1往復で済む)。設定を1つも伴わない
+        リセットだけの呼び出しも受け付ける。
+
+        `changed` の判定はヒストグラムの**設定**だけで行う(統計はヒット数が
+        増え続ける動的値で、get_histogram_result の責務)。
+        """
+        items = {
+            "enabled": enabled,
+            "type": type,
+            "source": source,
+            "height": height,
+            "left_s": left_s,
+            "right_s": right_s,
+            "bottom_v": bottom_v,
+            "top_v": top_v,
+            "reset": reset,
+        }
+        requested = _specified(items)
+        if not requested:
+            raise _invalid(
+                "No item to change was specified "
+                f"(specify at least one of {' / '.join(items)})",
+                {},
+            )
+
+        settings = {key: value for key, value in requested.items() if key != "reset"}
+        with self._audited("configure_histogram", requested) as record:
+            before = driver.get_histogram_config()
+            record.before(before)
+            # 設定が空(リセットのみ)なら設定コマンドは1件も送らない
+            applied = driver.configure_histogram(**settings) if settings else {}
+            if reset:
+                driver.reset_histogram()
+                applied["reset"] = True
+            after = driver.get_histogram_config()
+            record.after(after)
+
+        return {
+            "requested": requested,
+            "applied": applied,
+            "changed": before != after,
         }
 
     # -- Acquisition ------------------------------------------------------

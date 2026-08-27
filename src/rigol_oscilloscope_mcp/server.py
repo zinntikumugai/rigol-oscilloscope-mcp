@@ -836,6 +836,211 @@ def create_server(
             }
         }
 
+    # -- カーソル・計測器・ヒストグラム(tools.md、Phase M2)-----------------
+
+    @_register
+    def configure_cursor(
+        mode: str | None = None,
+        type: str | None = None,
+        source: str | None = None,
+        source1: str | None = None,
+        source2: str | None = None,
+        ax: float | None = None,
+        ay: float | None = None,
+        bx: float | None = None,
+        by: float | None = None,
+    ) -> dict:
+        """Configure the on-screen measurement cursors. Omitted items are left unchanged.
+
+        This only moves the cursors the instrument draws over the trace: the
+        acquisition is untouched and no output is driven. Read what the cursors
+        report with get_cursor_measurement.
+
+        mode is off / manual / track / xy. In manual mode both cursors are
+        placed freely; in track mode they follow their source waveform.
+        Positions and sources belong to the subtree of the ACTIVE mode: type
+        and source are manual-only, source1 and source2 are track-only, and
+        giving one to the other mode is rejected. When mode is omitted, the
+        mode currently set on the instrument decides which subtree is written.
+        While the mode is off or xy there is nowhere to write, so positions are
+        rejected: mode="xy" is accepted as a mode (it is one the device
+        supports) but its own position subtree is not exposed by this server.
+
+        type is time / amplitude and selects what the manual cursors measure.
+        source, source1 and source2 are "CH1"-"CH4", "MATH1"-"MATH4" or "NONE"
+        (reference waveforms and digital channels are not valid cursor sources).
+
+        ax and bx are the X positions of cursor A and B in seconds, ay and by
+        their Y positions in volts.
+
+        Specify at least one item to change. The device may snap values, so
+        trust applied (the read-back value), not requested.
+        """
+        return control.configure_cursor(
+            manager.require_scope(),
+            mode=mode,
+            type=type,
+            source=source,
+            source1=source1,
+            source2=source2,
+            ax=ax,
+            ay=ay,
+            bx=bx,
+            by=by,
+        )
+
+    @_register
+    def get_cursor_measurement() -> dict:
+        """Read what the cursors currently measure (positions and deltas).
+
+        Returns mode and, from the active manual or track subtree, ax_s and
+        bx_s (the X positions in seconds), ay_v and by_v (the Y positions in
+        volts), xdelta_s and ydelta_v (cursor B minus cursor A) and ixdelta_hz
+        (1/deltaX, the frequency that time difference corresponds to). A
+        reading the instrument cannot produce (1/deltaX with deltaX = 0) is
+        returned as null.
+
+        While the cursor mode is off or xy there is nothing to read and only
+        mode is returned; place the cursors with configure_cursor first.
+        """
+        return manager.require_scope().get_cursor_measurement()
+
+    @_register
+    def configure_meter(
+        kind: str,
+        enabled: bool | None = None,
+        source: str | None = None,
+        mode: str | None = None,
+        digits: int | None = None,
+        totalize_enabled: bool | None = None,
+        clear_totalize: bool | None = None,
+    ) -> dict:
+        """Configure the frequency counter or the digital voltmeter. Omitted items are left unchanged.
+
+        kind selects which one: "counter" or "dvm". Both only add a reading to
+        the display; the acquisition is untouched and no output is driven. Read
+        the value itself with get_meter_value.
+
+        mode for the counter is frequency / period / totalize (totalize counts
+        events instead of measuring a rate). mode for the dvm is ac_rms / dc /
+        dc_rms (ac_rms is the RMS with the DC component removed, dc the
+        average, dc_rms the RMS of the whole signal).
+
+        source for the counter is "CH1"-"CH4" or a digital channel "D0"-"D15";
+        the dvm accepts analog channels only. enabled turns the reading on.
+
+        digits (the counter resolution, 3-6 digits) and totalize_enabled (the
+        counter's totalize statistics) exist for the counter only. How they
+        couple to the mode is enforced by the instrument, not host-side: digits
+        is rejected while the mode is totalize, and totalize_enabled is invalid
+        in totalize mode (it applies to frequency and period). A rejected write
+        comes back as an error, so set the mode in the same call as the
+        parameters that depend on it.
+
+        clear_totalize=true clears the totalized count. It is sent after the
+        settings, so a single call can switch to totalize and start counting
+        from zero. It is a counter-only item and the instrument accepts it in
+        totalize mode only.
+
+        Specify at least one item to change. The device may snap values, so
+        trust applied (the read-back value), not requested.
+        """
+        return control.configure_meter(
+            manager.require_scope(),
+            kind,
+            enabled=enabled,
+            source=source,
+            mode=mode,
+            digits=digits,
+            totalize_enabled=totalize_enabled,
+            clear_totalize=clear_totalize,
+        )
+
+    @_register
+    def get_meter_value(kind: str) -> dict:
+        """Read the current frequency counter or digital voltmeter value with its unit.
+
+        kind is "counter" or "dvm". The unit depends on the mode, so value is
+        returned together with the mode that produced it and the matching unit:
+        Hz for frequency, s for period, counts for totalize, and V for every
+        dvm mode. A reading the instrument cannot produce is returned as null.
+
+        The meter's settings come back alongside the value: value is null while
+        enabled is false, because a meter that is off has no reading to give,
+        and source says what is being measured. Turn the meter on with
+        configure_meter first.
+        """
+        return service.get_meter_value(manager.require_scope(), kind)
+
+    @_register
+    def configure_histogram(
+        enabled: bool | None = None,
+        type: str | None = None,
+        source: str | None = None,
+        height: int | None = None,
+        left_s: float | None = None,
+        right_s: float | None = None,
+        bottom_v: float | None = None,
+        top_v: float | None = None,
+        reset: bool | None = None,
+    ) -> dict:
+        """Configure the waveform histogram. Omitted items are left unchanged.
+
+        The histogram is a statistics display the instrument computes from the
+        trace it is already acquiring: the acquisition is untouched and no
+        output is driven. Read the statistics with get_histogram_result.
+
+        type is horizontal (a histogram over time) or vertical (over voltage).
+        source is an analog channel "CH1"-"CH4". height is the display height
+        in divisions (1-4).
+
+        left_s and right_s bound the histogram window in seconds, bottom_v and
+        top_v in volts. left_s must be smaller than right_s, and bottom_v
+        smaller than top_v. That is checked host-side only when both bounds of
+        a pair are given in the same call; moving one bound alone past the
+        current opposite bound is rejected by the instrument as an error, and
+        the remedy is to send both bounds of the pair in one call.
+
+        reset=true restarts the statistics. It is sent after the settings, so a
+        single call can change the source and start collecting again.
+
+        Specify at least one item to change. The device may snap values, so
+        trust applied (the read-back value), not requested.
+        """
+        return control.configure_histogram(
+            manager.require_scope(),
+            enabled=enabled,
+            type=type,
+            source=source,
+            height=height,
+            left_s=left_s,
+            right_s=right_s,
+            bottom_v=bottom_v,
+            top_v=top_v,
+            reset=reset,
+        )
+
+    @_register
+    def get_histogram_result() -> dict:
+        """Read the histogram statistics.
+
+        raw is always present: the response line exactly as the instrument sent
+        it, e.g. "[Sum:30.37khits, Max:1.562V, Min:-999.9mV, ...]". stats holds
+        the same values parsed, keyed by the instrument's own labels in
+        snake_case: sum, peaks, max, min, pk_pk, mean, median, mode, bin_width,
+        sigma, mean_plus_sigma, mean_plus2_sigma, mean_plus3_sigma. Every value
+        is a number in base units - SI prefixes are already applied, so
+        "30.37khits" comes back as 30370.0 - and the unit of a value that has
+        one is in the matching <key>_unit key ("hits", "V"); the sigma-multiple
+        values are unitless and have no _unit key. warnings says so when part
+        of the response could not be interpreted, and when the histogram is
+        disabled: nothing is read in that case and raw comes back empty.
+
+        Enable the histogram with configure_histogram first, and stop the
+        acquisition (stop) before reading if you need a stable snapshot.
+        """
+        return manager.require_scope().get_histogram_result()
+
     # -- Acquisition(tools.md 4章)-----------------------------------------
 
     @_register

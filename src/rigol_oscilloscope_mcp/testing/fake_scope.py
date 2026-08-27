@@ -29,6 +29,9 @@ IDN = "RIGOL TECHNOLOGIES,MHO98,FAKE0000000001,00.01.00"
 NO_ERROR = '0,"No error"'
 COMMAND_ERROR = '-100,"Command err"'
 OUT_OF_RANGE = '-222,"Data out of range"'
+#: M2実機実測: 無効化中の `:HISTogram:STATistics:RESult?` が `[]` を返しつつ
+#: **エラーキューを汚す**(沈黙はしない)。共有状態の汚染なので再現が要る
+EXECUTE_ERROR = '-200,"Command execute failed"'
 
 # phase0実測のプリアンブル。yorigin(第9要素)だけは定数ではなく、
 # チャンネルoffsetの生カウント換算(= offset / yincrement)で動的に決まる。
@@ -511,12 +514,23 @@ _HISTOGRAM_PROPS: tuple[tuple[str, str, object, object], ...] = (
     ("top", "RANGe:TOP", "nr3", 1.0),
     ("bottom", "RANGe:BOTTom", "nr3", -1.0),
 )
-#: `:HISTogram:STATistics:RESult?` の返却行。**ガイド本文はページ欠落で形式不明**の
-#: ため、同種の `:MEASure:HISTogram:STATistics:RESult?`(3.17.32)の実例をそのまま
-#: 使う。ヒット数の2列だけ状態(RESetで0)に連動させる。**要実機検証**
-_HISTOGRAM_RESULT_ROW: tuple[str, ...] = (
-    "92", "1", "0", "Vpp", "0", "{hits}hits", "{peak}hits", "1.949V", "1.907V",
-    "42.26mV", "1.924V", "1.924V", "1.924V", "191.2uV", "6.123mV", "19.12mV",
+#: `:HISTogram:STATistics:RESult?` の返却項目。**M2実機実測**(MHO98 fw 00.01.00、
+#: source CH2 / VERTical)の書式そのまま — 機器自身がラベルを持ち、値はSI接頭辞
+#: 付き、末尾3項目は単位なし。ヒット数の2項目だけ状態(RESetで0)に連動させる。
+_HISTOGRAM_RESULT_ITEMS: tuple[tuple[str, str], ...] = (
+    ("Sum", "{hits}hits"),
+    ("Peaks", "{peak}hits"),
+    ("Max", "1.562V"),
+    ("Min", "-999.9mV"),
+    ("Pk_Pk", "2.562V"),
+    ("Mean", "265.1mV"),
+    ("Median", "281.2mV"),
+    ("Mode", "1.421V"),
+    ("Bin width", "15.62mV"),
+    ("Sigma", "6.159mV"),
+    ("meanPlusSigma", "0.581421"),
+    ("meanPlus2Sigma", "1.000000"),
+    ("meanPlus3Sigma", "1.000000"),
 )
 _HISTOGRAM_HITS = (374, 38)
 
@@ -1147,12 +1161,7 @@ class FakeScope:
                 rf"{counter}:{_mn('TOTalize')}:{_mn('CLEar')}",
                 lambda m: self._counter_clear(),
             ),
-            (
-                rf"{dvm}:{_mn('CURRent')}\?",
-                lambda m: _nr3_single_digit_exponent(
-                    _DVM_VALUES[str(self.dvm["mode"])]
-                ).encode("ascii"),
-            ),
+            (rf"{dvm}:{_mn('CURRent')}\?", lambda m: self._dvm_current()),
         ]
         return entries
 
@@ -1477,6 +1486,18 @@ class FakeScope:
 
     # -- 内部: 周波数カウンタ・ヒストグラム -------------------------------
 
+    def _dvm_current(self) -> bytes:
+        """M2実機実測: 電圧計が無効なら**空応答**(数値ではない)。
+
+        `:COUNter:CURRent?` は無効でも数値を返す(実機は `0`)ので、この癖は
+        電圧計だけのもの。空応答は「値が無い」であって機器故障ではない。
+        """
+        if not self.dvm["enable"]:
+            return b""
+        return _nr3_single_digit_exponent(
+            _DVM_VALUES[str(self.dvm["mode"])]
+        ).encode("ascii")
+
     def _counter_current(self) -> bytes:
         mode = str(self.counter["mode"])
         value = _COUNTER_VALUES.get(mode, float(self.counter["total"]))
@@ -1487,17 +1508,28 @@ class FakeScope:
         return None
 
     def _histogram_result(self) -> bytes:
-        """統計表。**書式はガイド本文がページ欠落で不明のため要実機検証**。"""
-        row = ",".join(
-            '"{}"'.format(
-                cell.format(
+        """統計表(M2実機実測の `[Label:Value, ...]` を1行で返す)。
+
+        FFTピーク表と違い**終端の空行は無い**(改行1本で終わる)。`query_lines`
+        で読もうとすると実機は空行待ちで固まるため、ここも空行を付けない。
+
+        M2実機実測: ヒストグラムが無効だと `[]` を返し、**同時に
+        `-200,"Command execute failed"` をエラーキューへ積む**。沈黙しないので
+        呼び出し側は気付けず、汚染は次の書き込みの `:SYSTem:ERRor?` に化けて出る。
+        """
+        if not self.histogram["enable"]:
+            self.error_queue.append(EXECUTE_ERROR)
+            return b"[]\n"
+        entries = ", ".join(
+            "{}:{}".format(
+                label,
+                value.format(
                     hits=self.histogram["hits"], peak=self.histogram["peak_hits"]
-                )
+                ),
             )
-            for cell in _HISTOGRAM_RESULT_ROW
+            for label, value in _HISTOGRAM_RESULT_ITEMS
         )
-        # ピーク表(:MATH:FFT:SEARch:RES?)と同じく終端の空行を1本付ける
-        return f"[[{row}]]\n\n".encode("ascii")
+        return f"[{entries}]\n".encode("ascii")
 
     def _histogram_reset(self) -> None:
         self.histogram["hits"] = 0

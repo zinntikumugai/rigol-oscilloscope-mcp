@@ -12,7 +12,7 @@ from rigol_oscilloscope_mcp.driver.scope import ScopeDriver
 from rigol_oscilloscope_mcp.driver.session import ScpiSession
 from rigol_oscilloscope_mcp.errors import ErrorCode, ScopeError
 from rigol_oscilloscope_mcp.profiles import load_profile
-from rigol_oscilloscope_mcp.service.measurement import measure
+from rigol_oscilloscope_mcp.service.measurement import get_meter_value, measure
 from rigol_oscilloscope_mcp.testing import FakeScope, FakeTransport
 from rigol_oscilloscope_mcp.testing import fake_scope as fake_scope_module
 
@@ -174,7 +174,97 @@ def test_measure_warns_once_per_invalid_item(
     assert warnings[1].startswith("vmin ")
 
 
+# --------------------------------------------------------------------------
+# get_meter_value(周波数カウンタ・電圧計 / Phase M2)
+# --------------------------------------------------------------------------
+
+
+def test_get_meter_value_composes_the_unit_from_the_mode(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """値だけでは意味が定まらない(カウンタの単位はモード依存)。"""
+    scope.counter["enable"] = True
+    assert get_meter_value(driver, "counter") == {
+        "kind": "counter",
+        "enabled": True,
+        "source": "CH1",
+        "mode": "frequency",
+        "digits": 4,
+        "totalize_enabled": False,
+        "value": pytest.approx(1.0e3),
+        "unit": "Hz",
+    }
+
+
+def test_get_meter_value_unit_follows_the_counter_mode(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.counter["enable"] = True
+    scope.counter["mode"] = "PER"
+    assert get_meter_value(driver, "counter")["unit"] == "s"
+
+    scope.counter["mode"] = "TOT"
+    result = get_meter_value(driver, "counter")
+    assert result["unit"] == "counts"
+    assert result["value"] == pytest.approx(1234.0)
+
+
+def test_get_meter_value_dvm_is_always_volts(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.dvm["enable"] = True
+    for mode, expected in (("ACRM", 0.35), ("DC", 1.0), ("DCRM", 1.06)):
+        scope.dvm["mode"] = mode
+        result = get_meter_value(driver, "dvm")
+        assert result["unit"] == "V"
+        assert result["value"] == pytest.approx(expected)
+
+
+def test_get_meter_value_reports_an_invalid_reading_as_none(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """測定不能の番兵値(±9.9E37)を正常値として解釈させない。"""
+    scope.counter["enable"] = True
+    scope.counter["mode"] = "TOT"
+    scope.counter["total"] = 9.9e37
+
+    assert get_meter_value(driver, "counter")["value"] is None
+
+
+def test_get_meter_value_while_disabled_says_why_the_value_is_missing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """無効な計の値は `None`。理由(`enabled: false`)は同じ返却が持つ。"""
+    result = get_meter_value(driver, "dvm")
+
+    assert result["enabled"] is False
+    assert result["value"] is None
+    assert result["unit"] == "V"  # 単位はモードから決まる(値の有無と無関係)
+    assert ":DVM:CURRent?" not in scope.command_log
+
+
+def test_get_meter_value_rejects_an_unknown_kind(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        get_meter_value(driver, "voltmeter")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_get_meter_value_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        get_meter_value(generic_driver, "dvm")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
 def test_measure_exported_from_service_package() -> None:
     from rigol_oscilloscope_mcp import service
 
     assert service.measure is measure
+    assert service.get_meter_value is get_meter_value

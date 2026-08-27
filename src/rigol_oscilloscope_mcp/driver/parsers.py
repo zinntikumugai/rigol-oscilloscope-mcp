@@ -129,8 +129,12 @@ _FFT_PEAK_RE = re.compile(
 )
 
 
-def _amplitude(value: float, unit: str) -> tuple[float, str]:
-    """`(851.6, "mVrms")` → `(0.8516, "Vrms")`。dB系と接頭辞なしはそのまま。"""
+def _strip_si_prefix(value: float, unit: str) -> tuple[float, str]:
+    """`(851.6, "mVrms")` → `(0.8516, "Vrms")`。dB系と接頭辞なしはそのまま。
+
+    FFTピーク表の振幅とヒストグラム統計値の**共通**処理(`30.37khits` →
+    `(30370.0, "hits")`)。単位が1文字だけのとき(`V`)は接頭辞と見なさない。
+    """
     if unit[:2].lower() == "db":  # dBV / dBm: 先頭の d はデシ接頭辞ではない
         return value, unit
     scale = _AMPLITUDE_PREFIXES.get(unit[:1]) if len(unit) > 1 else None
@@ -169,7 +173,7 @@ def parse_fft_peaks(text: object) -> tuple[list[dict], list[str]]:
             peaks.append({"raw": line})
             warnings.append(f"cannot interpret peak search line: {line!r}")
             continue
-        amplitude, unit = _amplitude(float(match.group(4)), match.group(5))
+        amplitude, unit = _strip_si_prefix(float(match.group(4)), match.group(5))
         peaks.append(
             {
                 "index": int(match.group(1)),
@@ -181,28 +185,69 @@ def parse_fft_peaks(text: object) -> tuple[list[dict], list[str]]:
     return peaks, warnings
 
 
-def parse_histogram_result(text: object) -> tuple[list[list[str]], list[str]]:
-    """ヒストグラム統計表を `(行, 警告)` へ(ガイド3.11.9)。
+#: `Bin width:15.62mV` の値部分(数値+単位)。単位に空白は入らない。
+_HISTOGRAM_VALUE_RE = re.compile(
+    r"^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*(\S*)$"
+)
 
-    **ガイド本文はページ欠落で書式が不明**。同種の
-    `:MEASure:HISTogram:STATistics:RESult?`(3.17.32)の実例は
-    `[["92","1","0","Vpp",...]]` という引用符付き文字列の入れ子リストで、
-    単位とSI接頭辞が文字列に埋まっている。**列の意味が確定できないため列名は
-    付けず**、引用符で括られたセルを行ごとに切り出すだけに留める。
 
-    `parse_fft_peaks` と同じく **例外は投げない**(fail-open)。解釈できなければ
-    空リストと警告を返し、生応答の保持は呼び出し側の責務。**要実機検証**。
+def _histogram_key(label: str) -> str:
+    """統計項目のラベルを安定した snake_case キーへ正規化する。
+
+    規則は2段階のみ:(1) 小文字/数字の直後に来る大文字の前へ `_` を挿す
+    (2) 英数字以外の連なりを `_` に潰して小文字化し、前後の `_` を落とす。
+
+    `Sum` → `sum` / `Pk_Pk` → `pk_pk` / `Bin width` → `bin_width` /
+    `meanPlusSigma` → `mean_plus_sigma` / `meanPlus2Sigma` → `mean_plus2_sigma`。
+    """
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", label.strip())
+    return re.sub(r"[^a-z0-9]+", "_", spaced.lower()).strip("_")
+
+
+def parse_histogram_result(text: object) -> tuple[dict[str, float | str], list[str]]:
+    """ヒストグラム統計を `(統計辞書, 警告)` へ(ガイド3.11.9)。
+
+    実機MHO98(fw 00.01.00)の実測応答は**1行**で、**機器自身が列ラベルを持つ**:
+
+        [Sum:30.37khits, Peaks:234hits, Max:1.562V, Min:-999.9mV, Pk_Pk:2.562V,
+         Mean:265.1mV, ..., Bin width:15.62mV, Sigma:6.159mV,
+         meanPlusSigma:0.581421, meanPlus2Sigma:1.000000, meanPlus3Sigma:1.000000]
+
+    (同種の `:MEASure:HISTogram:STATistics:RESult?`(3.17.32)の引用符付き
+    入れ子リストとは**別書式**。終端の空行も無いので読み出しは `query`。)
+
+    返す辞書はラベルを `_histogram_key` で正規化したキー → **数値**。単位付きの
+    項目だけ `<キー>_unit` を併記し、SI接頭辞は `_strip_si_prefix` で換算して
+    基本単位へ揃える(`30.37khits` → `sum=30370.0` / `sum_unit="hits"`)。
+    単位を持たない項目(`meanPlusSigma` 系)は数値のみで `_unit` を付けない。
+
+    `parse_fft_peaks` と同じく **例外は投げない**(fail-open)。解釈できない項目は
+    飛ばして警告を積むだけで、他の項目は返す。生応答の保持は呼び出し側の責務。
+    ヒストグラム無効時の `[]` は空辞書・警告なし。
     """
     if not isinstance(text, str):
-        return [], [f"histogram statistics response is not a string: {text!r}"]
-    rows = [
-        cells
-        for group in re.findall(r"\[([^\[\]]*)\]", text)
-        if (cells := re.findall(r'"([^"]*)"', group))
-    ]
-    if not rows:
-        return [], [f"cannot interpret histogram statistics response: {text!r}"]
-    return rows, []
+        return {}, [f"histogram statistics response is not a string: {text!r}"]
+    body = re.match(r"^\[(.*)\]$", text.strip(), re.DOTALL)
+    if body is None:
+        return {}, [f"cannot interpret histogram statistics response: {text!r}"]
+
+    stats: dict[str, float | str] = {}
+    warnings: list[str] = []
+    for entry in body.group(1).split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        label, _, value = entry.partition(":")
+        key = _histogram_key(label)
+        match = _HISTOGRAM_VALUE_RE.match(value.strip())
+        if not key or match is None:
+            warnings.append(f"cannot interpret histogram statistics entry: {entry!r}")
+            continue
+        number, unit = _strip_si_prefix(float(match.group(1)), match.group(2))
+        stats[key] = number
+        if unit:
+            stats[f"{key}_unit"] = unit
+    return stats, warnings
 
 
 def parse_bool(text: str) -> bool:

@@ -2124,9 +2124,22 @@ class ScopeDriver:
             return result
         prefix, _ = entry
         for key, path in _CURSOR_READOUTS:
-            value = parse_nr3(self.session.query(f"{prefix}{path}?"))
-            result[key] = None if abs(value) >= INVALID_MEASUREMENT else value
+            result[key] = self._readout(f"{prefix}{path}?")
         return result
+
+    def _readout(self, query: str) -> float | None:
+        """読み値クエリ1本。**空応答**と測定不能の番兵値(±9.9E37)は `None`。
+
+        空応答はM2実機実測の癖(無効化中の `:DVM:CURRent?`)。非活性の測定系に
+        値が無いのは正常であって機器故障ではないため、ここで吸収する。
+        `parse_nr3` 側を緩めないのは、他の全経路(設定値のread-back等)では
+        解釈できない応答が本当に異常であり、例外のままが正しいため。
+        """
+        response = self.session.query(query)
+        if not response.strip():
+            return None
+        value = parse_nr3(response)
+        return None if abs(value) >= INVALID_MEASUREMENT else value
 
     # -- 周波数カウンタ・電圧計(ガイド3.7 / 3.10)-------------------------
 
@@ -2206,14 +2219,21 @@ class ScopeDriver:
         return config
 
     def get_meter_value(self, kind: str) -> float | None:
-        """現在値を返す(問い合わせ1本)。測定不能の番兵値(±9.9E37)は `None`。
+        """現在値を返す。計が**無効なら現在値を問い合わせずに** `None`。
+
+        M2実機実測: 無効な電圧計の `:DVM:CURRent?` は空応答を返し、そのまま
+        パースすると `SCPI_ERROR`(機器故障に見える)になる。無効な計を読むのは
+        普通の操作なので、`get_math_config` と同じ条件付き読み取りにして
+        `:ENABle?` を先に1本読む(有効なら合計2本)。
 
         単位はモード依存(カウンタ: Hz / s / 件数、電圧計: V)なので、必要なら
-        呼び出し側が `get_meter_config` のモードと組み合わせる。
+        呼び出し側が `get_meter_config` のモードと組み合わせる。測定不能の
+        番兵値(±9.9E37)も `None`。
         """
         prefix, _ = self._meter(kind)
-        value = parse_nr3(self.session.query(f"{prefix}{_METER_VALUE_PATH}"))
-        return None if abs(value) >= INVALID_MEASUREMENT else value
+        if not parse_bool(self.session.query(f"{prefix}:ENABle?")):
+            return None
+        return self._readout(f"{prefix}{_METER_VALUE_PATH}")
 
     def clear_counter_totalize(self) -> None:
         """総カウントをクリアする(ガイド3.7.7。Totalizeモード時のみ有効)。
@@ -2293,20 +2313,32 @@ class ScopeDriver:
     def get_histogram_result(self) -> dict:
         """統計結果を返す(ガイド3.11.9)。**生応答を必ず残す**。
 
-        返却書式はガイド本文がページ欠落で不明(同種の `:MEASure:HISTogram`
-        系は単位・SI接頭辞付きの文字列表)。複数行の可能性があるため
-        `query_lines` で読み、解釈は fail-open — 引用符で括られたセルを行ごとに
-        切り出せたときだけ `rows` を添え、列名は付けない(列の意味が未確定の
-        ため。**要実機検証**)。解釈できなければ `warnings` を添えて生応答のみ。
+        ヒストグラムが無効なら `raw` は空文字で `warnings` に理由を積む(下記)。
+
+        M2実機実測の応答は `[Sum:30.37khits, ..., Max:1.562V, ...]` の**1行**で、
+        **機器自身が列ラベルを持つ**。FFTピーク表と違い終端の空行が無いため
+        `query_lines`(空行まで読む)は使えない — 使うと実機ではタイムアウトまで
+        固まる。`query` で1行読み、`parse_histogram_result` が正規化キーの
+        `stats`(数値 + 必要なら `<キー>_unit`)へ変換する。解釈は fail-open で、
+        読めなかった項目は `warnings` に積むだけ(`raw` は常に返る)。
         """
         self._require("histogram", "the histogram")
-        lines = self.session.query_lines(
-            f"{_HISTOGRAM_PREFIX}{_HISTOGRAM_RESULT_PATH}"
-        )
-        rows, warnings = parse_histogram_result("\n".join(lines))
-        result: dict[str, object] = {"raw": lines}
-        if rows:
-            result["rows"] = rows
+        # 無効時は統計クエリ自体を送らない。M2実機実測では `[]` を返しつつ
+        # **エラーキューに -200 を積む**(沈黙はしない)ため、送ってしまうと
+        # 共有状態が汚れ、次の無関係な書き込みの検査に化けて出る。
+        if not parse_bool(self.session.query(f"{_HISTOGRAM_PREFIX}:ENABle?")):
+            return {
+                "raw": "",
+                "warnings": [
+                    "the histogram is disabled, so no statistics were read: "
+                    "enable it with configure_histogram first"
+                ],
+            }
+        raw = self.session.query(f"{_HISTOGRAM_PREFIX}{_HISTOGRAM_RESULT_PATH}")
+        stats, warnings = parse_histogram_result(raw)
+        result: dict[str, object] = {"raw": raw}
+        if stats:
+            result["stats"] = stats
         if warnings:
             result["warnings"] = warnings
         return result

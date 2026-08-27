@@ -9,7 +9,7 @@ from rigol_oscilloscope_mcp.safety.classes import (
     classify,
 )
 
-# docs/tools.md 10章のサマリ表(Phase 1/2/4 + 開発用 raw_scpi)
+# docs/tools.md 10章のサマリ表(Phase 1/2/4 + M1/M2 + 開発用 raw_scpi)
 EXPECTED = {
     "connect": "SAFE_WRITE",
     "disconnect": "SAFE_WRITE",
@@ -41,6 +41,12 @@ EXPECTED = {
     "sync_afg_phase": "SAFE_WRITE",
     "configure_math": "SAFE_WRITE",
     "get_math_state": "READ_ONLY",
+    "configure_cursor": "SAFE_WRITE",
+    "get_cursor_measurement": "READ_ONLY",
+    "configure_meter": "SAFE_WRITE",
+    "get_meter_value": "READ_ONLY",
+    "configure_histogram": "SAFE_WRITE",
+    "get_histogram_result": "READ_ONLY",
     "raw_scpi": "DANGEROUS_WRITE",
 }
 

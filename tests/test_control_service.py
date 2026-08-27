@@ -1626,6 +1626,356 @@ def test_configure_math_error_is_audited(
 
 
 # ==========================================================================
+# configure_cursor(カーソル測定 / SAFE_WRITE)
+# ==========================================================================
+
+
+def test_configure_cursor_returns_requested_and_applied(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    result = service.configure_cursor(
+        driver, mode="manual", type="amplitude", source="CH2", ax=-1e-4, bx=1e-4
+    )
+
+    assert result["mode"] == "manual"
+    assert result["requested"] == {
+        "mode": "manual",
+        "type": "amplitude",
+        "source": "CH2",
+        "ax": -1e-4,
+        "bx": 1e-4,
+    }
+    assert result["applied"] == {
+        "mode": "manual",
+        "type": "amplitude",
+        "source": "CH2",
+        "ax": -1e-4,
+        "bx": 1e-4,
+    }
+    assert result["changed"] is True
+
+
+def test_configure_cursor_reports_changed(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    assert service.configure_cursor(driver, mode="manual", ax=1e-4)["changed"] is True
+    # 同じ設定の再適用は変化なし
+    assert service.configure_cursor(driver, mode="manual", ax=1e-4)["changed"] is False
+
+
+def test_configure_cursor_changed_ignores_tracked_y_positions(
+    service: ControlService,
+    driver: ScopeDriver,
+    scope: FakeScope,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TRACkモードのY位置は波形に追従して機器側で動く。changed の材料にしない。
+
+    MATHのピーク表(`_MATH_DYNAMIC_KEYS`)と同じ扱い。
+    """
+    scope.cursor["mode"] = "TRAC"
+    reads = iter(
+        [
+            {"mode": "track", "source1": "CH1", "ax": 1e-4, "ay": 0.5, "by": 1.0},
+            {"mode": "track", "source1": "CH1", "ax": 1e-4, "ay": 0.7, "by": 1.4},
+        ]
+    )
+    monkeypatch.setattr(driver, "get_cursor_config", lambda: next(reads))
+
+    assert service.configure_cursor(driver, ax=1e-4)["changed"] is False
+
+
+def test_configure_cursor_changed_still_sees_manual_y_positions(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    """MANualのY位置は利用者が決める設定値。除外しすぎていないこと。"""
+    service.configure_cursor(driver, mode="manual", ay=0.5)
+
+    assert service.configure_cursor(driver, ay=0.9)["changed"] is True
+
+
+def test_configure_cursor_rejects_all_none(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """全項目未指定は機器へ1コマンドも送らずに拒否(configure_afgの前例)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        service.configure_cursor(driver)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_cursor_is_audited_with_before_and_after(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    service.configure_cursor(driver, mode="manual", source="CH2")
+
+    row = operations(audit_path)[0]
+    assert row["tool"] == "configure_cursor"
+    assert row["result"] == "success"
+    assert row["requested"] == {"mode": "manual", "source": "CH2"}
+    assert row["before"] == {"mode": "off"}  # FakeScopeの既定
+    assert row["after"]["mode"] == "manual"
+    assert row["after"]["source"] == "CH2"
+
+
+def test_configure_cursor_needs_no_confirmation(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    """表示・解析層のみの変更で取り込み設定も出力も変えない(SAFE_WRITE)。"""
+    service.configure_cursor(driver, mode="manual")
+
+    assert confirms(audit_path) == []
+
+
+def test_configure_cursor_error_is_audited(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    with pytest.raises(ScopeError):
+        service.configure_cursor(driver, mode="manual", source1="CH1")  # 別サブツリー
+
+    row = operations(audit_path)[0]
+    assert row["result"] == "error"
+    assert row["detail"]["error"]["code"] == ErrorCode.INVALID_PARAMETER
+
+
+# ==========================================================================
+# configure_meter(周波数カウンタ・電圧計 / SAFE_WRITE)
+# ==========================================================================
+
+
+def test_configure_meter_counter_returns_requested_and_applied(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    result = service.configure_meter(
+        driver, "counter", enabled=True, source="D3", mode="period"
+    )
+
+    assert result["kind"] == "counter"
+    assert result["requested"] == {"enabled": True, "source": "D3", "mode": "period"}
+    assert result["applied"] == {
+        "kind": "counter",
+        "enabled": True,
+        "source": "D3",
+        "mode": "period",
+    }
+    assert result["changed"] is True
+
+
+def test_configure_meter_dvm_returns_requested_and_applied(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    result = service.configure_meter(driver, "dvm", enabled=True, mode="dc")
+
+    assert result["kind"] == "dvm"
+    assert result["applied"] == {"kind": "dvm", "enabled": True, "mode": "dc"}
+    assert result["changed"] is True
+
+
+def test_configure_meter_sends_the_clear_after_the_settings(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """「モードを変えて数え直す」を1往復で済ませる(クリアは設定の後)。"""
+    result = service.configure_meter(
+        driver, "counter", mode="totalize", clear_totalize=True
+    )
+
+    assert writes(scope, ":COUN") == [
+        ":COUNter:MODE TOTalize",
+        ":COUNter:TOTalize:CLEar",
+    ]
+    assert result["requested"]["clear_totalize"] is True
+    assert result["applied"]["clear_totalize"] is True
+    assert scope.counter["total"] == 0.0
+
+
+def test_configure_meter_accepts_the_clear_alone(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """設定を1つも変えないクリアだけの呼び出しも通す(設定コマンドは送らない)。"""
+    result = service.configure_meter(driver, "counter", clear_totalize=True)
+
+    assert writes(scope, ":COUN") == [":COUNter:TOTalize:CLEar"]
+    assert result["requested"] == {"clear_totalize": True}
+    assert scope.counter["total"] == 0.0
+
+
+def test_configure_meter_rejects_the_clear_for_the_dvm(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """総カウントは周波数カウンタだけの統計。送信前に拒否する。"""
+    with pytest.raises(ScopeError) as excinfo:
+        service.configure_meter(driver, "dvm", clear_totalize=True)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_meter_rejects_all_none(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        service.configure_meter(driver, "counter")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_meter_reports_changed(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    assert service.configure_meter(driver, "dvm", mode="dc")["changed"] is True
+    assert service.configure_meter(driver, "dvm", mode="dc")["changed"] is False
+
+
+def test_configure_meter_is_audited_with_before_and_after(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    service.configure_meter(driver, "counter", mode="period")
+
+    row = operations(audit_path)[0]
+    assert row["tool"] == "configure_meter"
+    assert row["result"] == "success"
+    assert row["requested"] == {"kind": "counter", "mode": "period"}
+    assert row["before"]["mode"] == "frequency"  # FakeScopeの既定
+    assert row["after"]["mode"] == "period"
+
+
+def test_configure_meter_needs_no_confirmation(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    service.configure_meter(driver, "counter", enabled=True)
+
+    assert confirms(audit_path) == []
+
+
+def test_configure_meter_error_is_audited(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    with pytest.raises(ScopeError):
+        service.configure_meter(driver, "dvm", source="D0")  # 電圧計はアナログchのみ
+
+    row = operations(audit_path)[0]
+    assert row["result"] == "error"
+    assert row["detail"]["error"]["code"] == ErrorCode.INVALID_PARAMETER
+
+
+# ==========================================================================
+# configure_histogram(ヒストグラム / SAFE_WRITE)
+# ==========================================================================
+
+
+def test_configure_histogram_returns_requested_and_applied(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    result = service.configure_histogram(
+        driver, enabled=True, type="vertical", source="CH2", height=4
+    )
+
+    assert result["requested"] == {
+        "enabled": True,
+        "type": "vertical",
+        "source": "CH2",
+        "height": 4,
+    }
+    assert result["applied"] == {
+        "enabled": True,
+        "type": "vertical",
+        "source": "CH2",
+        "height": 4,
+    }
+    assert result["changed"] is True
+
+
+def test_configure_histogram_sends_the_reset_after_the_settings(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """「対象を変えて取り直す」を1往復で済ませる(リセットは設定の後)。"""
+    result = service.configure_histogram(driver, source="CH2", reset=True)
+
+    assert writes(scope, ":HIST") == [
+        ":HISTogram:SOURce CHANnel2",
+        ":HISTogram:RESet",
+    ]
+    assert result["requested"]["reset"] is True
+    assert result["applied"]["reset"] is True
+    assert scope.histogram["hits"] == 0
+
+
+def test_configure_histogram_accepts_the_reset_alone(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    result = service.configure_histogram(driver, reset=True)
+
+    assert writes(scope, ":HIST") == [":HISTogram:RESet"]
+    assert result["requested"] == {"reset": True}
+    assert scope.histogram["hits"] == 0
+
+
+def test_configure_histogram_rejects_all_none(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        service.configure_histogram(driver)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_histogram_reports_changed(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    assert service.configure_histogram(driver, height=4)["changed"] is True
+    assert service.configure_histogram(driver, height=4)["changed"] is False
+
+
+def test_configure_histogram_changed_ignores_the_statistics(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """統計はヒット数が増え続ける動的値。設定のスナップショットに混ぜない。
+
+    `changed` の判定は `get_histogram_config`(設定のみ)で行い、
+    `:HISTogram:STATistics:RESult?` は1度も問い合わせないことで担保する。
+    """
+    scope.histogram["hits"] = 999
+
+    assert service.configure_histogram(driver, height=2)["changed"] is False
+    assert sent(scope, ":STAT") == []
+
+
+def test_configure_histogram_is_audited_with_before_and_after(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    service.configure_histogram(driver, type="vertical")
+
+    row = operations(audit_path)[0]
+    assert row["tool"] == "configure_histogram"
+    assert row["result"] == "success"
+    assert row["requested"] == {"type": "vertical"}
+    assert row["before"]["type"] == "horizontal"  # FakeScopeの既定
+    assert row["after"]["type"] == "vertical"
+
+
+def test_configure_histogram_needs_no_confirmation(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    service.configure_histogram(driver, enabled=True)
+
+    assert confirms(audit_path) == []
+
+
+def test_configure_histogram_error_is_audited(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    with pytest.raises(ScopeError):
+        service.configure_histogram(driver, left_s=1e-3, right_s=-1e-3)  # 大小逆転
+
+    row = operations(audit_path)[0]
+    assert row["result"] == "error"
+    assert row["detail"]["error"]["code"] == ErrorCode.INVALID_PARAMETER
+
+
+# ==========================================================================
 # パッケージ公開
 # ==========================================================================
 
