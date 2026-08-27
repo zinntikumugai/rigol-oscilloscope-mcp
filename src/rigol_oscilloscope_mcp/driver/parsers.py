@@ -181,6 +181,30 @@ def parse_fft_peaks(text: object) -> tuple[list[dict], list[str]]:
     return peaks, warnings
 
 
+def parse_histogram_result(text: object) -> tuple[list[list[str]], list[str]]:
+    """ヒストグラム統計表を `(行, 警告)` へ(ガイド3.11.9)。
+
+    **ガイド本文はページ欠落で書式が不明**。同種の
+    `:MEASure:HISTogram:STATistics:RESult?`(3.17.32)の実例は
+    `[["92","1","0","Vpp",...]]` という引用符付き文字列の入れ子リストで、
+    単位とSI接頭辞が文字列に埋まっている。**列の意味が確定できないため列名は
+    付けず**、引用符で括られたセルを行ごとに切り出すだけに留める。
+
+    `parse_fft_peaks` と同じく **例外は投げない**(fail-open)。解釈できなければ
+    空リストと警告を返し、生応答の保持は呼び出し側の責務。**要実機検証**。
+    """
+    if not isinstance(text, str):
+        return [], [f"histogram statistics response is not a string: {text!r}"]
+    rows = [
+        cells
+        for group in re.findall(r"\[([^\[\]]*)\]", text)
+        if (cells := re.findall(r'"([^"]*)"', group))
+    ]
+    if not rows:
+        return [], [f"cannot interpret histogram statistics response: {text!r}"]
+    return rows, []
+
+
 def parse_bool(text: str) -> bool:
     """`ON`/`1` → True、`OFF`/`0` → False(大文字小文字不問)。"""
     if not isinstance(text, str):

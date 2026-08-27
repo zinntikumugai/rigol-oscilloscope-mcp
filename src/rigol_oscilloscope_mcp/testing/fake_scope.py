@@ -433,6 +433,93 @@ _MATH_FFT_PEAKS = (
 
 _MATH_SOURCE = _mn("MATH") + rf"([1-{MATH_COUNT}])"
 
+# ---------------------------------------------------------------------------
+# カーソル / 周波数カウンタ / 電圧計 / ヒストグラム(ガイド3.7・3.8・3.10・3.11)
+# ---------------------------------------------------------------------------
+#
+# いずれも番号を持たない単一サブシステム。属性表の形式はMATH/AFGと共通で
+# (内部キー, ニモニック仕様, 型, 既定値)。型 ("int", 下限, 上限) は値域つき整数。
+
+#: 測定不能を表す番兵値(実機は ±9.9E37 前後を返す)
+INVALID_VALUE = 9.9e37
+
+_CURSOR_MODES = ("OFF", "MANual", "TRACk", "XY")
+_CURSOR_TYPES = ("TIME", "AMPLitude")
+#: カーソルのソース(ガイド3.8.3/3.8.9/3.8.10)。REF/デジタルは取らない
+_CURSOR_SOURCES = (
+    tuple(f"CHANnel{n}" for n in range(1, 5))
+    + tuple(f"MATH{n}" for n in range(1, MATH_COUNT + 1))
+    + ("NONE",)
+)
+#: MANual/TRACk 共通の位置属性(CAX/CBXは秒、CAY/CBYはV)。既定値は画面の
+#: 1/4・3/4 位置に相当する代表値(ガイドのDefault欄は設定依存 = 実機未検証)
+_CURSOR_POSITIONS: tuple[tuple[str, str, object, object], ...] = (
+    ("cax", "CAX", "nr3", -2.0e-4),
+    ("cay", "CAY", "nr3", -1.0),
+    ("cbx", "CBX", "nr3", 2.0e-4),
+    ("cby", "CBY", "nr3", 1.0),
+)
+_CURSOR_MANUAL_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("type", "TYPE", _CURSOR_TYPES, "TIME"),
+    ("source", "SOURce", _CURSOR_SOURCES, "CHAN1"),
+) + _CURSOR_POSITIONS
+_CURSOR_TRACK_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("source1", "SOURce1", _CURSOR_SOURCES, "CHAN1"),
+    ("source2", "SOURce2", _CURSOR_SOURCES, "CHAN1"),
+) + _CURSOR_POSITIONS
+#: 読み取り専用の位置クエリ(ガイド3.8.7-3.8.8)。CAX等の格納値をそのまま返す
+_CURSOR_READOUTS: tuple[tuple[str, str], ...] = (
+    ("AXValue", "cax"),
+    ("AYValue", "cay"),
+    ("BXValue", "cbx"),
+    ("BYValue", "cby"),
+)
+
+_COUNTER_MODES = ("FREQuency", "PERiod", "TOTalize")
+#: カウンタのソース(ガイド3.7.3)。デジタルchも取る
+_COUNTER_SOURCES = tuple(f"D{n}" for n in range(16)) + tuple(
+    f"CHANnel{n}" for n in range(1, 5)
+)
+_COUNTER_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("enable", "ENABle", "bool", False),
+    ("source", "SOURce", _COUNTER_SOURCES, "CHAN1"),
+    ("mode", "MODE", _COUNTER_MODES, "FREQ"),
+    ("ndigits", "NDIGits", ("int", 3, 6), 4),
+    ("totalize", "TOTalize:ENABle", "bool", False),
+)
+#: `:COUNter:CURRent?` の値。周波数/周期は定値、TOTalizeは総カウント(要実機検証)
+_COUNTER_VALUES = {"FREQ": 1.0e3, "PER": 1.0e-3}
+_COUNTER_TOTAL = 1234.0
+
+_DVM_MODES = ("ACRMs", "DC", "DCRMs")
+_DVM_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("enable", "ENABle", "bool", False),
+    ("source", "SOURce", tuple(f"CHANnel{n}" for n in range(1, 5)), "CHAN1"),
+    ("mode", "MODE", _DVM_MODES, "ACRM"),
+)
+#: `:DVM:CURRent?` の値(DC 1V + 0.5Vpp正弦を当てた想定の代表値。要実機検証)
+_DVM_VALUES = {"ACRM": 0.35, "DC": 1.0, "DCRM": 1.06}
+
+_HISTOGRAM_TYPES = ("HORizontal", "VERTical")
+_HISTOGRAM_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("enable", "ENABle", "bool", False),
+    ("type", "TYPE", _HISTOGRAM_TYPES, "HOR"),
+    ("source", "SOURce", tuple(f"CHANnel{n}" for n in range(1, 5)), "CHAN1"),
+    ("height", "HEIGht", ("int", 1, 4), 2),
+    ("left", "RANGe:LEFT", "nr3", -2.0e-4),
+    ("right", "RANGe:RIGHt", "nr3", 2.0e-4),
+    ("top", "RANGe:TOP", "nr3", 1.0),
+    ("bottom", "RANGe:BOTTom", "nr3", -1.0),
+)
+#: `:HISTogram:STATistics:RESult?` の返却行。**ガイド本文はページ欠落で形式不明**の
+#: ため、同種の `:MEASure:HISTogram:STATistics:RESult?`(3.17.32)の実例をそのまま
+#: 使う。ヒット数の2列だけ状態(RESetで0)に連動させる。**要実機検証**
+_HISTOGRAM_RESULT_ROW: tuple[str, ...] = (
+    "92", "1", "0", "Vpp", "0", "{hits}hits", "{peak}hits", "1.949V", "1.907V",
+    "42.26mV", "1.924V", "1.924V", "1.924V", "191.2uV", "6.123mV", "19.12mV",
+)
+_HISTOGRAM_HITS = (374, 38)
+
 
 class FakeScope:
     """MHO98方言のフェイク機器(SCPIコマンド1件単位で応答する)。"""
@@ -505,6 +592,18 @@ class FakeScope:
             n: {key: default for key, _, _, default in _MATH_PROPS}
             for n in range(1, MATH_COUNT + 1)
         }
+        # カーソル(ガイド3.8)。MANual / TRACk はそれぞれ独立した位置を持つ
+        self.cursor: dict = {
+            "mode": "OFF",
+            "manual": {key: default for key, _, _, default in _CURSOR_MANUAL_PROPS},
+            "track": {key: default for key, _, _, default in _CURSOR_TRACK_PROPS},
+        }
+        # 周波数カウンタ(3.7)/ 電圧計(3.10)/ ヒストグラム(3.11)
+        self.counter: dict = {key: default for key, _, _, default in _COUNTER_PROPS}
+        self.counter["total"] = _COUNTER_TOTAL
+        self.dvm: dict = {key: default for key, _, _, default in _DVM_PROPS}
+        self.histogram: dict = {key: default for key, _, _, default in _HISTOGRAM_PROPS}
+        self.histogram["hits"], self.histogram["peak_hits"] = _HISTOGRAM_HITS
         # Resultビューの有効化済み測定項目(:MEASure:ITEM? でも追加される — issue #16)
         self.measurement_items: list[str] = []
         self.timebase: dict[str, float] = {"scale": 2.0e-4, "offset": 0.0}
@@ -750,6 +849,9 @@ class FakeScope:
         entries += self._afg_entries()
         entries += self._afg_mod_entries()
         entries += self._math_entries()
+        entries += self._cursor_entries()
+        entries += self._meter_entries()
+        entries += self._histogram_entries()
         return tuple(
             (re.compile(pattern, re.IGNORECASE), handler)
             for pattern, handler in entries
@@ -951,6 +1053,120 @@ class FakeScope:
                 )
             )
         entries.append((rf"{math}:{_mn('FFT')}:{_mn('SEARch')}:RES\?", self._math_peaks))
+        return entries
+
+    def _prop_entries(
+        self, head: str, props: tuple[tuple[str, str, object, object], ...], state: dict
+    ) -> list[tuple[str, Callable]]:
+        """番号を持たないサブシステムの属性表を読み書き両方のパターンへ展開する。
+
+        状態辞書は参照で束縛する(再代入しない限り生き続ける)。
+        """
+        entries: list[tuple[str, Callable]] = []
+        for key, spec, kind, _default in props:
+            path = ":".join(_mn_indexed(part) for part in spec.split(":"))
+            entries.append(
+                (
+                    rf"{head}:{path}\?",
+                    lambda m, s=state, k=key, t=kind: self._prop_query(s, k, t),
+                )
+            )
+            entries.append(
+                (
+                    rf"{head}:{path}\s+{_VALUE}",
+                    lambda m, s=state, k=key, t=kind: self._prop_write(
+                        s, k, t, m.group(1)
+                    ),
+                )
+            )
+        return entries
+
+    def _cursor_entries(self) -> list[tuple[str, Callable]]:
+        """カーソルのディスパッチ表(`:CURSor:MODE` + MANual/TRACk サブツリー)。
+
+        `:CURSor:XY:*` / `TUNit` / `VUNit` / `MEASure:INDicator` は未実装
+        (M2スコープ外)。どのパターンにも一致せず実機同様に沈黙する。
+        """
+        cursor = rf":?{_mn('CURSor')}"
+        entries: list[tuple[str, Callable]] = [
+            (
+                rf"{cursor}:{_mn('MODE')}\?",
+                lambda m: str(self.cursor["mode"]).encode("ascii"),
+            ),
+            (
+                rf"{cursor}:{_mn('MODE')}\s+{_VALUE}",
+                lambda m: self._cursor_mode_write(m.group(1)),
+            ),
+        ]
+        for subtree, spec, props in (
+            ("manual", "MANual", _CURSOR_MANUAL_PROPS),
+            ("track", "TRACk", _CURSOR_TRACK_PROPS),
+        ):
+            state = self.cursor[subtree]
+            head = rf"{cursor}:{_mn(spec)}"
+            entries += self._prop_entries(head, props, state)
+            entries += [
+                (
+                    rf"{head}:{_mn(query)}\?",
+                    lambda m, s=state, k=key: _nr3_single_digit_exponent(
+                        float(s[k])
+                    ).encode("ascii"),
+                )
+                for query, key in _CURSOR_READOUTS
+            ]
+            entries += [
+                (
+                    rf"{head}:{_mn('XDELta')}\?",
+                    lambda m, s=state: self._cursor_delta(s, "cbx", "cax"),
+                ),
+                (
+                    rf"{head}:{_mn('YDELta')}\?",
+                    lambda m, s=state: self._cursor_delta(s, "cby", "cay"),
+                ),
+                (
+                    rf"{head}:{_mn('IXDelta')}\?",
+                    lambda m, s=state: self._cursor_inverse_delta(s),
+                ),
+            ]
+        return entries
+
+    def _meter_entries(self) -> list[tuple[str, Callable]]:
+        """周波数カウンタ(3.7)と電圧計(3.10)のディスパッチ表。
+
+        `:COUNter:VALue?` は存在しない(現在値は `:COUNter:CURRent?`)ため
+        未実装のまま = 沈黙する。
+        """
+        counter = rf":?{_mn('COUNter')}"
+        dvm = rf":?{_mn('DVM')}"
+        entries = self._prop_entries(counter, _COUNTER_PROPS, self.counter)
+        entries += self._prop_entries(dvm, _DVM_PROPS, self.dvm)
+        entries += [
+            (rf"{counter}:{_mn('CURRent')}\?", lambda m: self._counter_current()),
+            # 引数なし・応答なしの動作コマンド(Totalize時のみ有効 — 機器側判定)
+            (
+                rf"{counter}:{_mn('TOTalize')}:{_mn('CLEar')}",
+                lambda m: self._counter_clear(),
+            ),
+            (
+                rf"{dvm}:{_mn('CURRent')}\?",
+                lambda m: _nr3_single_digit_exponent(
+                    _DVM_VALUES[str(self.dvm["mode"])]
+                ).encode("ascii"),
+            ),
+        ]
+        return entries
+
+    def _histogram_entries(self) -> list[tuple[str, Callable]]:
+        """ヒストグラムのディスパッチ表(`:HISTogram:SAVE:CSV` はスコープ外)。"""
+        histogram = rf":?{_mn('HISTogram')}"
+        entries = self._prop_entries(histogram, _HISTOGRAM_PROPS, self.histogram)
+        entries += [
+            (
+                rf"{histogram}:{_mn('STATistics')}:{_mn('RESult')}\?",
+                lambda m: self._histogram_result(),
+            ),
+            (rf"{histogram}:{_mn('RESet')}", lambda m: self._histogram_reset()),
+        ]
         return entries
 
     # -- 内部: ハンドラ ---------------------------------------------------
@@ -1198,26 +1414,12 @@ class FakeScope:
         return self.math[int(match.group(1))]
 
     def _math_query(self, match: re.Match[str], key: str, kind: object) -> bytes:
-        value = self._math(match)[key]
-        if kind == "bool":
-            return b"1" if value else b"0"
-        if kind == "nr3":
-            return _nr3_single_digit_exponent(float(value)).encode("ascii")
-        return str(value).encode("ascii")
+        return self._prop_query(self._math(match), key, kind)
 
     def _math_write(
         self, match: re.Match[str], key: str, kind: object, token: str
     ) -> None:
-        if kind == "bool":
-            value: object = self._on_off(token)
-        elif kind == "nr3":
-            value = self._float(token)
-        elif kind == "int":
-            value = self._int(token)
-        else:
-            value = self._enum(token, kind)  # 列挙(仕様タプル)
-        self._math(match)[key] = value
-        return None
+        return self._prop_write(self._math(match), key, kind, token)
 
     def _math_peaks(self, match: re.Match[str]) -> bytes:
         """ピーク探索結果テーブル(ガイド3.16.30 / 実機実測の書式)。
@@ -1228,6 +1430,79 @@ class FakeScope:
         if not self._math(match)["fft_search"]:
             return b"\n"
         return ("\n".join(_MATH_FFT_PEAKS) + "\n\n").encode("ascii")
+
+    # -- 内部: 属性表の共通ハンドラ ---------------------------------------
+
+    def _prop_query(self, state: dict, key: str, kind: object) -> bytes:
+        value = state[key]
+        if kind == "bool":
+            return b"1" if value else b"0"
+        if kind == "nr3":
+            return _nr3_single_digit_exponent(float(value)).encode("ascii")
+        return str(value).encode("ascii")
+
+    def _prop_write(self, state: dict, key: str, kind: object, token: str) -> None:
+        if kind == "bool":
+            value: object = self._on_off(token)
+        elif kind == "nr3":
+            value = self._float(token)
+        elif kind == "int":
+            value = self._int(token)
+        elif isinstance(kind, tuple) and kind[0] == "int":
+            _, low, high = kind
+            value = self._int(token)
+            if not low <= value <= high:  # 値域外は -222(実機同様、値は変わらない)
+                raise self._silent(OUT_OF_RANGE)
+        else:
+            value = self._enum(token, kind)  # 列挙(仕様タプル)
+        state[key] = value
+        return None
+
+    # -- 内部: カーソル ---------------------------------------------------
+
+    def _cursor_mode_write(self, token: str) -> None:
+        self.cursor["mode"] = self._enum(token, _CURSOR_MODES)
+        return None
+
+    def _cursor_delta(self, state: dict, high: str, low: str) -> bytes:
+        return _nr3_single_digit_exponent(
+            float(state[high]) - float(state[low])
+        ).encode("ascii")
+
+    def _cursor_inverse_delta(self, state: dict) -> bytes:
+        """1/ΔX。ΔX=0 では測定不能の番兵値を返す(実機の挙動は要検証)。"""
+        delta = float(state["cbx"]) - float(state["cax"])
+        value = INVALID_VALUE if delta == 0 else 1.0 / delta
+        return _nr3_single_digit_exponent(value).encode("ascii")
+
+    # -- 内部: 周波数カウンタ・ヒストグラム -------------------------------
+
+    def _counter_current(self) -> bytes:
+        mode = str(self.counter["mode"])
+        value = _COUNTER_VALUES.get(mode, float(self.counter["total"]))
+        return _nr3_single_digit_exponent(value).encode("ascii")
+
+    def _counter_clear(self) -> None:
+        self.counter["total"] = 0.0
+        return None
+
+    def _histogram_result(self) -> bytes:
+        """統計表。**書式はガイド本文がページ欠落で不明のため要実機検証**。"""
+        row = ",".join(
+            '"{}"'.format(
+                cell.format(
+                    hits=self.histogram["hits"], peak=self.histogram["peak_hits"]
+                )
+            )
+            for cell in _HISTOGRAM_RESULT_ROW
+        )
+        # ピーク表(:MATH:FFT:SEARch:RES?)と同じく終端の空行を1本付ける
+        return f"[[{row}]]\n\n".encode("ascii")
+
+    def _histogram_reset(self) -> None:
+        self.histogram["hits"] = 0
+        self.histogram["peak_hits"] = 0
+        return None
 
     def _measure_item(self, match: re.Match[str]) -> bytes:
         item = match.group(1).strip().upper()

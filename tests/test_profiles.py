@@ -178,6 +178,47 @@ def test_mho98_declares_afg_modulation_dialect() -> None:
     }
 
 
+def test_mho98_declares_cursor_meter_and_histogram_dialect() -> None:
+    """カーソル/カウンタ/電圧計/ヒストグラム(ガイド3.7・3.8・3.10・3.11)。"""
+    p = load_profile("mho98")
+
+    for capability in ("cursor", "frequency_counter", "dvm", "histogram"):
+        assert p.supports(capability) is True
+    assert p.dialect["cursor_modes"] == {
+        "off": "OFF",
+        "manual": "MANual",
+        "track": "TRACk",
+        "xy": "XY",
+    }
+    assert p.dialect["cursor_types"] == {"time": "TIME", "amplitude": "AMPLitude"}
+    assert p.dialect["counter_modes"] == {
+        "frequency": "FREQuency",
+        "period": "PERiod",
+        "totalize": "TOTalize",
+    }
+    assert p.dialect["dvm_modes"] == {"ac_rms": "ACRMs", "dc": "DC", "dc_rms": "DCRMs"}
+    assert p.dialect["histogram_types"] == {
+        "horizontal": "HORizontal",
+        "vertical": "VERTical",
+    }
+
+
+def test_generic_does_not_declare_cursor_meter_or_histogram() -> None:
+    """不在がそのまま UNSUPPORTED_FEATURE のゲート(device-profiles.md 4.2)。"""
+    p = load_profile(GENERIC)
+
+    for capability in ("cursor", "frequency_counter", "dvm", "histogram"):
+        assert p.supports(capability) is False
+    for key in (
+        "cursor_modes",
+        "cursor_types",
+        "counter_modes",
+        "dvm_modes",
+        "histogram_types",
+    ):
+        assert key not in p.dialect
+
+
 def test_generic_does_not_declare_afg() -> None:
     """DHO800/900は番号なし `:SOURce`(DGモジュール)で別方言。不在がゲート。"""
     p = load_profile(GENERIC)

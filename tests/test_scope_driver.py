@@ -2617,3 +2617,555 @@ def test_get_math_fft_start_hz_rejects_an_unknown_channel(driver: ScopeDriver) -
         driver.get_math_fft_start_hz(9)
 
     assert exc.value.code == ErrorCode.INVALID_PARAMETER
+
+
+# --------------------------------------------------------------------------
+# カーソル測定(:CURSor / ガイド3.8)
+# --------------------------------------------------------------------------
+
+
+def writes(scope: FakeScope, head: str) -> list[str]:
+    """指定サブシステムへの書き込みのみ(問い合わせ・エラーキュー確認を除く)。"""
+    return [
+        c for c in scope.command_log if "?" not in c and c.upper().startswith(head)
+    ]
+
+
+def test_configure_cursor_manual_sends_exact_scpi(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    applied = driver.configure_cursor(
+        mode="manual", type="amplitude", source="CH2", ax=-1e-4, bx=1e-4
+    )
+
+    assert writes(scope, ":CURS") == [
+        ":CURSor:MODE MANual",
+        ":CURSor:MANual:TYPE AMPLitude",
+        ":CURSor:MANual:SOURce CHANnel2",
+        ":CURSor:MANual:CAX -0.0001",
+        ":CURSor:MANual:CBX 0.0001",
+    ]
+    assert applied == {
+        "mode": "manual",
+        "type": "amplitude",
+        "source": "CH2",
+        "ax": -1e-4,
+        "bx": 1e-4,
+    }
+
+
+def test_configure_cursor_track_uses_the_track_subtree(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    applied = driver.configure_cursor(
+        mode="track", source1="CH1", source2="MATH2", ax=1e-4, ay=0.5
+    )
+
+    assert writes(scope, ":CURS") == [
+        ":CURSor:MODE TRACk",
+        ":CURSor:TRACk:SOURce1 CHANnel1",
+        ":CURSor:TRACk:SOURce2 MATH2",
+        ":CURSor:TRACk:CAX 0.0001",
+        ":CURSor:TRACk:CAY 0.5",
+    ]
+    assert applied["source2"] == "MATH2"
+    assert scope.cursor["manual"]["cax"] == -2.0e-4  # MANual側は触らない
+
+
+def test_configure_cursor_uses_the_current_mode_when_not_given(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """モード未指定なら現在の `:CURSor:MODE?` でサブツリーを決める。"""
+    scope.cursor["mode"] = "TRAC"
+
+    driver.configure_cursor(ax=1e-4)
+
+    assert scope.command_log[0] == ":CURSor:MODE?"
+    assert writes(scope, ":CURS") == [":CURSor:TRACk:CAX 0.0001"]
+
+
+def test_configure_cursor_accepts_xy_and_none(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`xy` はガイドが列挙する正規の値。位置サブツリーはM2では扱わない。"""
+    assert driver.configure_cursor(mode="xy") == {"mode": "xy"}
+    assert driver.configure_cursor(mode="manual", source="NONE")["source"] == "NONE"
+
+
+def test_configure_cursor_rejects_positions_without_an_active_subtree(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """OFF/XY では書き込み先のサブツリーが定まらない。書き込みゼロで拒否する。"""
+    with pytest.raises(ScopeError) as exc:
+        driver.configure_cursor(mode="off", ax=1e-4)
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_cursor_rejects_keys_of_the_other_subtree(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as exc:
+        driver.configure_cursor(mode="manual", source1="CH1")
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+    with pytest.raises(ScopeError) as exc:
+        driver.configure_cursor(mode="track", type="time")
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_cursor_rejects_bad_sources(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """カーソルのソースは CH / MATH / NONE のみ(REF・デジタルは取らない)。"""
+    for source in ("REF1", "D0", "CH9", "MATH9"):
+        with pytest.raises(ScopeError) as exc:
+            driver.configure_cursor(mode="manual", source=source)
+
+        assert exc.value.code == ErrorCode.INVALID_PARAMETER
+        assert scope.command_log == []
+
+
+def test_configure_cursor_without_any_item_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as exc:
+        driver.configure_cursor()
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_cursor_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as exc:
+        generic_driver.configure_cursor(mode="manual")
+
+    assert exc.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_get_cursor_config_reads_only_the_active_subtree(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.cursor["mode"] = "MAN"
+
+    config = driver.get_cursor_config()
+
+    assert config["mode"] == "manual"
+    assert config["type"] == "time"
+    assert config["source"] == "CH1"
+    assert config["ax"] == pytest.approx(-2.0e-4)
+    assert "source1" not in config
+    assert sent(scope, ":CURSOR:TRAC") == []
+
+
+def test_get_cursor_config_off_reads_nothing_else(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    config = driver.get_cursor_config()
+
+    assert config == {"mode": "off"}
+    assert scope.command_log == [":CURSor:MODE?"]
+
+
+def test_get_cursor_measurement_returns_the_deltas(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.cursor["mode"] = "MAN"
+    scope.cursor["manual"].update({"cax": 1e-4, "cbx": 3e-4, "cay": -1.0, "cby": 2.0})
+
+    result = driver.get_cursor_measurement()
+
+    assert result == {
+        "mode": "manual",
+        "ax_s": pytest.approx(1e-4),
+        "ay_v": pytest.approx(-1.0),
+        "bx_s": pytest.approx(3e-4),
+        "by_v": pytest.approx(2.0),
+        "xdelta_s": pytest.approx(2e-4),
+        "ydelta_v": pytest.approx(3.0),
+        "ixdelta_hz": pytest.approx(5e3),
+    }
+
+
+def test_get_cursor_measurement_reads_the_track_subtree(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.cursor["mode"] = "TRAC"
+
+    driver.get_cursor_measurement()
+
+    assert sent(scope, ":CURSOR:MAN") == []
+    assert ":CURSor:TRACk:XDELta?" in scope.command_log
+
+
+def test_get_cursor_measurement_off_returns_the_mode_only(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """カーソルOFFでは読める値が無い。キーの不在でそれを表す(問い合わせ1本)。"""
+    result = driver.get_cursor_measurement()
+
+    assert result == {"mode": "off"}
+    assert scope.command_log == [":CURSor:MODE?"]
+
+
+def test_get_cursor_measurement_reports_an_invalid_reading_as_none(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """ΔX=0 では 1/ΔX が番兵値(±9.9E37)。測定不能は None で返す。"""
+    scope.cursor["mode"] = "MAN"
+    scope.cursor["manual"].update({"cax": 1e-4, "cbx": 1e-4})
+
+    result = driver.get_cursor_measurement()
+
+    assert result["xdelta_s"] == 0.0
+    assert result["ixdelta_hz"] is None
+
+
+def test_get_cursor_measurement_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as exc:
+        generic_driver.get_cursor_measurement()
+
+    assert exc.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# 周波数カウンタ・電圧計(:COUNter / :DVM / ガイド3.7・3.10)
+# --------------------------------------------------------------------------
+
+
+def test_configure_meter_counter_sends_exact_scpi(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    applied = driver.configure_meter(
+        "counter",
+        enabled=True,
+        source="D3",
+        mode="period",
+        digits=6,
+        totalize_enabled=True,
+    )
+
+    assert writes(scope, ":COUN") == [
+        ":COUNter:ENABle ON",
+        ":COUNter:SOURce D3",
+        ":COUNter:MODE PERiod",
+        ":COUNter:NDIGits 6",
+        ":COUNter:TOTalize:ENABle ON",
+    ]
+    assert applied == {
+        "kind": "counter",
+        "enabled": True,
+        "source": "D3",
+        "mode": "period",
+        "digits": 6,
+        "totalize_enabled": True,
+    }
+
+
+def test_configure_meter_dvm_sends_exact_scpi(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    applied = driver.configure_meter("dvm", enabled=True, source="CH3", mode="dc_rms")
+
+    assert writes(scope, ":DVM") == [
+        ":DVM:ENABle ON",
+        ":DVM:SOURce CHANnel3",
+        ":DVM:MODE DCRMs",
+    ]
+    assert applied == {
+        "kind": "dvm",
+        "enabled": True,
+        "source": "CH3",
+        "mode": "dc_rms",
+    }
+
+
+def test_configure_meter_dvm_rejects_digital_sources(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`:DVM:SOURce` はアナログchのみ(ガイド3.10.3)。送信前に拒否する。"""
+    with pytest.raises(ScopeError) as exc:
+        driver.configure_meter("dvm", source="D0")
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_meter_dvm_rejects_counter_only_settings(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as exc:
+        driver.configure_meter("dvm", digits=4)
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_meter_rejects_an_unknown_kind(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as exc:
+        driver.configure_meter("voltmeter", enabled=True)
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_meter_rejects_digits_out_of_range(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """分解能は3〜6(ガイド3.7.5)。範囲外は送信ゼロで拒否する。"""
+    for digits in (2, 7):
+        with pytest.raises(ScopeError) as exc:
+            driver.configure_meter("counter", digits=digits)
+
+        assert exc.value.code == ErrorCode.INVALID_PARAMETER
+        assert scope.command_log == []
+
+
+def test_configure_meter_counter_rejects_a_digital_channel_out_of_range(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as exc:
+        driver.configure_meter("counter", source="D16")
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_meter_without_any_item_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as exc:
+        driver.configure_meter("counter")
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_meter_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    for kind in ("counter", "dvm"):
+        with pytest.raises(ScopeError) as exc:
+            generic_driver.configure_meter(kind, enabled=True)
+
+        assert exc.value.code == ErrorCode.UNSUPPORTED_FEATURE
+        assert scope.command_log == []
+
+
+def test_get_meter_config_returns_semantic_values(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.counter.update({"mode": "TOT", "source": "D5"})
+
+    assert driver.get_meter_config("counter") == {
+        "kind": "counter",
+        "enabled": False,
+        "source": "D5",
+        "mode": "totalize",
+        "digits": 4,
+        "totalize_enabled": False,
+    }
+    assert driver.get_meter_config("dvm") == {
+        "kind": "dvm",
+        "enabled": False,
+        "source": "CH1",
+        "mode": "ac_rms",
+    }
+    assert sent(scope, ":DVM:NDIG") == []
+
+
+def test_get_meter_value_reads_the_current_command(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """現在値は `:COUNter:CURRent?` / `:DVM:CURRent?`(`:VALue` は存在しない)。"""
+    assert driver.get_meter_value("counter") == pytest.approx(1.0e3)
+    assert scope.command_log == [":COUNter:CURRent?"]
+
+    assert driver.get_meter_value("dvm") == pytest.approx(0.35)
+    assert scope.command_log[-1] == ":DVM:CURRent?"
+
+
+def test_get_meter_value_reports_an_invalid_reading_as_none(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.counter["mode"] = "TOT"
+    scope.counter["total"] = 9.9e37
+
+    assert driver.get_meter_value("counter") is None
+
+
+def test_clear_counter_totalize_sends_the_action_command(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.clear_counter_totalize()
+
+    assert writes(scope, ":COUN") == [":COUNter:TOTalize:CLEar"]
+    assert scope.counter["total"] == 0.0
+
+
+def test_clear_counter_totalize_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as exc:
+        generic_driver.clear_counter_totalize()
+
+    assert exc.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# ヒストグラム(:HISTogram / ガイド3.11)
+# --------------------------------------------------------------------------
+
+
+def test_configure_histogram_sends_exact_scpi(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    applied = driver.configure_histogram(
+        enabled=True,
+        type="vertical",
+        source="CH2",
+        height=4,
+        left_s=-1e-3,
+        right_s=1e-3,
+        bottom_v=-2.0,
+        top_v=2.0,
+    )
+
+    assert writes(scope, ":HIST") == [
+        ":HISTogram:ENABle ON",
+        ":HISTogram:TYPE VERTical",
+        ":HISTogram:SOURce CHANnel2",
+        ":HISTogram:HEIGht 4",
+        ":HISTogram:RANGe:LEFT -0.001",
+        ":HISTogram:RANGe:RIGHt 0.001",
+        ":HISTogram:RANGe:BOTTom -2.0",
+        ":HISTogram:RANGe:TOP 2.0",
+    ]
+    assert applied["type"] == "vertical"
+    assert applied["height"] == 4
+    assert applied["left_s"] == pytest.approx(-1e-3)
+
+
+def test_configure_histogram_rejects_reversed_ranges(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """LEFT < RIGHt / BOTTom < TOP はガイド明記の制約(両端指定時のみ検証)。"""
+    with pytest.raises(ScopeError) as exc:
+        driver.configure_histogram(left_s=1e-3, right_s=-1e-3)
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+    with pytest.raises(ScopeError) as exc:
+        driver.configure_histogram(bottom_v=2.0, top_v=-2.0)
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_histogram_allows_a_single_bound(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """片側だけの指定は現在値との突合が要るため機器に委ねる(M1の結合方針)。"""
+    driver.configure_histogram(left_s=1e-3)
+
+    assert writes(scope, ":HIST") == [":HISTogram:RANGe:LEFT 0.001"]
+
+
+def test_configure_histogram_rejects_bad_height_and_source(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    for kwargs in ({"height": 5}, {"height": 0}, {"source": "D0"}, {"source": "MATH1"}):
+        with pytest.raises(ScopeError) as exc:
+            driver.configure_histogram(**kwargs)
+
+        assert exc.value.code == ErrorCode.INVALID_PARAMETER
+        assert scope.command_log == []
+
+
+def test_configure_histogram_without_any_item_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as exc:
+        driver.configure_histogram()
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_get_histogram_config_returns_semantic_values(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    config = driver.get_histogram_config()
+
+    assert config["enabled"] is False
+    assert config["type"] == "horizontal"
+    assert config["source"] == "CH1"
+    assert config["height"] == 2
+    assert config["left_s"] == pytest.approx(-2.0e-4)
+    assert config["top_v"] == pytest.approx(1.0)
+
+
+def test_get_histogram_result_keeps_the_raw_response(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """統計表の列の意味はガイド欠落で不明。生文字列を必ず残す(fail-open)。"""
+    result = driver.get_histogram_result()
+
+    assert result["raw"][0].startswith('[["92"')
+    assert result["rows"][0][:4] == ["92", "1", "0", "Vpp"]
+    assert result["rows"][0][5] == "374hits"
+    assert "warnings" not in result
+
+
+def test_get_histogram_result_warns_on_an_unparsable_response(
+    driver: ScopeDriver, scope: FakeScope, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        driver.session, "query_lines", lambda command: ["something else"]
+    )
+
+    result = driver.get_histogram_result()
+
+    assert result["raw"] == ["something else"]
+    assert "rows" not in result
+    assert result["warnings"]
+
+
+def test_reset_histogram_sends_the_action_command(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.reset_histogram()
+
+    assert writes(scope, ":HIST") == [":HISTogram:RESet"]
+    assert scope.histogram["hits"] == 0
+
+
+def test_histogram_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    for call in (
+        lambda: generic_driver.configure_histogram(enabled=True),
+        generic_driver.get_histogram_config,
+        generic_driver.get_histogram_result,
+        generic_driver.reset_histogram,
+    ):
+        with pytest.raises(ScopeError) as exc:
+            call()
+
+        assert exc.value.code == ErrorCode.UNSUPPORTED_FEATURE
+        assert scope.command_log == []
