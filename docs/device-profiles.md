@@ -45,7 +45,7 @@
 | `digital_channels` | 16 | 将来のLA対応 |
 | `afg_channels` | 2 | 信号発生チャンネル数(`channel` 引数の検証。**範囲外の `:SOURce3` は実機を沈黙させる**) |
 | `math_channels` | 4 | MATH演算トレース本数(`:MATH<n>`)。`configure_math` / `get_math_state` の `channel` 引数と `capture_waveform` の `"MATH<n>"` ソースの検証に使う。**未宣言ならMATH操作自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) |
-| `ref_channels` | 10 | リファレンス波形の本数(`:REF<n>`)。現状は `configure_math` の `source1` / `source2` / `fft.source` に指定された `"REF<n>"` の範囲検証に使う(将来の M3 `:REFerence` でも使う)。未宣言ならREFソース指定が `INVALID_PARAMETER` |
+| `ref_channels` | 10 | リファレンス波形の枠数。用途は2つ: (1) `configure_math` の `source1` / `source2` / `fft.source` に指定された `"REF<n>"` の範囲検証(未宣言ならREFソース指定が `INVALID_PARAMETER`)、(2) `configure_reference` / `get_reference_state` の `ref` 引数の範囲検証。**未宣言(または0)ならリファレンス操作自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) |
 | `bandwidth_hz` | 実機依存 | 参考情報 |
 | `protocol_decode` | true | デコード対応(`configure_decode` / `get_decode_result` の可否) |
 | `decode_buses` | 4 | デコードバス本数(`bus` 引数の検証。未宣言ならデコード自体を行わない) |
@@ -97,6 +97,7 @@
 | `counter_modes` | 周波数カウンタの測定モードの対応表(`:COUNter:MODE`)。**未宣言なら `mode` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `frequency: FREQuency` / `period: PERiod` / `totalize: TOTalize`(ガイド3.7.4) |
 | `dvm_modes` | 電圧計の測定モードの対応表(`:DVM:MODE`)。**未宣言なら `mode` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `ac_rms: ACRMs`(DC成分を除いた実効値)/ `dc: DC`(平均)/ `dc_rms: DCRMs`(実効値)(ガイド3.10.4) |
 | `histogram_types` | ヒストグラム種別の対応表(`:HISTogram:TYPE`)。**未宣言なら `type` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `horizontal: HORizontal` / `vertical: VERTical`(ガイド3.11.3) |
+| `reference_colors` | リファレンス波形の表示色の対応表(`:REFerence:COLor`)。**未宣言なら `color` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `gray: GRAY` / `green: GREen` / `blue: BLUE` / `red: RED` / `orange: ORANge`(ガイド3.20.7)。**実機の応答はガイド記載と違う** — 緑はガイドが `GRE` と書くのに対し実機は `GREE` を返す(工場出荷の枠4・枠9が緑 → [verification/mho98-m3.md](verification/mho98-m3.md) 4章)。**枠数のゲートは `ref_channels`**(2.1)で、`:REFerence` は枠番号をコマンド引数で取るため接頭辞の方言キー(`math_prefix` / `afg_prefix` に相当するもの)は置かない |
 
 `:SYSTem:OPTion:*` は**MHO900専用**でDHO800/900のガイドには存在しない。したがって `option_query` / `option_types` は `mho98.yaml` にのみ宣言し、`rigol-generic.yaml` には置かない — **キーの不在がそのままゲート**である(4.2の原則の適用例)。`*OPT?` はRigolオシロ全シリーズで未定義ヘッダのため使わない。`<type>` リスト外のトークン(実測: `AUTOA`)でもSCPIサーバーが沈黙するので、`option_types` に載っていないトークンを送ってはならない。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md)(未ライセンス状態でも `AFG50` / `RLU-05` は `1` を返す)。
 

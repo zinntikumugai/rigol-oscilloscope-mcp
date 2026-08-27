@@ -969,6 +969,12 @@ def create_server(
         enabled is false, because a meter that is off has no reading to give,
         and source says what is being measured. Turn the meter on with
         configure_meter first.
+
+        The counter needs a few seconds to settle after it is enabled: it reads
+        0 or null for roughly the first three seconds even on a live signal,
+        and only then starts returning the frequency. Wait about three seconds
+        after enabling before trusting the reading, and treat a null or 0 right
+        after configure_meter as "not settled yet" rather than as no signal.
         """
         return service.get_meter_value(manager.require_scope(), kind)
 
@@ -1065,9 +1071,10 @@ def create_server(
         with get_reference_state.
 
         source is what the slot shows and saves: "CH1"-"CH4", a math trace
-        "MATH1"-"MATH4", or a digital channel "D0"-"D15". The instrument only
-        accepts a channel that is currently turned on, and rejects the write
-        otherwise, so display the channel first.
+        "MATH1"-"MATH4", or a digital channel "D0"-"D15". The programming
+        guide says only a channel that is currently displayed may be selected,
+        but this firmware accepts a channel whose display is off as well
+        (measured), so the source is not restricted here.
 
         scale is the vertical scale per division and offset_v the vertical
         offset in volts, both of the stored trace. color is gray / green /
