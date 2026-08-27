@@ -85,3 +85,27 @@ Time,Tx/Rx,Data,Error,
 
 - RS232以外(I2C/SPI/CAN/LIN/Parallel)のイベントテーブル列構成は該当信号源を接続した際に本書へピン留めする(パーサーはスキーマ非依存のためコード変更不要)
 - ライセンス解放済みとなったオプション機能(CAN-FD / FlexRay / I2S / MIL-STD-1553デコード、AFG 100MHz)の対応は roadmap 2章の対象(着手時に要件へ昇格)
+
+## 5. パラレルデコードの `:PARallel:WIDTh` が拒否される原因(2026-08-28)
+
+**長らく残っていた「復元fixtureが `:BUS1:PARallel:WIDTh 1` で `-200,"Command execute failed"` を受ける」問題([mho98-m2.md](mho98-m2.md) 7.1、[roadmap.md](../roadmap.md) 2.1)の原因を切り分けた。**
+
+実測(状態を変えながら全て試行。毎回エラーキューを空にしてから1コマンド):
+
+| 送信 | 状態 | エラーキュー |
+|---|---|---|
+| `:BUS1:PARallel:WIDTh 1` / `2` / `4` / `8` / `16` | バス無効 | 全て `-200,"Command execute failed"` |
+| 同上 | `:BUS1:MODE PAR` に設定後 | 全て `-200` |
+| 同上 | さらに `:BUS1:DISPlay ON` | 全て `-200` |
+| `:BUS1:PARallel:ENDian MSB` / `LSB` | 同じ状態 | **どちらも成功**(read-back一致、エラーなし) |
+
+**値の問題でも、バスの有効/無効の問題でもない。** 兄弟項目の `:ENDian` が同じ状態で問題なく往復することが、経路そのものは生きていることを示している。
+
+**原因はガイド自身の Remark にあった(3.4.10.4):** `:BUS<n>:PARallel:WIDTh` は **データソースが User に設定されているときのみ有効**(`:BUS<n>:PARallel:BUS USER`)。今回の実機はその条件を満たしていなかったため、どの値を送っても実行が拒否されていた。
+
+**実装への含意(未修正・追跡は [roadmap.md](../roadmap.md) 2.1):**
+
+- **`configure_decode` の `settings.parallel` は `bus_width` を公開しているが `:PARallel:BUS` を公開していない。** したがって**機器が既にUSERモードでない限り `bus_width` は本APIから使えない**(送れば必ず `SCPI_ERROR` になる)。公開している引数が特定の前提下でしか働かないという点で、これは仕様の穴である
+- 修正は `:PARallel:BUS` を `settings.parallel` に足すこと。**送るトークンの値域はガイド3.4.10.4 を逐語確認してからプロファイルへ宣言する**(確認できているのは Remark 記載の User のみ。AGENTS.mdルール2)
+- 同じガイド節には `:PARallel:BITX`(対象ビットの選択)+ `:PARallel:SOURce`(そのビットのソース割り当て)の対もあり、**Userモードのパラレルバスはビットごとにソースを割り当てる**構成になっている。`bus_width` を実用にするならこの対も併せて検討する
+- 実機writeテストの復元fixtureがteardownでERRORになる件は、この修正で解消する見込み

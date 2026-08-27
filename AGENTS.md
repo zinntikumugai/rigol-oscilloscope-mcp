@@ -21,7 +21,7 @@ mise外のシェルでは `mise exec -- uv run ...` を使う。
 ## アーキテクチャ
 
 ```
-server.py(FastMCP、36 Tool、同期def+lock直列化)
+server.py(FastMCP、38 Tool、同期def+lock直列化)
   → service/(connection / state / measurement / waveform / analysis / screenshot / control / decode / paths)
   → safety/(操作クラス表 / confirmトークン / 監査ログJSONL)
   → driver/(session: drain・set_and_verify / scope: プロファイル対応SCPI生成 / decode: :BUS変換表)
@@ -54,6 +54,6 @@ skills/ + .claude-plugin/ + .codex-plugin/ + .agents/(Claude/Codex両プラグ�
 
 ## 検証(タスク完了の条件)
 
-1. `uv run pytest` 全件グリーン(現在1440件+device 39件skip)
+1. `uv run pytest` 全件グリーン(現在1505件+device 43件skip)
 2. `git grep "172\.16\."` が空
 3. 機器通信に触れた変更は実機スモーク(`-m device` のread-onlyスイート)を実行し、結果を `docs/verification/`(IP・シリアル非記載)に記録する

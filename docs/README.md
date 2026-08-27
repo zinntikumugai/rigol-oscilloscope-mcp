@@ -17,6 +17,7 @@
 | [verification/mho98-afg.md](verification/mho98-afg.md) | AFG(信号発生)実機検証結果。全13波形・変調・ループバックFFTの記録 | エビデンス |
 | [verification/mho98-math.md](verification/mho98-math.md) | M1(MATH演算)実機検証結果。FFTピーク表の複数行応答・プリアンブルのx軸・表示OFF→ONでの再計算quirk | エビデンス |
 | [verification/mho98-m2.md](verification/mho98-m2.md) | M2(カーソル/カウンタ/DVM/ヒストグラム)実機検証結果。無効時のエラーキュー汚染と統計書式 | エビデンス |
+| [verification/mho98-m3.md](verification/mho98-m3.md) | M3(リファレンス波形)実機検証結果。工場出荷状態の全10枠と、ガイド記載と違う色応答(`GREE`)による列挙照合の修正 | エビデンス |
 | [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) | 未ライセンス状態でのオプション照会とデコードの挙動(`:SYSTem:OPTion:STATus?`) | エビデンス |
 | [verification/mho98-autoset.md](verification/mho98-autoset.md) | オートセットアップのニモニック実在確認(読み取りプローブのみ。実行自体は未検証) | エビデンス |
 | [verification/mho98-measure-clear.md](verification/mho98-measure-clear.md) | 測定項目クリア(`:MEASure:DELete`)のニモニック分岐の実測 | エビデンス |

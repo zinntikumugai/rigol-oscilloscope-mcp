@@ -503,9 +503,11 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `get_meter_value` | READ_ONLY | M2 |
 | `configure_histogram` | SAFE_WRITE | M2 |
 | `get_histogram_result` | READ_ONLY | M2 |
+| `configure_reference` | SAFE_WRITE | M3 |
+| `get_reference_state` | READ_ONLY | M3 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は36(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
+登録Tool数は38(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
 
 将来(Phase 4の残り): `:PERiod` / `:VOLTage:HIGH`/`:LOW`(恒久スキップ。`frequency_hz`/`amplitude_vpp`+`offset_v`で表現可能なため)、DHOファミリの `:SOURce`(番号なし・DGモジュール)対応、Logic Analyzer。
 
@@ -713,6 +715,8 @@ MATH演算の現在設定を読む。**書き込みは一切行わず**、表示
 動作・規範:
 
 - **単位はモード依存なので値だけを返さない**。Totalizeは無次元のイベント数なので、それが分かる語 `"counts"` を単位の位置に置く(ガイド3.7.4 / 3.10.4)
+- **カウンタは有効化から約3秒の整定時間が要る**(実測 → [verification/mho98-m2.md](verification/mho98-m2.md) 6.1)。生信号が載っていても、有効化直後は `value` が `0` または `null` になり、**3秒待つと安定した値を返し始める**(2秒では `0` / 空応答、3秒後は1秒間隔の6回読みが全て同値)。**`configure_meter(enabled=true, ...)` の直後の `0` / `null` は「信号が無い」ではなく「まだ整定していない」**と解釈すること。ホスト側で待ちを入れる実装はしていない(待ち時間の要否は呼び出し側の文脈次第のため)
+- **カウンタの応答書式は分解能・モードで変わる**(実測): `digits=4` → `'9000'`、`digits=3` → `'9e+03'`、`mode="period"` → `'0.000111'`。いずれも `parse_nr3` が解釈できる形式で、返り値は常にfloat + `unit`
 - **無効な計では現在値を問い合わせず `value: null`** を返す。実機の電圧計は無効時に `:DVM:CURRent?` へ**空応答**を返し、そのままパースすると `SCPI_ERROR`(機器故障に見える)になるため、`:ENABle?` を先に1本読んで短絡する(有効なら合計2本)。「なぜ値が無いのか」は同じ返却に含まれる `enabled: false` が示す → [verification/mho98-m2.md](verification/mho98-m2.md) 1章
 - **設定一式を必ず添える**: 無効な計の値には意味が無く、どのソースを見ているかも合わせて示す必要があるため
 - **プロファイルゲート**: `configure_meter` と同じ(未対応機・未知の `kind` では機器へ1コマンドも送らない)
@@ -781,3 +785,90 @@ MATH演算の現在設定を読む。**書き込みは一切行わず**、表示
 - **応答は1行で終端の空行が無い**(実測223バイト、改行1個)。FFTピーク表(11章)と違い `query_lines()` は使えない — 使うと実機ではタイムアウトまで固まる。`query()` で1行だけ読む。なお同名に見える `:MEASure:HISTogram:STATistics:RESult?`(ガイド3.17.32)は**別サブシステムの別書式**(引用符付きの入れ子リスト)であり、混同しないこと
 - **安定したスナップショットが要るなら先に `stop`**(取り込み中は統計が増え続ける)
 - **プロファイルゲート**: `histogram` capability が未宣言なら送信ゼロで `UNSUPPORTED_FEATURE`
+
+---
+
+## 13. リファレンス波形(Phase M3)
+
+機器内部に保存した波形のコピー(`:REFerence`、ガイド3.20章)を扱う。今のトレースを枠(スロット)へ焼き付け、以後の生波形の上に重ねて描かせることで「良品時の波形」との比較ができる。**取り込み条件(垂直軸・水平軸・トリガ)にも信号発生の出力にも触れない**表示・比較の層である。
+
+**本章も章番号を末尾に置いている**(11章・12章と同じ理由 — 既存章番号への参照を壊さないため)。位置づけとしては5〜7章・11章・12章と同列の機能章である。
+
+構成は他の機能章と同じ「設定Tool(SAFE_WRITE)+ 読み取りTool(READ_ONLY)」の対で、`configure_reference` は未指定項目を変更しない差分適用、返却は `requested` / `applied` / `changed`(0.3節)で揃えている。
+
+**枠番号の渡し方だけが他サブシステムと違う。** `:MATH<n>` / `:BUS<n>` / `:SOURce<n>` は番号を**ニモニックに埋め込む**が、`:REFerence` は**コマンド引数**で取る(`:REFerence:VSCale 10,0.5`、問い合わせは `:REFerence:VSCale? 10`)。プロファイルに `ref_prefix` のような方言キーを置いていないのはこのためで、ニモニック自体はドライバ側のハードコードである。
+
+**REF波形のデータは取得できない**(下記 `configure_reference` の最後の項)。ホスト側で数値比較したい場合は**MATHの減算を経由する**。
+
+### `configure_reference` — SAFE_WRITE / Phase M3
+
+リファレンス波形の枠(`REF1`〜`REF10`)を設定する。**機器が既に持っている波形を1枠へコピーし、画面に重ねて描かせるだけ**の操作で、取り込み設定にも出力にも触れない。したがって `configure_math`(11章)・`configure_cursor`(12章)と同じ根拠で SAFE_WRITE とし、confirmトークンを要求しない。引数条件付きの昇格も無い。
+
+ただし **`save=true` だけは不可逆**である(confirmトークンの対象ではないが、下記「動作・規範」の1点目を必ず読むこと)。
+
+引数(未指定項目は変更しない。`ref` 以外を1項目も指定しなければ `INVALID_PARAMETER`):
+
+| 名前 | 型 | 説明 |
+|---|---|---|
+| `ref` | int | リファレンス枠の番号。既定 1(MHO98は1〜10。範囲は `ref_channels` capability。**範囲外は送信前に拒否**) |
+| `source` | string | この枠が表示・保存する対象。`"CH1"`〜`"CH4"` / `"MATH1"`〜`"MATH4"` / `"D0"`〜`"D15"`。**`REF<n>` 自身と `NONE` は値域に無い** |
+| `scale` | float | 保存波形の垂直スケール(**V/div**) |
+| `offset_v` | float | 保存波形の垂直オフセット(**V**) |
+| `color` | string | 表示色。`gray` / `green` / `blue` / `red` / `orange`(対応表は `reference_colors`) |
+| `label` | string | トレース脇に描くラベル文字列。英数字と `_` `.` `+` `-` のみ(**空白不可**) |
+| `label_display` | bool | ラベル表示のON/OFF。**全10枠共通のグローバルスイッチ**(下記) |
+| `save` | bool | `source` の現在の波形をこの枠へ保存する(`:REFerence:SAVE`)。**不可逆**。設定を送り終えた**最後**に実行する |
+| `reset` | bool | この枠の垂直スケール/オフセットを既定へ戻す(`:REFerence:RESet`)。設定より**前**に実行する |
+
+返却: `ref`(適用後の枠番号)/ `requested` / `applied`(read-back値。`save` / `reset` を指定した場合は `applied["save"] = true` / `applied["reset"] = true` が付く)/ `changed`(呼び出し前後の**設定**が変化したか)。
+
+動作・規範:
+
+- **`save=true` は取り消せない**: 指定した枠に入っていた波形は上書きされて失われる。**元に戻す手段は無く、「その枠に既にデータが入っているか」を問い合わせる手段も機器に無い**(ガイド3.20章に該当のクエリが存在しない)。したがって**保存先の枠を潰してよいかは利用者にしか判断できない** — エージェントは `save=true` を送る前に人間へ確認すること。書き込み専用の動作コマンドなので read-back もできない
+- **1回の呼び出しの中の送信順は `reset` → 設定 → `save`** に固定されており、この順序には意味がある。`reset` を**先**に送るのは、後に送ると同じ呼び出しの `scale` / `offset_v` を捨ててしまうからである(`reset` は既定の垂直スケール/オフセットへ戻す**設定**なので、利用者が明示した値より前に置くのが正しい)。`save` を**最後**に送るのは、保存が「その時点のソースの波形を焼き込む」操作であり、`source` の選択を含む設定が先に届いている必要があるからである。設定部分の送信順は `source` → `scale` → `offset_v` → `color` → `label` → `label_display`
+- **設定を1つも伴わない、動作だけの呼び出しも受け付ける**(`save` だけ / `reset` だけ)。この場合、設定コマンドは1本も送らない
+- **`label_display` は全10枠に効くグローバルスイッチ**(ガイド3.20.6。`:REFerence:LABel:ENABle` は**枠引数を取らない**)。`ref=1` を指定した呼び出しで切り替えても、**REF1〜REF10 の全ラベルが一斉に切り替わる**。`get_reference_state` がどの枠を読んでも同じ値を返すのはこのためである
+- **`changed` は設定の差分だけを見る**。`save` / `reset` は設定値を変えないことがある(`save` は表示設定を1つも動かさない)ため、**`changed: false` でも保存は実行されている**。実行の有無は `applied["save"]` / `applied["reset"]` が示す
+- **`reset` は保存済み波形の無い枠では何も起きないことがある**(実測 → [verification/mho98-m3.md](verification/mho98-m3.md) 3章)。エラーも積まれないまま値が戻らないため、**「戻ったはず」と仮定せず** `applied`(read-back値)を見ること。1件の観測であり、保存の有無が条件だと確定したわけではない
+- **ソースが表示中である必要は無い**(ガイドの Remark「現在有効なチャンネルのみソースに選べる」は、このファームウェアでは成り立たない)。CH4の表示をOFFにしてから `:REFerence:SOURce 1,CHANnel4` を送るとエラー無しで受理され `CHAN4` が読み戻ることを実測している → [verification/mho98-m3.md](verification/mho98-m3.md) 2章。したがって**ホスト側では表示状態を検証しない**
+- **検証は全て送信前**に行う(1項目でも不正なら**1コマンドも送らずに** `INVALID_PARAMETER`)。対象は枠番号の範囲、ソーストークンの形と範囲(`CH<n>` は `analog_channels`、`MATH<n>` は `math_channels`、`D<n>` は `digital_channels`)、色の列挙値、**ラベルの文字種**。ラベルは引用符無しでコマンドへ埋め込むため、`;`(コマンドセパレータ)や空白(引数区切り)を含む値をホワイトリストで送信前に弾く
+- **`applied` を信用し `requested` を信用しない**(11章と同じ)。各項目は set → エラーキュー確認 → read-back(0.3節)
+- **プロファイルゲート**: `ref_channels` capability が未宣言(または0)なら**送信ゼロ**で `UNSUPPORTED_FEATURE`。`reference_colors` の対応表も同様に、未宣言なら `color` を送らず `UNSUPPORTED_FEATURE`([device-profiles.md](device-profiles.md) 2.1 / 2.2)
+- **REF波形のデータは取得できない**: `:WAVeform:SOURce` の値域はガイド3.28.1に `{CHANnel1-4|MATH1-4}` と逐語で書かれており、**`REF<n>` は入っていない**。したがって `capture_waveform("REF1")` に相当する経路は存在しない。**保存波形と生波形をホスト側で数値比較したいときはMATHの減算を経由する**:
+
+  ```
+  configure_reference(ref=1, source="CH1", save=True)          # 良品波形を焼く(不可逆)
+  configure_math(channel=1, operator="subtract", source1="CH1", source2="REF1", display=True)
+  capture_waveform(channel="MATH1")                            # 差分をホストへ取得
+  ```
+
+  `:MATH<n>:SOURce` は `REF1`〜`REF10` を受理する(ガイド3.16.3)ため、この経路なら差分そのものを転送できる。目視だけで足りるなら `capture_screenshot` でも良い
+- **意図的にスキップ**: `:REFerence:CURRent`(→ [roadmap.md](roadmap.md) 2.5.3)
+
+### `get_reference_state` — READ_ONLY / Phase M3
+
+リファレンス枠の現在設定を読む。**書き込みは一切行わない**。
+
+引数: `ref`(int、任意)。指定すればその枠だけ、省略すれば**全枠**を返す。
+
+返却:
+
+| キー | 説明 |
+|---|---|
+| `ref` | 枠番号(`ref` 指定時) |
+| `source` | この枠のソース(`"CH1"` / `"MATH1"` / `"D0"` 等。`CHAN1` は `CH1` へ正規化) |
+| `scale` | 垂直スケール(**V/div**) |
+| `offset_v` | 垂直オフセット(**V**) |
+| `color` | 表示色(`gray` / `green` / `blue` / `red` / `orange`) |
+| `label` | ラベル文字列(**引用符は付かない**) |
+| `label_display` | ラベル表示のON/OFF。**全枠共通**なのでどの枠を読んでも同じ値 |
+
+`ref` を省略した場合は `{"channels": {"1": {...}, ..., "10": {...}}}` の形で枠番号(文字列)をキーに全枠が入る。
+
+動作・規範:
+
+- **枠にデータが入っているかは返せない**。機器に問い合わせるコマンドが無いためで、「保存済みかどうか」を知る手段は**利用者の記憶か画面だけ**である(`configure_reference(save=true)` の不可逆性が重いのはこのため)
+- **1枠あたり6本のクエリ**(`source` / `scale` / `offset_v` / `color` / `label` の5本 + グローバルの `label_display` 1本)。`ref` 省略時は10枠 × 6本 = **60本**を投げるので、1枠で足りるなら `ref` を指定する
+- **全枠読みは実機で安全**(10枠とも正常応答し、エラーキューは終始 `0,"No error"`。沈黙も応答のずれも無し → [verification/mho98-m3.md](verification/mho98-m3.md) 1章)
+- **色の応答はガイドの記載と違う**: ガイド3.20.7 は緑を `GRE` と書くが、**実機は `GREE` を返す**。工場出荷状態の枠4・枠9が緑なので、短形/長形の2形しか見ない実装では**未操作の実機でこのToolが丸ごと落ちる**。列挙値の照合は短形式以上・長形式以下の任意の略形を受理する(曖昧なら推測せず `SCPI_ERROR`)→ [verification/mho98-m3.md](verification/mho98-m3.md) 4章
+- **プロファイルゲート**: `ref_channels` が未宣言(または0)なら、`ref` 省略時も**1枠だけ問い合わせて** `UNSUPPORTED_FEATURE` を返させる(空の `channels` を「正常」に見せない)

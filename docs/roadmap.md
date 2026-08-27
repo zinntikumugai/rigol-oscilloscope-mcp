@@ -23,7 +23,7 @@ MVP(Phase 1 + 2 = Read Only + Basic Control)完了後に対応する機能と、
 
 - **イベントテーブルの列構成は観測しながら固めていく**: `:BUS<n>:DATA?` の列はプロトコル依存でガイドに記載が無く、実装はヘッダ行をそのまま採用する(スキーマを持たない)。実機で観測できた列構成は [verification/mho98-phase4.md](verification/mho98-phase4.md) に追記していく(RS232の `Time,Tx/Rx,Data,Error,` は実測済み)
 - **バス無効時の `:DATA?` 挙動は未確認**: 現状は送信前に早期returnしているため実害はないが、観測できたら記録する
-- **パラレルの `:BUS<n>:PARallel:WIDTh 1` が実機で拒否される**: 実機writeテストの復元fixtureがスナップショットを書き戻す際に `-200,"Command execute failed"` を受け、`test_configure_decode_uart_set_and_readback` がteardownでERRORになる(2026-08-27の実機実行で観測。M1/M2とは無関係 → [verification/mho98-m2.md](verification/mho98-m2.md) 7.1)。`WIDTh` の値域・他パラメータとの結合制約(現在のパラレル設定でこの幅が許されるか)を実機で切り分ける
+- **パラレルの `:BUS<n>:PARallel:WIDTh` が実機で拒否される問題は原因判明・未修正**: 拒否の条件は「**データソースが User に設定されているときのみ有効**」というガイド3.4.10.4 の Remark であり、`:BUS<n>:PARallel:BUS USER` が前提だった(2026-08-28に切り分け完了 → [verification/mho98-phase4.md](verification/mho98-phase4.md) 5章)。**`configure_decode` のパラレル設定表は `bus_width` を公開しているのに `:PARallel:BUS` を公開していない**ため、機器が既にUSERモードでない限り `bus_width` は本APIから使えない。**残作業**: `settings.parallel` に `:PARallel:BUS` を追加し(**送るトークンの値域はガイド3.4.10.4 を逐語確認してからプロファイルへ宣言する** — 実測で確認できているのは Remark 記載の User のみ)、`bus_width` をその配下の項目として扱う。あわせて同じガイド節の `:PARallel:BITX` + `:PARallel:SOURce`(**ビットごとにソースを割り当てる**対の項目)も検討する。実機writeテストの復元fixtureがteardownでERRORになる件([verification/mho98-m2.md](verification/mho98-m2.md) 7.1)はこの修正で解消する見込み
 - **オプション必須プロトコルは延期**: I2S、FlexRay、MIL-STD-1553、CAN-FD。検証機はMHO900-BND適用済み(2026-08-26、[verification/mho98-phase4.md](verification/mho98-phase4.md) 3章)のため実機検証の障害はなくなった。実ニーズが出たら着手する
 - **将来ゲートは送信前に不要**: オプション必須ニモニックは沈黙せず値を返すと実測済み(ライセンス適用前後とも)のため、既存の「set → エラーキュー確認 → read-back」で機器自身のエラーを検出できる(実測根拠: [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 4章)。ただし未ライセンス時のエラーキュー挙動には揺らぎがある(`-222` が積まれる場合と積まれない場合を観測)ため、未ライセンス判定は `:SYSTem:OPTion:STATus?` で行うこと
 - `:BUS` コアはDHO/MHO共通と見られる(ガイド比較)。DHO実機を検証できたらファミリプロファイルへ引き上げる([device-profiles.md](device-profiles.md) 2.2)
@@ -54,9 +54,11 @@ MHO98は2ch・100 MHz・1 GSa/s のAFGを搭載する。実測根拠は [verific
 
 ### 2.5 内蔵機能の棚卸しと対応予定(2026-08-27)
 
-MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実装の内蔵機能から**対応予定6機能**を確定した(実装済み: Root / :CHANnel / :TIMebase / :TRIGger基本 / :MEASure / :WAVeform / :BUS / :SOURce / :DISPlay:DATA? / :SYSTem)。
+MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実装の内蔵機能から**対応予定6機能**を確定した(棚卸し時点の実装済み: Root / :CHANnel / :TIMebase / :TRIGger基本 / :MEASure / :WAVeform / :BUS / :SOURce / :DISPlay:DATA? / :SYSTem)。
 
-**対応予定(優先度順):**
+**その6機能は M1 / M2 / M3 で全て実装・実機検証まで完了した**(2026-08-28)。以降の追加は下表「見送り」からの再検討か、実機で新たに判明した残件(2.5.1〜2.5.3 の各「残件」)になる。
+
+**対応予定6機能(当初の優先度順。全て実装済み):**
 
 | Phase | 機能 | ガイド節 | 方針 |
 |---|---|---|---|
@@ -65,7 +67,7 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 | M2 | **:COUNter** 周波数カウンタ | 3.7 | **実装済み**(enable/source/mode + `:COUNter:CURRent?` 読み) |
 | M2 | **:DVM** 電圧計 | 3.10 | **実装済み**(同上。`:DVM:CURRent?`) |
 | M2 | **:HISTogram** ヒストグラム | 3.11 | **実装済み**(`:STATistics:RESult?` は `[Label:Value, …]` の1行) |
-| M3 | **:REFerence** リファレンス波形 | 3.20 | 保存→比較ワークフロー。REF波形の読み出し可否は要確認 |
+| M3 | **:REFerence** リファレンス波形 | 3.20 | **実装済み**(下記 2.5.3。保存→比較ワークフロー。**REF波形の読み出しは不可**と確定 — `:WAVeform:SOURce` の値域外。MATHの減算で代替する) |
 
 **見送り(再検討の条件つき):**
 
@@ -154,6 +156,43 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 1. **有効化したカウンタの現在値が読めない(応答が run 間で一定しない)** — 生信号の載ったチャンネルでカウンタを有効化し2秒待っても `:COUNter:CURRent?` は `0` のままだった。**pytest実行時の追試では同条件で `value: None`**(空応答または番兵値 ±9.9E37)が返り、生ソケットでの `'0'` と食い違った。ゲート時間・整定時間・トリガ要件・ソース条件のいずれかが未特定。**実装側の対処は不要**(`0` も `None` もそのまま返すだけで、非ゼロを仮定した分岐はコードのどこにも無い)。次に試すこと: 整定時間を延ばす / ゲート時間設定の有無をガイドで再確認 / トリガがかかっている状態での再測定 / 別ソース(D0-D15含む)での比較
 2. **実機テストの既知の失敗2件(M1/M2とは無関係・再診断不要)** — (a) `test_configure_decode_uart_set_and_readback` は復元fixtureが `:BUS1:PARallel:WIDTh 1` を送って `-200,"Command execute failed"` になりteardownでERROR(デコード経路はM1/M2で未変更 → 2.1の残件で追跡)、(b) `test_audit_log_records_every_write` は監査ログに `configure_afg` を要求するが AFG writeテストが安全ガード「AFG出力がONです」で自らskipするためFAILED(**機器のAFG出力がONである間だけ**再現する環境依存の失敗)
 3. **カウンタ無効時の `:COUNter:TOTalize:ENABle OFF` が `-200,"Command execute failed"`** — 現在値と同じ値を書いても拒否される。送信順は `enabled` が先頭なので通常の `configure_meter(enabled=True, totalize_enabled=…)` では踏まないが、**無効なカウンタへ `totalize_enabled` だけを送る呼び出し**は失敗する。実機テストの復元fixtureもこれを踏むため、復元では例外を握り潰す扱いにしてある(理由はテスト内の日本語コメント)
+
+### 2.5.3 M3: リファレンス波形(実装完了・実機検証済み)
+
+**Tool 2本を実装済み**([tools.md](tools.md) 13章): `configure_reference`(SAFE_WRITE)/ `get_reference_state`(READ_ONLY)。登録Tool数は36 → **38**。
+
+- **`configure_reference`**: 枠1〜10、`source`(CH / MATH / D0-D15)、垂直(`scale` / `offset_v`)、`color`、`label`、`label_display`、それに一発動作の `save` / `reset`。**送信順は `reset` → 設定 → `save`** に固定した。`reset` を先に置くのは「既定へ戻す」が同じ呼び出しの `scale` / `offset_v` を後から潰さないため、`save` を最後に置くのは保存が**その時点のソースの波形**を焼き込む操作でソース選択が先に届いている必要があるため
+- **`get_reference_state`**: `ref` 指定で1枠、省略で全10枠(1枠6クエリ・全枠60クエリ)。**枠にデータが入っているかは返せない**(機器に問い合わせるコマンドが無い)
+- **枠番号はコマンド引数**(`:REFerence:VSCale 10,0.5`)で、`:MATH<n>` / `:BUS<n>` のようにニモニックへ埋め込む形ではない。接頭辞にファミリ分岐の余地が無いため `math_prefix` / `afg_prefix` に相当する方言キーは作らず、`ref_channels` の宣言の不在をそのままゲートにしている
+- **プロファイル宣言**: capabilities の `ref_channels` は**M1で宣言済み**のものをそのまま使い(MATHソースの `REF<n>` 範囲検証と共用)、dialect に `reference_colors` を追加した([device-profiles.md](device-profiles.md) 2.1 / 2.2)
+- **`save` は不可逆**: 枠の内容は上書きされ、元に戻す手段も「入っているか」を問い合わせる手段も無い。confirmトークンの対象にはしていない(取り込みにも出力にも触れないため操作クラスは SAFE_WRITE)が、**Tool description と 13章の双方に「送る前に人間へ確認せよ」と明記**した。実機writeテストでも保存だけは追加の環境変数 `RIGOL_TEST_ALLOW_REF_SAVE=1` でゲートしている
+
+**当初の表の記述に対する決着:**
+
+- **「REF波形の読み出し可否は要確認」→ 読み出しは不可と確定。** `:WAVeform:SOURce` の値域はガイド3.28.1に `{CHANnel1-4|MATH1-4}` と逐語で書かれており `REF<n>` を含まない。代替として **MATHの減算経由**(`configure_math(operator="subtract", source1="CH1", source2="REF1")` → `capture_waveform("MATH1")`)を13章に実用ワークフローとして記載した。`:MATH<n>:SOURce` は `REF1`〜`REF10` を受理する(ガイド3.16.3)
+
+**意図的にスキップ(ガイド3.20にあるが実装しない):**
+
+- **`:REFerence:CURRent`** — **前面パネルで「今どの枠を操作対象にしているか」という選択状態**を設定するコマンド。`:REFerence` の他のコマンドは**全て枠番号を明示的な引数で取る**ため、この選択状態に依存するものが1つも無い。MCPから触っても本体UIのフォーカスが動くだけで、設定にも表示にも波形にも影響しない
+
+**実機検証(2026-08-28、MHO98 / fw 00.01.00。記録: [verification/mho98-m3.md](verification/mho98-m3.md)):**
+
+**実装バグ1件が判明し修正済み(テスト付き)。これがM3最大の収穫である:**
+
+- **`:REFerence:COLor?` の緑はガイド記載の `GRE` ではなく `GREE` が返る。** 列挙値の照合が短形式・長形式の2形しか受理していなかったため、**工場出荷状態(枠4・枠9が緑)の実機で `get_reference_state` が丸ごと落ちていた**。SCPI規格上、機器は短形式以上・長形式以下の**任意の略形**で応答してよく、ガイドの Return Format 欄はあてにならない → **共有の列挙マッチャを「短形式の長さ以上の前置一致を受理、候補が複数なら推測せず `SCPI_ERROR`」に変更**した。これは decode / AFG / MATH / cursor / counter / meter / histogram / reference の**全列挙が通る共通経路**で、**同時に潜在バグ1件を塞いだ** — 旧実装の逐語dictでは、別々の値の短形/長形が同じトークンになる表(例: `TIMe` と `TIMeout` はどちらも短形式 `TIM`)で**後勝ちで片方が黙って消えて**いた。現行の全テーブルを走査した限り実際に衝突する組は無く**現時点では発火していない**が、集合表現+曖昧なら `SCPI_ERROR` に変えて将来の追加に備えた
+
+併せて確定した事項:
+
+- **ガイドの Remark「現在有効なチャンネルのみソースに選べる」はこのファームでは成り立たない**(CH4の表示をOFFにしてから `:REFerence:SOURce 1,CHANnel4` を送るとエラー無しで受理され `CHAN4` が読み戻る)→ ホスト側では表示状態を検証しない
+- **工場出荷状態の全10枠は `source=CHAN1` / `vscale=5.000000E-2` / `voffset=0.000000` で同一**、色は ORAN → RED → BLUE → GREE → GRAY の**5色を巡回**(枠 n は (n−1) mod 5 の色)、ラベルは `REF<n>`、`:LABel:ENABle?` は `0`
+- **ラベルは引用符なしで返る**(`TESTLBL`)。**全10枠の読み取りでエラーキューは終始 `0,"No error"`**(沈黙なし)
+
+**実機テストのpytest実行も完了**(`-m device`: **18 passed**、`-m device_write`: リファレンスの往復 + reset順序の**2件 passed**、`RIGOL_TEST_ALLOW_REF_SAVE=1` を足すと保存を含む**3件 passed**。監査ログに `configure_reference` の記録を確認)。
+
+**残件(未解決):**
+
+1. **保存済み波形の無い枠では `:REFerence:RESet` が効かないように見える** — 一度も `:SAVE` していない枠1に `VSCale 1,0.5` / `VOFFset 1,0.2` を書いてから `:RESet 1` を送ったところ、**エラーは積まれないまま値も戻らなかった**(既定の `5.000000E-2` / `0.000000` ではなく書いた値のまま)。**観測は1件で、保存の有無が条件だと確定したわけではない**。フェイク機器(`testing/`)にはこの挙動をモデル化していない(条件が不確定なため)。呼び出し側は `applied`(read-back値)を見る前提なので実装側の対処は不要
+2. **枠にデータが入っているかを知る手段が無い** — 機器にクエリが存在しないため、`save` の不可逆性を利用者に判断させるしかない。ガイド3.20章を再読しても該当コマンドは見当たらない。**本体の画面を撮る(`capture_screenshot`)以外の確認手段は現状ない**
 
 ## 3. プラグイン化(完了・要件へ昇格)
 
