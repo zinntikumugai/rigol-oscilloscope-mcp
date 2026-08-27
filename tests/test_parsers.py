@@ -11,6 +11,7 @@ from rigol_oscilloscope_mcp.driver.parsers import (
     parse_coupling,
     parse_eng_number,
     parse_fft_peaks,
+    parse_histogram_result,
     parse_nr3,
     to_scpi_impedance,
     to_scpi_slope,
@@ -382,4 +383,78 @@ def test_parse_fft_peaks_non_string() -> None:
     peaks, warnings = parse_fft_peaks(None)
 
     assert peaks == []
+    assert len(warnings) == 1
+
+
+# --- parse_histogram_result -----------------------------------------------
+
+#: 実機実測(MHO98 fw 00.01.00、`:HISTogram:ENABle ON` / source CH2 / VERTical)。
+#: 終端は改行1本のみ(**終端の空行は無い**)。
+REAL_HISTOGRAM_RESULT = (
+    "[Sum:30.37khits, Peaks:234hits, Max:1.562V, Min:-999.9mV, Pk_Pk:2.562V, "
+    "Mean:265.1mV, Median:281.2mV, Mode:1.421V, Bin width:15.62mV, "
+    "Sigma:6.159mV, meanPlusSigma:0.581421, meanPlus2Sigma:1.000000, "
+    "meanPlus3Sigma:1.000000]\n"
+)
+
+
+def test_parse_histogram_result_real_device_capture() -> None:
+    """実機の `Label:Value` 列を正規化キーの統計辞書へ。"""
+    stats, warnings = parse_histogram_result(REAL_HISTOGRAM_RESULT)
+
+    assert warnings == []
+    assert stats["sum"] == pytest.approx(30370.0)
+    assert stats["sum_unit"] == "hits"
+    assert stats["peaks"] == pytest.approx(234.0)
+    assert stats["peaks_unit"] == "hits"
+    assert stats["max"] == pytest.approx(1.562)
+    assert stats["max_unit"] == "V"
+    assert stats["min"] == pytest.approx(-0.9999)
+    assert stats["min_unit"] == "V"
+    assert stats["pk_pk"] == pytest.approx(2.562)
+    assert stats["mean"] == pytest.approx(0.2651)
+    assert stats["median"] == pytest.approx(0.2812)
+    assert stats["mode"] == pytest.approx(1.421)
+    assert stats["bin_width"] == pytest.approx(0.01562)
+    assert stats["bin_width_unit"] == "V"
+    assert stats["sigma"] == pytest.approx(0.006159)
+
+
+def test_parse_histogram_result_unitless_values_stay_plain_numbers() -> None:
+    """`meanPlusSigma` 系は単位なし。`*_unit` キー自体を付けない。"""
+    stats, warnings = parse_histogram_result(REAL_HISTOGRAM_RESULT)
+
+    assert warnings == []
+    assert stats["mean_plus_sigma"] == pytest.approx(0.581421)
+    assert stats["mean_plus2_sigma"] == pytest.approx(1.0)
+    assert stats["mean_plus3_sigma"] == pytest.approx(1.0)
+    assert "mean_plus_sigma_unit" not in stats
+
+
+def test_parse_histogram_result_disabled_empty_list() -> None:
+    """無効時の `[]`(driverは送らないが、パーサは黙って空を返す)。"""
+    assert parse_histogram_result("[]\n") == ({}, [])
+
+
+def test_parse_histogram_result_falls_open_on_a_bad_entry() -> None:
+    """1項目が壊れても他は返す(例外にしない)。"""
+    stats, warnings = parse_histogram_result("[Max:1.5V, nonsense, Min:-1.0V]")
+
+    assert stats["max"] == pytest.approx(1.5)
+    assert stats["min"] == pytest.approx(-1.0)
+    assert len(warnings) == 1
+    assert "nonsense" in warnings[0]
+
+
+def test_parse_histogram_result_falls_open_on_an_unbracketed_response() -> None:
+    stats, warnings = parse_histogram_result("something else")
+
+    assert stats == {}
+    assert len(warnings) == 1
+
+
+def test_parse_histogram_result_non_string() -> None:
+    stats, warnings = parse_histogram_result(None)
+
+    assert stats == {}
     assert len(warnings) == 1

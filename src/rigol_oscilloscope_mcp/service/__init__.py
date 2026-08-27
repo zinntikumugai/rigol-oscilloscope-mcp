@@ -4,7 +4,7 @@ from .analysis import VALID_ANALYSES, analyze_waveform, waveform_fft, waveform_s
 from .connection import ConnectionManager, ConnectionStatus
 from .control import AUTOSET_NOTE, ControlService
 from .decode import get_decode_result
-from .measurement import measure
+from .measurement import get_meter_value, measure
 from .paths import allowed_roots, resolve_write_path
 from .screenshot import SUPPORTED_FORMATS, ScreenshotResult, capture_screenshot
 from .state import (
@@ -34,6 +34,7 @@ __all__ = [
     "get_acquisition_dict",
     "get_channel_dict",
     "get_decode_result",
+    "get_meter_value",
     "get_state",
     "get_timebase_dict",
     "get_trigger_dict",

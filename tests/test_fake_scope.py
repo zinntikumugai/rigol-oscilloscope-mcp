@@ -13,6 +13,7 @@ from rigol_oscilloscope_mcp.transport import Transport
 NO_ERROR = '0,"No error"'
 COMMAND_ERROR = '-100,"Command err"'
 OUT_OF_RANGE = '-222,"Data out of range"'
+EXECUTE_ERROR = '-200,"Command execute failed"'
 
 
 @pytest.fixture
@@ -1153,6 +1154,7 @@ def test_dvm_round_trip(scope: FakeScope) -> None:
 
 
 def test_dvm_current_follows_the_mode(scope: FakeScope) -> None:
+    scope.handle(":DVM:ENABle ON")
     assert scope.handle(":DVM:CURRent?") == b"3.500000E-1"
 
     scope.handle(":DVM:MODE DC")
@@ -1211,33 +1213,82 @@ def test_histogram_rejects_out_of_range_height(scope: FakeScope) -> None:
 
 
 def test_histogram_statistics_result_shape(scope: FakeScope) -> None:
-    """返却は `:MEASure:HISTogram` 系と同じ引用符付き文字列表(要実機検証)。"""
+    """M2実機実測: 機器自身がラベルを付けた `[Label:Value, ...]` を返す。"""
+    scope.handle(":HISTogram:ENABle ON")
+
     result = scope.handle(":HISTogram:STATistics:RESult?")
 
     assert result is not None
     text = result.decode("ascii")
-    assert text.startswith('[["92","1","0","Vpp","0","374hits","38hits",')
-    assert text.endswith("\n\n")
+    assert text.startswith("[Sum:374hits, Peaks:38hits, Max:1.562V, ")
+    assert text.endswith("meanPlus3Sigma:1.000000]\n")
+    # 単位はSI接頭辞付きで返る(接頭辞の換算はパーサの責務)
+    assert "Min:-999.9mV" in text
+    assert "Bin width:15.62mV" in text
 
 
 def test_histogram_reset_zeroes_the_hit_counts(scope: FakeScope) -> None:
+    scope.handle(":HISTogram:ENABle ON")
+
     assert scope.handle(":HISTogram:RESet") is None
 
     result = scope.handle(":HISTogram:STATistics:RESult?")
 
     assert result is not None
-    assert '"0hits","0hits"' in result.decode("ascii")
+    assert "[Sum:0hits, Peaks:0hits," in result.decode("ascii")
     assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
 
 
-def test_histogram_statistics_result_reads_as_one_line(scope: FakeScope) -> None:
+def test_histogram_statistics_result_has_no_blank_line_terminator(
+    scope: FakeScope,
+) -> None:
+    """M2実機実測: 統計応答は改行1本で終わる**1行**(FFTピーク表と違い空行が無い)。
+
+    ここが実機と食い違うと `query_lines` の空行待ちが固まる経路を隠してしまう。
+    """
+    scope.handle(":HISTogram:ENABle ON")
     transport = FakeTransport(scope)
     transport.open()
 
-    lines = transport.query_lines(":HISTogram:STATistics:RESult?")
+    text = scope.handle(":HISTogram:STATistics:RESult?")
 
-    assert len(lines) == 1
-    assert lines[0].startswith('[["92"')
+    assert text is not None
+    assert text.decode("ascii").count("\n") == 1
+    assert transport.query(":HISTogram:STATistics:RESult?").endswith("]")
+
+
+def test_histogram_statistics_result_while_disabled_dirties_the_error_queue(
+    scope: FakeScope,
+) -> None:
+    """M2実機実測: 無効時は `[]` を返しつつ **-200 をエラーキューへ積む**(沈黙しない)。
+
+    エラーキューは共有状態なので、この汚染は次の書き込みの検査に化けて出る。
+    """
+    result = scope.handle(":HISTogram:STATistics:RESult?")
+
+    assert result is not None
+    assert result.decode("ascii").startswith("[]")
+    assert scope.handle(":SYSTem:ERRor?") == EXECUTE_ERROR.encode()
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_dvm_current_while_disabled_is_an_empty_response(scope: FakeScope) -> None:
+    """M2実機実測: 電圧計が無効なら `:DVM:CURRent?` は**空文字**を返す。"""
+    assert scope.handle(":DVM:CURRent?") == b""
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+    scope.handle(":DVM:ENABle ON")
+
+    assert scope.handle(":DVM:CURRent?") == b"3.500000E-1"
+
+
+def test_counter_current_while_disabled_is_still_a_number(scope: FakeScope) -> None:
+    """M2実機実測: カウンタは無効でも数値を返す(実機は `0`)。空応答の癖は電圧計だけ。"""
+    result = scope.handle(":COUNter:CURRent?")
+
+    assert result is not None
+    assert float(result.decode("ascii")) == pytest.approx(1.0e3)
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
 
 
 def test_histogram_save_csv_is_silent(scope: FakeScope) -> None:
