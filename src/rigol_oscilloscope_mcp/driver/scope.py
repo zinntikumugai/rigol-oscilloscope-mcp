@@ -150,7 +150,8 @@ _ARB_FILE_PREFIXES = ("C:/", "D:/")
 
 # -- MATH演算(tools.md / MHO900プログラミングガイド 3.16章)-----------------
 #
-# 送信順は `configure_math` が「display ON → 下記3表 → display OFF」の順に固定する。
+# 送信順は `configure_math` が「display ON → 下記4表(_MATH_ITEMS → _MATH_FFT_ITEMS →
+# _MATH_FILTER_ITEMS → _MATH_VERTICAL_ITEMS)→ display OFF」の順に固定する。
 # 種別: "number"(NR3) / "bool" / ("int", 下限, 上限) / ("enum", 方言キー, 説明) /
 # "source"(SOURce1/2 のトークン) / "lsource"(LSOurce1/2 のトークン)
 _MATH_ITEMS: tuple[tuple[str, str, object], ...] = (
@@ -1542,6 +1543,12 @@ class ScopeDriver:
         if match is not None:
             number = int(match.group(1))
             available = self.ref_channels
+            if available < 1:
+                raise _invalid(
+                    f"{key} cannot be {value!r}: this model does not support "
+                    "reference waveforms",
+                    {"key": key, "value": value, "ref_channels": available},
+                )
             if not 1 <= number <= available:
                 raise _invalid(
                     f"{key} reference waveform {value!r} does not exist "
@@ -1569,6 +1576,12 @@ class ScopeDriver:
         if match is not None:
             number = int(match.group(1))
             available = self.digital_channels
+            if available < 1:
+                raise _invalid(
+                    f"{key} cannot be {value!r}: this model does not support "
+                    "digital channels",
+                    {"key": key, "value": value, "digital_channels": available},
+                )
             if not 0 <= number < available:
                 raise _invalid(
                     f"{key} digital channel {value!r} does not exist "

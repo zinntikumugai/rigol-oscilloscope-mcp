@@ -2311,6 +2311,40 @@ def test_configure_math_rejects_ref_out_of_range(
     assert scope.command_log == []
 
 
+def test_configure_math_reports_missing_ref_and_digital_support(
+    scope: FakeScope,
+) -> None:
+    """REF/デジタルを持たない機種では「範囲外」でなく「非対応」と伝える。
+
+    `REF1-REF0` / `D0-D-1` のような無意味な範囲を出さないこと(Copilotレビュー指摘)。
+    """
+    base = load_profile("mho98")
+    profile = Profile(
+        name=base.name,
+        confidence=base.confidence,
+        capabilities={**base.capabilities, "ref_channels": 0, "digital_channels": 0},
+        dialect=base.dialect,
+        limits=base.limits,
+    )
+    transport = FakeTransport(scope)
+    transport.open()
+    driver = ScopeDriver(ScpiSession(transport), profile)
+
+    with pytest.raises(ScopeError) as ref_error:
+        driver.configure_math(1, source1="REF1")
+    assert ref_error.value.code == ErrorCode.INVALID_PARAMETER
+    assert "REF0" not in ref_error.value.message
+    assert "does not support reference waveforms" in ref_error.value.message
+
+    with pytest.raises(ScopeError) as digital_error:
+        driver.configure_math(1, lsource1="D0")
+    assert digital_error.value.code == ErrorCode.INVALID_PARAMETER
+    assert "D-1" not in digital_error.value.message
+    assert "does not support digital channels" in digital_error.value.message
+
+    assert scope.command_log == []
+
+
 def test_configure_math_rejects_unknown_source_and_lsource(
     driver: ScopeDriver, scope: FakeScope
 ) -> None:
