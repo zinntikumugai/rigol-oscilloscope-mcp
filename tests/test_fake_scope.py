@@ -972,3 +972,275 @@ def test_waveform_preamble_follows_the_math_offset(scope: FakeScope) -> None:
 def test_waveform_source_rejects_math5(scope: FakeScope) -> None:
     with pytest.raises(SilentTimeout):
         scope.handle(":WAVeform:SOURce MATH5")
+
+
+# --------------------------------------------------------------------------
+# カーソル測定(:CURSor / ガイド3.8)
+# --------------------------------------------------------------------------
+
+
+def test_cursor_defaults_match_the_guide(scope: FakeScope) -> None:
+    assert scope.handle(":CURSor:MODE?") == b"OFF"
+    assert scope.handle(":CURSor:MANual:TYPE?") == b"TIME"
+    assert scope.handle(":CURSor:MANual:SOURce?") == b"CHAN1"
+    assert scope.handle(":CURSor:TRACk:SOURce1?") == b"CHAN1"
+    assert scope.handle(":CURSor:TRACk:SOURce2?") == b"CHAN1"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_cursor_short_form_mnemonics_are_accepted(scope: FakeScope) -> None:
+    assert scope.handle(":CURS:MODE?") == b"OFF"
+    assert scope.handle(":CURS:MAN:TYPE?") == b"TIME"
+    assert scope.handle(":CURS:TRAC:SOUR1?") == b"CHAN1"
+
+
+def test_cursor_manual_round_trip(scope: FakeScope) -> None:
+    scope.handle(":CURSor:MODE MANual")
+    scope.handle(":CURSor:MANual:TYPE AMPLitude")
+    scope.handle(":CURSor:MANual:SOURce MATH2")
+    scope.handle(":CURSor:MANual:CAX 1e-4")
+    scope.handle(":CURSor:MANual:CAY -0.5")
+
+    assert scope.handle(":CURSor:MODE?") == b"MAN"
+    assert scope.handle(":CURSor:MANual:TYPE?") == b"AMPL"
+    assert scope.handle(":CURSor:MANual:SOURce?") == b"MATH2"
+    assert scope.handle(":CURSor:MANual:CAX?") == b"1.000000E-4"
+    assert scope.handle(":CURSor:MANual:CAY?") == b"-5.000000E-1"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_cursor_readouts_follow_the_stored_positions(scope: FakeScope) -> None:
+    """AXValue? 等は CAX/CAY/CBX/CBY をそのまま返す(実機の読み値と同義)。"""
+    scope.handle(":CURSor:MANual:CAX 1e-4")
+    scope.handle(":CURSor:MANual:CBX 3e-4")
+    scope.handle(":CURSor:MANual:CAY -1")
+    scope.handle(":CURSor:MANual:CBY 2")
+
+    assert scope.handle(":CURSor:MANual:AXValue?") == b"1.000000E-4"
+    assert scope.handle(":CURSor:MANual:BXValue?") == b"3.000000E-4"
+    assert scope.handle(":CURSor:MANual:AYValue?") == b"-1.000000E+0"
+    assert scope.handle(":CURSor:MANual:BYValue?") == b"2.000000E+0"
+
+
+def test_cursor_deltas_are_derived_arithmetic(scope: FakeScope) -> None:
+    """ΔX = BX-AX、ΔY = BY-AY、1/ΔX は実際に計算した値を返す。"""
+    scope.handle(":CURSor:MANual:CAX 1e-4")
+    scope.handle(":CURSor:MANual:CBX 3e-4")
+    scope.handle(":CURSor:MANual:CAY -1")
+    scope.handle(":CURSor:MANual:CBY 2")
+
+    assert scope.handle(":CURSor:MANual:XDELta?") == b"2.000000E-4"
+    assert scope.handle(":CURSor:MANual:YDELta?") == b"3.000000E+0"
+    assert scope.handle(":CURSor:MANual:IXDelta?") == b"5.000000E+3"
+
+
+def test_cursor_ixdelta_guards_zero_delta(scope: FakeScope) -> None:
+    """ΔX=0 では測定不能の番兵値(±9.9E37)を返す。"""
+    scope.handle(":CURSor:MANual:CAX 1e-4")
+    scope.handle(":CURSor:MANual:CBX 1e-4")
+
+    assert scope.handle(":CURSor:MANual:XDELta?") == b"0.000000E+0"
+    assert scope.handle(":CURSor:MANual:IXDelta?") == b"9.900000E+37"
+
+
+def test_cursor_track_subtree_is_independent_of_manual(scope: FakeScope) -> None:
+    scope.handle(":CURSor:TRACk:CAX 5e-4")
+    scope.handle(":CURSor:TRACk:CBX 6e-4")
+
+    assert scope.handle(":CURSor:TRACk:XDELta?") == b"1.000000E-4"
+    assert scope.handle(":CURSor:MANual:CAX?") == b"-2.000000E-4"
+
+
+def test_cursor_unknown_mode_is_rejected(scope: FakeScope) -> None:
+    with pytest.raises(SilentTimeout):
+        scope.handle(":CURSor:MODE NOPE")
+
+
+def test_cursor_out_of_scope_subtrees_are_silent(scope: FakeScope) -> None:
+    """XYサブツリー・TUNit/VUNit・インジケータは未実装 = 実機同様に沈黙する。"""
+    for command in (
+        ":CURSor:XY:AX?",
+        ":CURSor:MANual:TUNit?",
+        ":CURSor:MANual:VUNit?",
+        ":CURSor:MEASure:INDicator?",
+    ):
+        with pytest.raises(SilentTimeout):
+            scope.handle(command)
+
+
+# --------------------------------------------------------------------------
+# 周波数カウンタ(:COUNter / ガイド3.7)
+# --------------------------------------------------------------------------
+
+
+def test_counter_defaults_match_the_guide(scope: FakeScope) -> None:
+    assert scope.handle(":COUNter:ENABle?") == b"0"
+    assert scope.handle(":COUNter:SOURce?") == b"CHAN1"
+    assert scope.handle(":COUNter:MODE?") == b"FREQ"
+    assert scope.handle(":COUNter:NDIGits?") == b"4"
+    assert scope.handle(":COUNter:TOTalize:ENABle?") == b"0"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_counter_round_trip(scope: FakeScope) -> None:
+    scope.handle(":COUNter:ENABle ON")
+    scope.handle(":COUNter:SOURce D3")
+    scope.handle(":COUNter:MODE PERiod")
+    scope.handle(":COUNter:NDIGits 6")
+    scope.handle(":COUNter:TOTalize:ENABle ON")
+
+    assert scope.handle(":COUN:ENAB?") == b"1"
+    assert scope.handle(":COUNter:SOURce?") == b"D3"
+    assert scope.handle(":COUNter:MODE?") == b"PER"
+    assert scope.handle(":COUNter:NDIGits?") == b"6"
+    assert scope.handle(":COUNter:TOTalize:ENABle?") == b"1"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_counter_current_follows_the_mode(scope: FakeScope) -> None:
+    assert scope.handle(":COUNter:CURRent?") == b"1.000000E+3"
+
+    scope.handle(":COUNter:MODE PERiod")
+    assert scope.handle(":COUNter:CURRent?") == b"1.000000E-3"
+
+    scope.handle(":COUNter:MODE TOTalize")
+    assert scope.handle(":COUNter:CURRent?") == b"1.234000E+3"
+
+
+def test_counter_totalize_clear_zeroes_the_count(scope: FakeScope) -> None:
+    scope.handle(":COUNter:MODE TOTalize")
+
+    assert scope.handle(":COUNter:TOTalize:CLEar") is None
+    assert scope.handle(":COUNter:CURRent?") == b"0.000000E+0"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_counter_value_mnemonic_does_not_exist(scope: FakeScope) -> None:
+    """現在値は `:COUNter:CURRent?`。`:COUNter:VALue?` は存在しない(ガイド3.7)。"""
+    with pytest.raises(SilentTimeout):
+        scope.handle(":COUNter:VALue?")
+
+
+def test_counter_rejects_out_of_range_digits(scope: FakeScope) -> None:
+    with pytest.raises(SilentTimeout):
+        scope.handle(":COUNter:NDIGits 7")
+
+    assert scope.handle(":SYSTem:ERRor?") == OUT_OF_RANGE.encode()
+    assert scope.handle(":COUNter:NDIGits?") == b"4"
+
+
+# --------------------------------------------------------------------------
+# デジタル電圧計(:DVM / ガイド3.10)
+# --------------------------------------------------------------------------
+
+
+def test_dvm_defaults_match_the_guide(scope: FakeScope) -> None:
+    assert scope.handle(":DVM:ENABle?") == b"0"
+    assert scope.handle(":DVM:SOURce?") == b"CHAN1"
+    assert scope.handle(":DVM:MODE?") == b"ACRM"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_dvm_round_trip(scope: FakeScope) -> None:
+    scope.handle(":DVM:ENABle ON")
+    scope.handle(":DVM:SOURce CHANnel3")
+    scope.handle(":DVM:MODE DCRMs")
+
+    assert scope.handle(":DVM:ENABle?") == b"1"
+    assert scope.handle(":DVM:SOURce?") == b"CHAN3"
+    assert scope.handle(":DVM:MODE?") == b"DCRM"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_dvm_current_follows_the_mode(scope: FakeScope) -> None:
+    assert scope.handle(":DVM:CURRent?") == b"3.500000E-1"
+
+    scope.handle(":DVM:MODE DC")
+    assert scope.handle(":DVM:CURRent?") == b"1.000000E+0"
+
+
+def test_dvm_rejects_digital_sources(scope: FakeScope) -> None:
+    """`:DVM:SOURce` はアナログchのみ(ガイド3.10.3)。"""
+    with pytest.raises(SilentTimeout):
+        scope.handle(":DVM:SOURce D0")
+
+    assert scope.handle(":SYSTem:ERRor?") == OUT_OF_RANGE.encode()
+    assert scope.handle(":DVM:SOURce?") == b"CHAN1"
+
+
+# --------------------------------------------------------------------------
+# ヒストグラム(:HISTogram / ガイド3.11)
+# --------------------------------------------------------------------------
+
+
+def test_histogram_defaults_match_the_guide(scope: FakeScope) -> None:
+    assert scope.handle(":HISTogram:ENABle?") == b"0"
+    assert scope.handle(":HISTogram:TYPE?") == b"HOR"
+    assert scope.handle(":HISTogram:SOURce?") == b"CHAN1"
+    assert scope.handle(":HISTogram:HEIGht?") == b"2"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_histogram_round_trip(scope: FakeScope) -> None:
+    scope.handle(":HISTogram:ENABle ON")
+    scope.handle(":HISTogram:TYPE VERTical")
+    scope.handle(":HISTogram:SOURce CHANnel2")
+    scope.handle(":HISTogram:HEIGht 4")
+    scope.handle(":HISTogram:RANGe:LEFT -1e-3")
+    scope.handle(":HISTogram:RANGe:RIGHt 1e-3")
+    scope.handle(":HISTogram:RANGe:BOTTom -2")
+    scope.handle(":HISTogram:RANGe:TOP 2")
+
+    assert scope.handle(":HIST:ENAB?") == b"1"
+    assert scope.handle(":HISTogram:TYPE?") == b"VERT"
+    assert scope.handle(":HISTogram:SOURce?") == b"CHAN2"
+    assert scope.handle(":HISTogram:HEIGht?") == b"4"
+    assert scope.handle(":HISTogram:RANGe:LEFT?") == b"-1.000000E-3"
+    assert scope.handle(":HISTogram:RANGe:RIGHt?") == b"1.000000E-3"
+    assert scope.handle(":HISTogram:RANGe:BOTTom?") == b"-2.000000E+0"
+    assert scope.handle(":HISTogram:RANGe:TOP?") == b"2.000000E+0"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_histogram_rejects_out_of_range_height(scope: FakeScope) -> None:
+    with pytest.raises(SilentTimeout):
+        scope.handle(":HISTogram:HEIGht 5")
+
+    assert scope.handle(":SYSTem:ERRor?") == OUT_OF_RANGE.encode()
+    assert scope.handle(":HISTogram:HEIGht?") == b"2"
+
+
+def test_histogram_statistics_result_shape(scope: FakeScope) -> None:
+    """返却は `:MEASure:HISTogram` 系と同じ引用符付き文字列表(要実機検証)。"""
+    result = scope.handle(":HISTogram:STATistics:RESult?")
+
+    assert result is not None
+    text = result.decode("ascii")
+    assert text.startswith('[["92","1","0","Vpp","0","374hits","38hits",')
+    assert text.endswith("\n\n")
+
+
+def test_histogram_reset_zeroes_the_hit_counts(scope: FakeScope) -> None:
+    assert scope.handle(":HISTogram:RESet") is None
+
+    result = scope.handle(":HISTogram:STATistics:RESult?")
+
+    assert result is not None
+    assert '"0hits","0hits"' in result.decode("ascii")
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_histogram_statistics_result_reads_as_one_line(scope: FakeScope) -> None:
+    transport = FakeTransport(scope)
+    transport.open()
+
+    lines = transport.query_lines(":HISTogram:STATistics:RESult?")
+
+    assert len(lines) == 1
+    assert lines[0].startswith('[["92"')
+
+
+def test_histogram_save_csv_is_silent(scope: FakeScope) -> None:
+    """機器ストレージへの書き出しはスコープ外 = 未実装(沈黙)。"""
+    with pytest.raises(SilentTimeout):
+        scope.handle(":HISTogram:SAVE:CSV")

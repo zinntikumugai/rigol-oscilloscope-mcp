@@ -17,6 +17,10 @@ capabilities:
   screenshot: true
   impedance_control: true # :CHANnel<n>:IMPedance が使える(問い合わせ含む)
   impedance_50ohm: true
+  cursor: true # ガイド3.8(:CURSor。XYサブツリーを除く)
+  frequency_counter: true # ガイド3.7(:COUNter)
+  dvm: true # ガイド3.10(:DVM)
+  histogram: true # ガイド3.11(:HISTogram。SAVE:CSVを除く)
   measurements:
     [frequency, period, vpp, vmax, vmin, vavg, rms, duty, rise_time, fall_time]
 
@@ -134,6 +138,20 @@ dialect:
   math_fft_search_orders: {amplitude: AMPorder, frequency: FREQorder}
   # デジタルフィルタ(ガイド3.16.31 :MATH<n>:FILTer:TYPE)
   math_filter_types: {lowpass: LPASs, highpass: HPASs, bandpass: BPASs, bandstop: BSTop}
+  # カーソル測定(ガイド3.8.1 :CURSor:MODE)。`xy` は水平時間軸がXYのときのみ
+  # 有効(:CURSor:XY:* サブツリー自体はM2スコープ外)。TUNit / VUNit は
+  # ガイド本文がページ欠落で値域不明のため宣言しない
+  # (YAML 1.1 では裸の off/OFF が真偽値になるため引用符が必須)
+  cursor_modes: {"off": "OFF", manual: MANual, track: TRACk, xy: XY}
+  # カーソルの種別(ガイド3.8.2 :CURSor:MANual:TYPE)
+  cursor_types: {time: TIME, amplitude: AMPLitude}
+  # 周波数カウンタの測定モード(ガイド3.7.4 :COUNter:MODE)
+  counter_modes: {frequency: FREQuency, period: PERiod, totalize: TOTalize}
+  # 電圧計の測定モード(ガイド3.10.4 :DVM:MODE)。ACRMs=DC成分を除いた実効値 /
+  # DC=平均 / DCRMs=実効値
+  dvm_modes: {ac_rms: ACRMs, dc: DC, dc_rms: DCRMs}
+  # ヒストグラムの種別(ガイド3.11.3 :HISTogram:TYPE)
+  histogram_types: {horizontal: HORizontal, vertical: VERTical}
   # オプション照会(MHO900専用。DHO800/900には存在しない)。実機検証:
   # docs/verification/mho98-unlicensed.md。*OPT? はRigol全シリーズで未定義
   # ヘッダ(送るとSCPIサーバーが沈黙)なので絶対に使わない。<type>リスト外の

@@ -36,6 +36,7 @@ from .parsers import (
     parse_bool,
     parse_coupling,
     parse_fft_peaks,
+    parse_histogram_result,
     parse_nr3,
     to_scpi_impedance,
     to_scpi_slope,
@@ -208,6 +209,89 @@ _MATH_LOGIC_OPERATORS = frozenset({"and", "or", "xor", "not"})
 _MATH_FILTER_OPERATORS = frozenset({"lowpass", "highpass", "bandpass", "bandstop"})
 
 _MATH_FFT_PEAKS_PATH = ":FFT:SEARch:RES?"
+
+# -- カーソル / カウンタ / 電圧計 / ヒストグラム(ガイド3.7・3.8・3.10・3.11)--
+#
+# 項目表の形式・種別の記法は `_MATH_ITEMS` と共通(この並びが送信順)。追加した
+# 種別は "csource"(カーソルのソース: CH / MATH / NONE)と "achannel"
+# (アナログchのみ)。デジタルchも取る `:COUNter:SOURce` は "lsource" と同値域。
+
+#: MANual / TRACk 共通の位置(CAX/CBXは秒、CAY/CBYはV。ガイド3.8.4-3.8.6)
+_CURSOR_POSITION_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("ax", ":CAX", "number"),
+    ("ay", ":CAY", "number"),
+    ("bx", ":CBX", "number"),
+    ("by", ":CBY", "number"),
+)
+_CURSOR_MANUAL_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("type", ":TYPE", ("enum", "cursor_types", "the cursor type")),
+    ("source", ":SOURce", "csource"),
+) + _CURSOR_POSITION_ITEMS
+_CURSOR_TRACK_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source1", ":SOURce1", "csource"),
+    ("source2", ":SOURce2", "csource"),
+) + _CURSOR_POSITION_ITEMS
+#: モード → (SCPI接頭辞, 項目表)。**OFF / XY は位置サブツリーを持たない**
+#: (`:CURSor:XY:*` はM2スコープ外)ため、この表に無いことがそのままゲート
+_CURSOR_SUBTREES: dict[str, tuple[str, tuple[tuple[str, str, object], ...]]] = {
+    "manual": (":CURSor:MANual", _CURSOR_MANUAL_ITEMS),
+    "track": (":CURSor:TRACk", _CURSOR_TRACK_ITEMS),
+}
+#: 読み取り専用の測定値(ガイド3.8.7-3.8.8)。SI単位付きキー → SCPIパス
+_CURSOR_READOUTS: tuple[tuple[str, str], ...] = (
+    ("ax_s", ":AXValue"),
+    ("ay_v", ":AYValue"),
+    ("bx_s", ":BXValue"),
+    ("by_v", ":BYValue"),
+    ("xdelta_s", ":XDELta"),
+    ("ydelta_v", ":YDELta"),
+    ("ixdelta_hz", ":IXDelta"),
+)
+
+_COUNTER_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("enabled", ":ENABle", "bool"),
+    ("source", ":SOURce", "lsource"),
+    ("mode", ":MODE", ("enum", "counter_modes", "the frequency counter mode")),
+    ("digits", ":NDIGits", ("int", 3, 6)),
+    ("totalize_enabled", ":TOTalize:ENABle", "bool"),
+)
+_DVM_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("enabled", ":ENABle", "bool"),
+    ("source", ":SOURce", "achannel"),
+    ("mode", ":MODE", ("enum", "dvm_modes", "the digital voltmeter mode")),
+)
+#: 意味的な種別 → (capability, SCPI接頭辞, 項目表, 説明)。カウンタと電圧計は
+#: 「有効化 + ソース + モード + 現在値1本」で同形のため1つのAPIで扱う
+_METERS: dict[str, tuple[str, str, tuple[tuple[str, str, object], ...], str]] = {
+    "counter": (
+        "frequency_counter",
+        ":COUNter",
+        _COUNTER_ITEMS,
+        "the frequency counter",
+    ),
+    "dvm": ("dvm", ":DVM", _DVM_ITEMS, "the digital voltmeter"),
+}
+#: 現在値(ガイド3.7.1 / 3.10.1)。`:VALue` というニモニックは存在しない
+_METER_VALUE_PATH = ":CURRent?"
+
+_HISTOGRAM_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("enabled", ":ENABle", "bool"),
+    ("type", ":TYPE", ("enum", "histogram_types", "the histogram type")),
+    ("source", ":SOURce", "achannel"),
+    ("height", ":HEIGht", ("int", 1, 4)),
+    ("left_s", ":RANGe:LEFT", "number"),
+    ("right_s", ":RANGe:RIGHt", "number"),
+    ("bottom_v", ":RANGe:BOTTom", "number"),
+    ("top_v", ":RANGe:TOP", "number"),
+)
+#: ガイド明記の大小制約(3.11.5-3.11.8 のRemarks)。**同一呼び出しで両端が
+#: 指定されたときだけ**検証する(片側だけでは現在値との突合が要るため機器に委ねる)
+_HISTOGRAM_RANGE_PAIRS: tuple[tuple[str, str], ...] = (
+    ("left_s", "right_s"),
+    ("bottom_v", "top_v"),
+)
+_HISTOGRAM_PREFIX = ":HISTogram"
+_HISTOGRAM_RESULT_PATH = ":STATistics:RESult?"
 
 _CHANNEL_RE = re.compile(r"^(?:CH|CHAN|CHANNEL)?\s*([0-9]+)$", re.IGNORECASE)
 _MATH_SOURCE_RE = re.compile(r"^MATH\s*([0-9]+)$", re.IGNORECASE)
@@ -1599,12 +1683,26 @@ class ScopeDriver:
             )
         return f"CHANnel{self._channel_number(token)}"
 
-    def _math_converter(self, kind: object, channel: int) -> tuple[object, object]:
-        """項目1件の (値→トークン, 応答→値) 変換器(種別は `_MATH_ITEMS` 参照)。"""
+    def _converter(self, kind: object, channel: int) -> tuple[object, object]:
+        """項目1件の (値→トークン, 応答→値) 変換器(種別は `_MATH_ITEMS` 参照)。
+
+        `channel` はMATHのカスケード則("source" 種別)の検証にだけ使う。
+        番号を持たないサブシステム(カーソル等)からは 0 を渡す。
+        """
         if kind == "number":
             return (lambda value, key: _afg_number(key, value)), parse_nr3
         if kind == "bool":
             return _math_bool, parse_bool
+        if kind == "csource":
+            return (
+                (lambda value, key: self._cursor_source(value, key)),
+                _math_source_readback,
+            )
+        if kind == "achannel":
+            return (
+                (lambda value, key: self._analog_source(value, key)),
+                _math_source_readback,
+            )
         if kind == "source":
             return (
                 (lambda value, key: self._math_source(value, key, channel)),
@@ -1624,7 +1722,7 @@ class ScopeDriver:
         _, dialect_key, what = kind  # ("enum", 方言キー, 説明)
         return self._afg_enum(dialect_key, what)
 
-    def _math_plan(
+    def _command_plan(
         self,
         prefix: str,
         channel: int,
@@ -1637,7 +1735,7 @@ class ScopeDriver:
             value = values.get(key)
             if value is None:
                 continue
-            to_scpi, from_scpi = self._math_converter(kind, channel)
+            to_scpi, from_scpi = self._converter(kind, channel)
             plan.append(
                 (
                     key,
@@ -1666,7 +1764,7 @@ class ScopeDriver:
                 f"unknown {name} setting: {unknown}",
                 {"unknown": unknown, "allowed": allowed},
             )
-        return self._math_plan(prefix, channel, items, values)
+        return self._command_plan(prefix, channel, items, values)
 
     def configure_math(
         self,
@@ -1733,7 +1831,7 @@ class ScopeDriver:
             )
         # (返却先のサブ辞書名 or None, 送信エントリ)を送信順に並べる
         plan: list[tuple[str | None, tuple[str, str, str, object]]] = [
-            (None, entry) for entry in self._math_plan(prefix, number, _MATH_ITEMS, values)
+            (None, entry) for entry in self._command_plan(prefix, number, _MATH_ITEMS, values)
         ]
         if fft is not None:
             plan += [
@@ -1751,7 +1849,7 @@ class ScopeDriver:
             ]
         plan += [
             (None, entry)
-            for entry in self._math_plan(prefix, number, _MATH_VERTICAL_ITEMS, values)
+            for entry in self._command_plan(prefix, number, _MATH_VERTICAL_ITEMS, values)
         ]
         if display_entry is not None:
             # 表示ONは先頭、OFFは末尾(表示OFF中の書き込み無視quirk対策)
@@ -1837,7 +1935,7 @@ class ScopeDriver:
 
     def _math_read(self, prefix: str, channel: int, path: str, kind: object) -> object:
         """MATH項目1件を読んで意味的な値へ変換する。"""
-        _, from_scpi = self._math_converter(kind, channel)
+        _, from_scpi = self._converter(kind, channel)
         return from_scpi(self.session.query(f"{prefix}{path}?"))
 
     def get_math_operator(self, channel: int) -> str:
@@ -1857,6 +1955,369 @@ class ScopeDriver:
         """
         number, prefix = self._math_prefix(channel)
         return float(self._math_read(prefix, number, ":FFT:FREQuency:STARt", "number"))
+
+    # -- カーソル測定(ガイド3.8章)----------------------------------------
+
+    def _cursor_source(self, value: object, key: str) -> str:
+        """カーソルのソーストークンを検証して送信形へ(ガイド3.8.3/3.8.9/3.8.10)。
+
+        受理するのは `CH1`-`CH<analog_channels>` / `MATH1`-`MATH<math_channels>` /
+        `NONE`。REF波形・デジタルchはこのコマンドの値域に無い。
+        """
+        if not isinstance(value, str):
+            raise _invalid(f"{key} is not a string: {value!r}", {"key": key, "value": value})
+        token = value.strip()
+        if token.upper() == "NONE":
+            return "NONE"
+        match = _MATH_SOURCE_RE.match(token)
+        if match is not None:
+            number = int(match.group(1))
+            available = self.math_channels
+            if not 1 <= number <= available:
+                raise _invalid(
+                    f"{key} math channel {value!r} does not exist "
+                    f"(this model has MATH1-MATH{available})",
+                    {"key": key, "value": value, "math_channels": available},
+                )
+            return f"MATH{number}"
+        if _CHANNEL_RE.match(token) is None:
+            raise _invalid(
+                f"cannot interpret {key}: {value!r} (e.g. 'CH1', 'MATH1' or 'NONE')",
+                {"key": key, "value": value},
+            )
+        return f"CHANnel{self._channel_number(token)}"
+
+    def _analog_source(self, value: object, key: str) -> str:
+        """アナログchのみを受理する(`:DVM:SOURce` / `:HISTogram:SOURce`)。
+
+        ガイドが値域をアナログchに限っているため、デジタルchは**送信前**に拒否する
+        (カウンタの `:COUNter:SOURce` は D0-D15 も取るので "lsource" 側)。
+        """
+        if isinstance(value, str) and _DIGITAL_SOURCE_RE.match(value.strip()):
+            raise _invalid(
+                f"{key} must be an analog channel: {value!r} "
+                "(this subsystem does not accept digital channels)",
+                {"key": key, "value": value},
+            )
+        return f"CHANnel{self._channel_number(value)}"
+
+    def _cursor_mode(self) -> str:
+        """現在の `:CURSor:MODE` を意味的な名前で返す(問い合わせ1本)。"""
+        _, from_scpi = self._afg_enum("cursor_modes", "the cursor mode")
+        return from_scpi(self.session.query(":CURSor:MODE?"))
+
+    def _cursor_subtree(
+        self, mode: str
+    ) -> tuple[str, tuple[tuple[str, str, object], ...]]:
+        entry = _CURSOR_SUBTREES.get(mode)
+        if entry is None:
+            raise _invalid(
+                "cursor positions and sources can only be set while the cursor mode "
+                f"is 'manual' or 'track' (the mode is {mode!r})",
+                {"mode": mode, "allowed": sorted(_CURSOR_SUBTREES)},
+            )
+        return entry
+
+    def configure_cursor(
+        self,
+        *,
+        mode: str | None = None,
+        # `type` は組込み名と重なるが、Tool引数名(ガイドの :TYPE)を優先する
+        type: str | None = None,
+        source: str | None = None,
+        source1: str | None = None,
+        source2: str | None = None,
+        ax: float | None = None,
+        ay: float | None = None,
+        bx: float | None = None,
+        by: float | None = None,
+    ) -> dict:
+        """カーソルを設定し、read-backした適用値を返す(ガイド3.8章)。
+
+        位置・ソースの書き込み先は **MANual / TRACk のどちらのサブツリーか**で
+        決まる。`mode` を指定すればそれ、省略すれば現在の `:CURSor:MODE?` を
+        1本読んで決める。OFF / XY では書き込み先が定まらないため送信前に拒否する
+        (`:CURSor:XY:*` はM2スコープ外)。`mode` は先頭に送る。
+
+        `type` / `source` はMANual、`source1` / `source2` はTRACk専用の項目で、
+        サブツリー違いの指定は送信前に拒否する(取り違えを黙って無視しない)。
+        """
+        self._require("cursor", "cursor measurements")
+        values = {
+            "type": type,
+            "source": source,
+            "source1": source1,
+            "source2": source2,
+            "ax": ax,
+            "ay": ay,
+            "bx": bx,
+            "by": by,
+        }
+        if mode is None and all(value is None for value in values.values()):
+            raise _invalid(
+                "No item to change was specified "
+                f"(specify at least one of mode / {' / '.join(values)})",
+                {},
+            )
+
+        # 先に全項目を検証してから送る(1項目でも不正なら1コマンドも送らない)
+        plan: list[tuple[str, str, str, object]] = []
+        if mode is not None:
+            to_scpi, from_scpi = self._afg_enum("cursor_modes", "the cursor mode")
+            plan.append(
+                (
+                    "mode",
+                    f":CURSor:MODE {to_scpi(mode, 'mode')}",
+                    ":CURSor:MODE?",
+                    from_scpi,
+                )
+            )
+        if any(value is not None for value in values.values()):
+            subtree = mode if mode is not None else self._cursor_mode()
+            prefix, items = self._cursor_subtree(subtree)
+            allowed = [key for key, _, _ in items]
+            unknown = sorted(
+                key for key, value in values.items()
+                if value is not None and key not in allowed
+            )
+            if unknown:
+                raise _invalid(
+                    f"the {subtree} cursor does not have these settings: {unknown}",
+                    {"mode": subtree, "unknown": unknown, "allowed": allowed},
+                )
+            plan += self._command_plan(prefix, 0, items, values)
+
+        applied: dict[str, object] = {}
+        for key, set_cmd, query, from_scpi in plan:
+            applied[key] = from_scpi(self.session.set_and_verify(set_cmd, query))
+        return applied
+
+    def get_cursor_config(self) -> dict:
+        """カーソルの現在設定を返す。読むのは**現在のモードのサブツリーだけ**。
+
+        OFF / XY では `{"mode": ...}` のみを返す(位置サブツリーを持たないため)。
+        """
+        self._require("cursor", "cursor measurements")
+        mode = self._cursor_mode()
+        config: dict[str, object] = {"mode": mode}
+        entry = _CURSOR_SUBTREES.get(mode)
+        if entry is not None:
+            prefix, items = entry
+            for key, path, kind in items:
+                _, from_scpi = self._converter(kind, 0)
+                config[key] = from_scpi(self.session.query(f"{prefix}{path}?"))
+        return config
+
+    def get_cursor_measurement(self) -> dict:
+        """カーソルの読み値(A/B位置・ΔX・ΔY・1/ΔX)を返す。
+
+        値は現在のモードのサブツリー(MANual / TRACk)から読む。**OFF / XY では
+        読める値が無いため `{"mode": ...}` だけを返し、値のキーは付けない**
+        (非活性のサブツリーを問い合わせない — 未検証ニモニックを突かない方針)。
+        測定不能を示す番兵値(±9.9E37。例: ΔX=0 のときの 1/ΔX)は `None` にする。
+        """
+        self._require("cursor", "cursor measurements")
+        mode = self._cursor_mode()
+        result: dict[str, object] = {"mode": mode}
+        entry = _CURSOR_SUBTREES.get(mode)
+        if entry is None:
+            return result
+        prefix, _ = entry
+        for key, path in _CURSOR_READOUTS:
+            value = parse_nr3(self.session.query(f"{prefix}{path}?"))
+            result[key] = None if abs(value) >= INVALID_MEASUREMENT else value
+        return result
+
+    # -- 周波数カウンタ・電圧計(ガイド3.7 / 3.10)-------------------------
+
+    def _meter(self, kind: object) -> tuple[str, tuple[tuple[str, str, object], ...]]:
+        """種別名を (SCPI接頭辞, 項目表) へ。能力ゲートもここで通す。"""
+        entry = _METERS.get(kind) if isinstance(kind, str) else None
+        if entry is None:
+            raise _invalid(
+                f"unknown meter kind: {kind!r} (allowed: {sorted(_METERS)})",
+                {"kind": kind, "allowed": sorted(_METERS)},
+            )
+        capability, prefix, items, what = entry
+        self._require(capability, what)
+        return prefix, items
+
+    def configure_meter(
+        self,
+        kind: str,
+        *,
+        enabled: bool | None = None,
+        source: str | None = None,
+        mode: str | None = None,
+        digits: int | None = None,
+        totalize_enabled: bool | None = None,
+    ) -> dict:
+        """周波数カウンタ(`kind="counter"`)/ 電圧計(`kind="dvm"`)を設定する。
+
+        `digits`(`:COUNter:NDIGits`)と `totalize_enabled`
+        (`:COUNter:TOTalize:ENABle`)はカウンタ専用で、電圧計に指定すれば
+        送信前に拒否する。ソースの値域も種別で異なる(カウンタは D0-D15 も可、
+        電圧計はアナログchのみ — ガイド3.10.3)。
+
+        **モードとの結合制約はホストで検証しない。** Totalizeモードでの `digits`
+        や `totalize_enabled` のようにモードによって無効になる項目(ガイド3.7.5/
+        3.7.6)は機器のエラーキューに委ね、`applied` と `requested` の突合で
+        呼び出し側が検出する(MATHの演算子/引数と同じ方針)。
+        """
+        prefix, items = self._meter(kind)
+        values = {
+            "enabled": enabled,
+            "source": source,
+            "mode": mode,
+            "digits": digits,
+            "totalize_enabled": totalize_enabled,
+        }
+        allowed = [key for key, _, _ in items]
+        unknown = sorted(
+            key for key, value in values.items()
+            if value is not None and key not in allowed
+        )
+        if unknown:
+            raise _invalid(
+                f"the {kind} meter does not have these settings: {unknown}",
+                {"kind": kind, "unknown": unknown, "allowed": allowed},
+            )
+        if all(value is None for value in values.values()):
+            raise _invalid(
+                f"No item to change was specified (specify at least one of "
+                f"{' / '.join(allowed)})",
+                {"kind": kind},
+            )
+
+        applied: dict[str, object] = {"kind": kind}
+        for key, set_cmd, query, from_scpi in self._command_plan(
+            prefix, 0, items, values
+        ):
+            applied[key] = from_scpi(self.session.set_and_verify(set_cmd, query))
+        return applied
+
+    def get_meter_config(self, kind: str) -> dict:
+        """周波数カウンタ / 電圧計の現在設定を意味的なキーで返す。"""
+        prefix, items = self._meter(kind)
+        config: dict[str, object] = {"kind": kind}
+        for key, path, item_kind in items:
+            _, from_scpi = self._converter(item_kind, 0)
+            config[key] = from_scpi(self.session.query(f"{prefix}{path}?"))
+        return config
+
+    def get_meter_value(self, kind: str) -> float | None:
+        """現在値を返す(問い合わせ1本)。測定不能の番兵値(±9.9E37)は `None`。
+
+        単位はモード依存(カウンタ: Hz / s / 件数、電圧計: V)なので、必要なら
+        呼び出し側が `get_meter_config` のモードと組み合わせる。
+        """
+        prefix, _ = self._meter(kind)
+        value = parse_nr3(self.session.query(f"{prefix}{_METER_VALUE_PATH}"))
+        return None if abs(value) >= INVALID_MEASUREMENT else value
+
+    def clear_counter_totalize(self) -> None:
+        """総カウントをクリアする(ガイド3.7.7。Totalizeモード時のみ有効)。
+
+        引数もread-backも無い動作コマンド(run/stopと同じ扱い)。モードとの
+        結合制約は機器のエラーキューに委ねる。
+        """
+        self._require("frequency_counter", "the frequency counter")
+        self.session.write_checked(":COUNter:TOTalize:CLEar")
+
+    # -- ヒストグラム(ガイド3.11章)----------------------------------------
+
+    def configure_histogram(
+        self,
+        *,
+        enabled: bool | None = None,
+        # `type` は組込み名と重なるが、Tool引数名(ガイドの :TYPE)を優先する
+        type: str | None = None,
+        source: str | None = None,
+        height: int | None = None,
+        left_s: float | None = None,
+        right_s: float | None = None,
+        bottom_v: float | None = None,
+        top_v: float | None = None,
+    ) -> dict:
+        """ヒストグラムを設定し、read-backした適用値を返す(ガイド3.11章)。
+
+        `left_s < right_s` / `bottom_v < top_v` はガイド明記の制約だが、検証は
+        **同一呼び出しで両端を指定したときだけ**行う(片側だけの指定は機器側の
+        現在値との突合が必要なため機器に委ねる)。そのため片側だけを動かして
+        現在の反対側を追い越すと、機器がエラーを返して `SCPI_ERROR` になる —
+        その場合は両端を同時に指定して呼び直すこと。
+        """
+        self._require("histogram", "the histogram")
+        values = {
+            "enabled": enabled,
+            "type": type,
+            "source": source,
+            "height": height,
+            "left_s": left_s,
+            "right_s": right_s,
+            "bottom_v": bottom_v,
+            "top_v": top_v,
+        }
+        if all(value is None for value in values.values()):
+            raise _invalid(
+                f"No item to change was specified (specify at least one of "
+                f"{' / '.join(values)})",
+                {},
+            )
+        # 先に全項目を検証してから送る(型・値域の検証は計画の組み立てが担う)
+        plan = self._command_plan(_HISTOGRAM_PREFIX, 0, _HISTOGRAM_ITEMS, values)
+        for low_key, high_key in _HISTOGRAM_RANGE_PAIRS:
+            low, high = values[low_key], values[high_key]
+            if low is not None and high is not None and float(low) >= float(high):
+                raise _invalid(
+                    f"{low_key} must be smaller than {high_key}: {low!r} >= {high!r}",
+                    {low_key: low, high_key: high},
+                )
+
+        applied: dict[str, object] = {}
+        for key, set_cmd, query, from_scpi in plan:
+            applied[key] = from_scpi(self.session.set_and_verify(set_cmd, query))
+        return applied
+
+    def get_histogram_config(self) -> dict:
+        """ヒストグラムの現在設定を意味的なキーで返す。"""
+        self._require("histogram", "the histogram")
+        config: dict[str, object] = {}
+        for key, path, kind in _HISTOGRAM_ITEMS:
+            _, from_scpi = self._converter(kind, 0)
+            config[key] = from_scpi(
+                self.session.query(f"{_HISTOGRAM_PREFIX}{path}?")
+            )
+        return config
+
+    def get_histogram_result(self) -> dict:
+        """統計結果を返す(ガイド3.11.9)。**生応答を必ず残す**。
+
+        返却書式はガイド本文がページ欠落で不明(同種の `:MEASure:HISTogram`
+        系は単位・SI接頭辞付きの文字列表)。複数行の可能性があるため
+        `query_lines` で読み、解釈は fail-open — 引用符で括られたセルを行ごとに
+        切り出せたときだけ `rows` を添え、列名は付けない(列の意味が未確定の
+        ため。**要実機検証**)。解釈できなければ `warnings` を添えて生応答のみ。
+        """
+        self._require("histogram", "the histogram")
+        lines = self.session.query_lines(
+            f"{_HISTOGRAM_PREFIX}{_HISTOGRAM_RESULT_PATH}"
+        )
+        rows, warnings = parse_histogram_result("\n".join(lines))
+        result: dict[str, object] = {"raw": lines}
+        if rows:
+            result["rows"] = rows
+        if warnings:
+            result["warnings"] = warnings
+        return result
+
+    def reset_histogram(self) -> None:
+        """ヒストグラムの統計をリセットする(ガイド3.11.10)。
+
+        引数もread-backも無い動作コマンド(run/stopと同じ扱い)。
+        """
+        self._require("histogram", "the histogram")
+        self.session.write_checked(f"{_HISTOGRAM_PREFIX}:RESet")
 
     # -- Acquisition ------------------------------------------------------
 
