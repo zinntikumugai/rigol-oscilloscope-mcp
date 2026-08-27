@@ -294,11 +294,13 @@ FFTの実装:
 | `spi` | `clk_source`, `clk_slope`(rising/falling), `mosi_source`, `miso_source`, `cs_source`, `cs_polarity`(high/low), `frame_mode`(cs/timeout), `timeout_s`(8e-9〜10), `data_bits`(4〜32), `endian`, `polarity`(high/low), `clk_threshold_v`, `mosi_threshold_v`, `miso_threshold_v`, `cs_threshold_v` |
 | `can` | `source`, `signal_type`(tx/rx/canh/canl/differential), `baud_bps`(10000〜5000000), `sample_point_percent`(10〜90), `threshold_v` |
 | `lin` | `source`, `baud_bps`(2400〜20000000), `parity_enabled`, `standard`(v1x/v2x/mixed), `threshold_v` |
-| `parallel` | `clk_source`, `clk_slope`, `bus_width`, `endian`, `polarity` |
+| `parallel` | `clk_source`, `clk_slope`, `bus`(`d7_d0` / `d15_d8` / `d15_d0` / `d0_d7` / `d8_d15` / `d0_d15` / `ch1`〜`ch4` / `user`), `bus_width`(1〜16), `bit_sources`(添字=ビット番号のリスト), `endian`, `polarity` |
 
 動作・規範:
 
-- **送信順は固定**: `:MODE` → `:FORMat` → プロトコル別設定 → `:DISPlay` → `:EVENt`。各項目は set → エラーキュー確認 → read-back(0.3節)
+- **送信順は固定**: `:MODE` → `:FORMat` → プロトコル別設定 → ビット別ソース → `:DISPlay` → `:EVENt`。各項目は set → エラーキュー確認 → read-back(0.3節)。プロトコル別設定の順は**呼び出し側のキー順ではなく上表の並び**(前提が後の項目より先に届くことを保証する)
+- **パラレルの `bus_width` / `bit_sources` は `bus` が `user` のときだけ機器が受理する**(ガイド3.4.10.4〜3.4.10.6 の Remark、実測は [verification/mho98-phase4.md](verification/mho98-phase4.md) 5章)。送信順で `bus` が先に届くので `{"bus": "user", "bus_width": 4, "bit_sources": [...]}` は**1回の呼び出しで通る**。**この結合はホスト側では検証しない** — 機器が `-200` を積んで自己申告する経路に任せる(既定方針)
+- `bit_sources` は `"CH1"`〜`"CH4"` / `"D0"`〜`"D15"` を**ビット0から順に**並べたリスト。長さが `bus_width`(同時指定なら要求値、無ければ現在値)を超える指定は送信前に `INVALID_PARAMETER`。機器には一括の割り当ても一括の問い合わせも無いため、`:BITX <i>` でビットを選び直しながら `:SOURce` を1本ずつ送る。**読み取りも同じ走査が要る**が、既定の読み取りは**書き込みを一切行わない**ため `bit_sources` を返さない。`configure_decode` は `changed` の判定に必要なので前後スナップショットでのみこの走査を要求し、そのとき `bus` が `user` のバスに限り `:BITX` を書きながら読む(選択中ビットは読み終わりに元へ戻す)
 - **検証は全て送信前**に行う(不正な列挙値・範囲外は1コマンドも送らずに `INVALID_PARAMETER`。実機は不正トークン1発でSCPIサーバーが沈黙するため)。他プロトコルのキーを混ぜた場合は `detail.allowed` にそのプロトコルの許容キーを返す
 - `uart` の `tx_source`/`rx_source`、`spi` の `mosi_source`/`miso_source` を**両方 `off` にはできない**(デコード対象が無くなる)
 - 対応プロトコルは機種プロファイルの `decode_protocols` が持つ([device-profiles.md](device-profiles.md) 2.2)。**未宣言のプロトコル(I2S / FlexRay / MIL-STD-1553 / CAN-FD)は送信前に `UNSUPPORTED_FEATURE`** — これらはライセンスオプション必須で、標準搭載6種のみを扱う

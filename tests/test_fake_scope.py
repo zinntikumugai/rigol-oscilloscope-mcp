@@ -1444,3 +1444,63 @@ def test_reference_current_is_not_implemented(scope: FakeScope) -> None:
     """`:REFerence:CURRent` はM3スコープ外 = 未実装(沈黙)。"""
     with pytest.raises(SilentTimeout):
         scope.handle(":REFerence:CURRent 1")
+
+
+# -- パラレルのデータソース(ガイド3.4.10.1・実機実測 mho98-phase4.md 5章)----
+
+
+def test_bus_parallel_bus_round_trip(scope: FakeScope) -> None:
+    """既定は CHANnel1(ガイド3.4.10.1)。デジタルグループとUSERも往復する。"""
+    assert scope.handle(":BUS1:PARallel:BUS?") == b"CHAN1"
+
+    scope.handle(":BUS1:PARallel:BUS USER")
+    assert scope.handle(":BUS1:PARallel:BUS?") == b"USER"
+
+    scope.handle(":BUS1:PARallel:BUS D7D0")
+    assert scope.handle(":BUS1:PARallel:BUS?") == b"D7D0"
+
+
+def test_bus_parallel_width_requires_user_source(scope: FakeScope) -> None:
+    """実機実測: データソースが USER でなければ `:WIDTh` は -200 で拒否される。
+
+    **沈黙はしない**(エラーキューに積むだけ)ので、値も変わらないことを確認する。
+    """
+    before = scope.handle(":BUS1:PARallel:WIDTh?")
+
+    assert scope.handle(":BUS1:PARallel:WIDTh 4") is None
+    assert scope.handle(":SYSTem:ERRor?") == EXECUTE_ERROR.encode()
+    assert scope.handle(":BUS1:PARallel:WIDTh?") == before
+
+    scope.handle(":BUS1:PARallel:BUS USER")
+    scope.handle(":BUS1:PARallel:WIDTh 4")
+
+    assert scope.handle(":BUS1:PARallel:WIDTh?") == b"4"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_bus_parallel_bitx_requires_user_source(scope: FakeScope) -> None:
+    assert scope.handle(":BUS1:PARallel:BITX 1") is None
+    assert scope.handle(":SYSTem:ERRor?") == EXECUTE_ERROR.encode()
+
+
+def test_bus_parallel_source_requires_user_source(scope: FakeScope) -> None:
+    assert scope.handle(":BUS1:PARallel:SOURce CHANnel2") is None
+    assert scope.handle(":SYSTem:ERRor?") == EXECUTE_ERROR.encode()
+
+
+def test_bus_parallel_source_follows_the_selected_bit(scope: FakeScope) -> None:
+    """`:SOURce` は `:BITX` で選択中のビットにだけ効く(ガイド3.4.10.5/3.4.10.6)。"""
+    scope.handle(":BUS1:PARallel:BUS USER")
+    scope.handle(":BUS1:PARallel:BITX 1")
+    scope.handle(":BUS1:PARallel:SOURce CHANnel2")
+
+    assert scope.handle(":BUS1:PARallel:BITX?") == b"1"
+    assert scope.handle(":BUS1:PARallel:SOURce?") == b"CHAN2"
+
+    scope.handle(":BUS1:PARallel:BITX 0")
+    scope.handle(":BUS1:PARallel:SOURce D3")
+
+    assert scope.handle(":BUS1:PARallel:SOURce?") == b"D3"
+
+    scope.handle(":BUS1:PARallel:BITX 1")
+    assert scope.handle(":BUS1:PARallel:SOURce?") == b"CHAN2"

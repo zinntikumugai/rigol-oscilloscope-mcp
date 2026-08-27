@@ -113,6 +113,9 @@ def test_configure_decode_description_lists_protocols(server) -> None:
     for protocol in ("uart", "i2c", "spi", "can", "lin", "parallel"):
         assert protocol in description
     assert "event_table" in description
+    # パラレルの bus_width / bit_sources は bus="user" が前提(説明必須)
+    assert "bit_sources" in description
+    assert "user" in description
 
 
 # --------------------------------------------------------------------------
@@ -143,6 +146,31 @@ def test_configure_decode_end_to_end(server) -> None:
         "parity": "none",
     }
     assert result["changed"] is True
+
+
+def test_configure_decode_parallel_user_bus_end_to_end(server) -> None:
+    """パラレルの `bus_width` は `bus="user"` と同時指定で1往復で通る。"""
+    connected(server)
+
+    result = data(
+        server,
+        "configure_decode",
+        {
+            "protocol": "parallel",
+            "bus": 1,
+            "settings": {
+                "bus": "user",
+                "bus_width": 2,
+                "bit_sources": ["CH1", "D3"],
+            },
+        },
+    )
+
+    assert result["applied"]["settings"] == {
+        "bus": "user",
+        "bus_width": 2,
+        "bit_sources": ["CH1", "D3"],
+    }
 
 
 def test_configure_decode_unknown_protocol_returns_error_dict(server) -> None:

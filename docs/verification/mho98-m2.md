@@ -221,7 +221,7 @@ writeスイートの failed 1件 / error 1件は**M1・M2の変更とは無関�
 
 | ケース | 症状 | 原因 |
 |---|---|---|
-| `test_configure_decode_uart_set_and_readback` | **teardownでERROR** | 復元fixture(`decode_before`)がスナップショットの全キーを書き戻す際に `:BUS1:PARallel:WIDTh 1` を送り、機器が `-200,"Command execute failed"` を返す。デコード経路はM1/M2で一切触っていない。**2026-08-28に原因判明**: `:WIDTh` はデータソースがUserのときだけ有効で、`configure_decode` は前提の `:PARallel:BUS` を公開していない(→ [mho98-phase4.md](mho98-phase4.md) 5章、修正の追跡は [roadmap.md](../roadmap.md) 2.1) |
+| `test_configure_decode_uart_set_and_readback` | **teardownでERROR** | 復元fixture(`decode_before`)がスナップショットの全キーを書き戻す際に `:BUS1:PARallel:WIDTh 1` を送り、機器が `-200,"Command execute failed"` を返す。デコード経路はM1/M2で一切触っていない。**2026-08-28に原因判明・解消済み**: `:WIDTh` はデータソースがUserのときだけ有効。`configure_decode` に `bus` を公開し、復元fixtureも「Userへ入れて幅を戻す → 本来の `bus` へ戻す」の2段にした(→ [mho98-phase4.md](mho98-phase4.md) 5章、[roadmap.md](../roadmap.md) 2.1) |
 | `test_audit_log_records_every_write` | **FAILED** | アサーションが監査ログに `configure_afg` を要求するが、AFGのwriteテストが `afg_before` fixture の安全ガード「AFG出力がONです(出力ON状態では検証しない)」で自らskipするため、その記録が残らない。**機器のAFG出力がON**である限り再現する環境依存の失敗で、回帰ではない |
 
 どちらも「実機の現在の状態」に依存する失敗であり、M1/M2ケースのPASS判定には影響しない。
@@ -229,6 +229,6 @@ writeスイートの failed 1件 / error 1件は**M1・M2の変更とは無関�
 ## 未実施・今後の予定
 
 - **6.1 のカウンタ現在値は解決済み**(2026-08-28。整定時間が原因。実装は変更せず説明のみ追記)
-- **7.1 の既知の失敗2件** — デコード復元の `:BUS1:PARallel:WIDTh` は [roadmap.md](../roadmap.md) 2.1 の残件で追跡。監査ログのケースはAFG出力OFFの状態で再実行すれば通る
+- **7.1 の既知の失敗2件** — デコード復元の `:BUS1:PARallel:WIDTh` は解消済み(2.1)。監査ログのケースはAFG出力OFFの状態で再実行すれば通る
 - `:CURSor:XY:*` はXY水平時間軸の対応が前提のためM2スコープ外(`mode="xy"` の受理のみ)
 - DHO800/900系の `:CURSor` / `:COUNter` / `:DVM` / `:HISTogram` 宣言はM2スコープ外(別ガイドの逐語解読が未了。[device-profiles.md](../device-profiles.md) 6.2)

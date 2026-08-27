@@ -531,8 +531,14 @@ def create_server(
         - lin: source, baud_bps, parity_enabled, standard (v1x/v2x/mixed),
           threshold_v. Example: {"source": "CH1", "baud_bps": 19200,
           "standard": "v2x"}
-        - parallel: clk_source, clk_slope, bus_width, endian, polarity.
-          Example: {"clk_source": "CH1", "bus_width": 8, "endian": "msb"}
+        - parallel: clk_source, clk_slope, bus (d7_d0/d15_d8/d15_d0/d0_d7/
+          d8_d15/d0_d15/ch1-ch4/user), bus_width (1-16), bit_sources, endian,
+          polarity. bus is the data source; the digital groups list the MSB
+          first. bus_width and bit_sources only work while bus is "user" (the
+          device rejects them otherwise), so set bus in the same call.
+          bit_sources is a list of "CH1"-"CH4" / "D0"-"D15", one per data bit
+          starting at bit 0, and no longer than bus_width. Example:
+          {"bus": "user", "bus_width": 2, "bit_sources": ["CH1", "CH2"]}
 
         Set event_table=true (together with enabled=true) before reading the
         decoded results with get_decode_result.

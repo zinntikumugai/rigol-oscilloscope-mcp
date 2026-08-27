@@ -290,7 +290,8 @@ class ControlService:
         args = {"bus": bus, "protocol": protocol, **requested}
 
         with self._audited("configure_decode", args) as record:
-            before = driver.get_decode_config(bus)
+            # ビット別ソースまで見ないと `changed` が取りこぼす(走査は書き込みを伴う)
+            before = driver.get_decode_config(bus, include_bit_sources=True)
             record.before(before)
             applied = driver.configure_decode(
                 bus,
@@ -300,7 +301,7 @@ class ControlService:
                 data_format=data_format,
                 settings=settings,
             )
-            after = driver.get_decode_config(bus)
+            after = driver.get_decode_config(bus, include_bit_sources=True)
             record.after(after)
 
         return {

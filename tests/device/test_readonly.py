@@ -408,7 +408,10 @@ def test_get_decode_result_bus1(driver: ScopeDriver) -> None:
     read-onlyスイートなのでデコードを有効化しない。既に有効ならテーブルの
     解釈可能性(時刻列がfloat)を、無効なら早期returnの警告形を検証する。
     """
+    # 既定の読み取りは書き込みを伴わない(`include_bit_sources` を渡さない限り
+    # `:BUS<n>:PARallel:BITX` の走査は起きない — tools.md 6章)
     config = driver.get_decode_config(1)
+    assert "bit_sources" not in config["settings"]
     _report(
         "[decode] bus1 protocol=%s enabled=%s event_table=%s format=%s"
         % (
