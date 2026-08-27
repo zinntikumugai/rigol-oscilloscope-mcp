@@ -734,6 +734,16 @@ def decode_before(
         yield before
     finally:
         failure: Exception | None = None
+        # `bus_width`(:BUS<n>:PARallel:WIDTh)は書き戻せない。ガイド3.4.10.4は
+        # 「データソースが User(:PARallel:BUS USER)のときのみ使用可能」と述べ、
+        # 実測でも USER 以外では全ての値が -200 で拒否される(mho98-phase4.md)。
+        # 実装は前提の :PARallel:BUS を露出していない(roadmap 2.1 の follow-up)ため、
+        # 現状は復元対象から外す。値は書けないので元のまま変わらない。
+        settings = {
+            key: value
+            for key, value in before["settings"].items()
+            if key != "bus_width"
+        }
         try:
             driver.configure_decode(
                 DECODE_BUS,
@@ -741,7 +751,7 @@ def decode_before(
                 enabled=before["enabled"],
                 event_table=before["event_table"],
                 data_format=before["data_format"],
-                settings=before["settings"],
+                settings=settings,
             )
         except Exception as exc:  # 復元は最後まで試みる
             failure = exc
@@ -1129,9 +1139,15 @@ def test_afg_loopback_fft(
 
 
 def test_clear_measurements(control: ControlService, driver: ScopeDriver) -> None:
-    """項目を追加してからクリアする。復元は不要(再測定が復元そのもの)。"""
+    """項目を追加してからクリアする。復元は不要(再測定が復元そのもの)。
+
+    **CH1に測定可能な信号があること**が前提。信号が無いと周波数は測定不能値に
+    なり、Resultビューへの追加を確認できない(実測: AFG出力をOFFにした状態で
+    このテストだけが落ちた)。前提が満たされないときは失敗ではなくskipする。
+    """
     results = driver.measure("CH1", ["frequency"])
-    assert results[0].value is not None  # 項目がResultビューへ追加された
+    if results[0].value is None:
+        pytest.skip("CH1に測定可能な信号がありません(周波数が測定不能値)")
 
     outcome = control.clear_measurements(driver)
 
@@ -1711,19 +1727,33 @@ def test_audit_log_records_every_write(audit_path: Path) -> None:
     results = {entry.get("result") for entry in entries}
     _report(f"[audit] {len(entries)}行 tools={tools} results={sorted(map(str, results))}")
 
-    # 書き込み記録は Before / Action / After が揃っていること
+    # 設定変更の記録は Before / Action / After が揃っていること。
+    # 状態を持たない動作コマンド(位相同期・測定項目クリア)は before を持たない
+    # ── 取る対象の状態が無く、service側も record.before を呼ばない(設計どおり)
+    ACTION_ONLY_TOOLS = frozenset({"sync_afg_phase", "clear_measurements"})
     for entry in entries:
-        if entry.get("result") == "success":
-            assert entry["before"] is not None
-            assert entry["after"] is not None
+        if entry.get("result") != "success":
+            continue
+        assert entry["after"] is not None, entry.get("tool")
+        if entry.get("tool") not in ACTION_ONLY_TOOLS:
+            assert entry["before"] is not None, entry.get("tool")
 
+    # 無条件に走るTool(このスイートに必ず含まれる)
     assert {
         "configure_channel",
         "configure_timebase",
         "configure_trigger",
         "configure_decode",
-        "configure_afg",
         "configure_math",
         "configure_reference",
     } <= set(tools)
     assert {"run", "stop", "single"} <= set(tools)
+
+    # ゲート付き・機器状態依存でskipされうるToolは「走ったなら記録がある」だけを見る。
+    # 例: AFG設定テストは出力ONの機器では自ら安全にskipするため(afg_before)、
+    # configure_afg を必須にすると機器の状態でテスト結果が変わってしまう
+    CONDITIONAL_TOOLS = ("configure_afg", "configure_meter", "configure_histogram",
+                         "configure_cursor", "sync_afg_phase", "clear_measurements")
+    for tool in CONDITIONAL_TOOLS:
+        if tool in tools:
+            assert tools[tool] >= 1
