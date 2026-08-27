@@ -1788,8 +1788,11 @@ class ScopeDriver:
         全ての検証を送信前に済ませる(不正なチャンネル番号1発で実機のSCPIサーバーが
         沈黙するため)。送信順は表示ONを**最初**、表示OFFを**最後**に置き、その間は
         OPERator → SOURce1/2 → LSOurce1/2 → FFT → FILTer → SCALe → OFFSet →
-        INVert(表示OFF中の書き込みが無視される実機quirk — AFGの変調STATeと同族 —
-        への対策。実機確認は未実施)。
+        INVert。**この順序を単純化してはならない**: 実機は表示を OFF → ON に戻した
+        瞬間に縦軸を再計算して SCALe / OFFSet の書き込みを捨てるため、表示ONを先に
+        送ることで再計算を書き込みより前に起こす必要がある(MHO98実測 —
+        docs/verification/mho98-math.md (e)。なお表示OFF中の書き込み無視quirk
+        — AFGの変調STATeと同族 — はMATHには存在しないと実測で確定した)。
 
         **演算子と引数の結合制約はホストで検証しない。** 論理演算での `scale` や
         FFTでの `offset_v` のように演算子によって無効になる項目(ガイド3.16.7/

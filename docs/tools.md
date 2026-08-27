@@ -571,7 +571,7 @@ MATH演算トレース(`:MATH<n>`)を設定する。**既に取り込まれて�
 
 動作・規範:
 
-- **送信順は固定**: `display=true` を**最初**に、`display=false` を**最後**に送り、その間を `:OPERator` → `:SOURce1` → `:SOURce2` → `:LSOurce1` → `:LSOurce2` → `:FFT:*` → `:FILTer:*` → `:SCALe` → `:OFFSet` → `:INVert` の順で送る。根拠は**表示OFF中の書き込みがエラーなく無視される実機quirk**(表示OFFチャンネルへの `:SCALe`([verification/mho98-mvp.md](verification/mho98-mvp.md) 3.3)、AFGの `MOD:STATe` OFF中のパラメータ書き込み([verification/mho98-afg.md](verification/mho98-afg.md) 6章)と同族)への対策で、**効かせたい書き込みは表示ONの後・表示OFFは全部書き終えてから**という形にしてある。MATHでの同quirkの**実機確認は未実施**(順序はFakeScopeでテスト固定済み。[verification/mho98-math.md](verification/mho98-math.md) で確認する)。各項目は set → エラーキュー確認 → read-back(0.3節)
+- **送信順は固定**: `display=true` を**最初**に、`display=false` を**最後**に送り、その間を `:OPERator` → `:SOURce1` → `:SOURce2` → `:LSOurce1` → `:LSOurce2` → `:FFT:*` → `:FILTer:*` → `:SCALe` → `:OFFSet` → `:INVert` の順で送る。根拠は**表示OFF中の書き込みがエラーなく無視される実機quirk**(表示OFFチャンネルへの `:SCALe`([verification/mho98-mvp.md](verification/mho98-mvp.md) 3.3)、AFGの `MOD:STATe` OFF中のパラメータ書き込み([verification/mho98-afg.md](verification/mho98-afg.md) 6章)と同族)への対策で、**効かせたい書き込みは表示ONの後・表示OFFは全部書き終えてから**という形にしてある。**MATHでは実機検証の結果この無視quirkは存在しなかった**(表示OFF中でも書き込みは受理され read-back も一致する)が、代わりに**表示を OFF → ON に戻すと機器が縦軸を再計算して書いた値を捨てる**ことが判明した(MHO98 / fw 00.01.00 / 2026-08-27 → [verification/mho98-math.md](verification/mho98-math.md) (e))。**この再計算quirkに対しても同じ送信順が正解**である — 表示ONを先に送ることで再計算が `scale` / `offset_v` の書き込みより前に起き、書いた値が生き残る。**したがってこの順序を「単純化」してはならない**(順序はFakeScopeでテスト固定済み)。呼び出し側の注意として、**MATH表示OFFの状態で書いた `scale` / `offset_v` は表示をONに戻した時点で破棄される** — `display=true` と同じ呼び出しで指定すること。各項目は set → エラーキュー確認 → read-back(0.3節)
 - **検証は全て送信前**に行う(1項目でも不正なら**1コマンドも送らずに** `INVALID_PARAMETER`。実機は不正トークン1発でSCPIサーバー全体が沈黙するため)。対象はMATHチャンネル番号、ソーストークンの形と範囲、列挙値、`average_count`(2〜1000)、`search_num`(1以上)、`fft` / `filter` の未知キー(`detail.allowed` に許容キーを返す)
 - **MATHソースのカスケード則**: `source1` / `source2` / `fft.source` に別のMATHトレースを指定できるが、**自分より小さい番号だけ**(`MATH3` は `MATH1` / `MATH2` を読めるが、`MATH3` 自身や `MATH4` は読めない。ガイド3.16.3 / 3.16.4 の Remarks)。自己参照・上位参照は送信前に `INVALID_PARAMETER`。`REF<n>` の範囲は `ref_channels`、`lsource*` の `D<n>` の範囲は `digital_channels` capability が持つ
 - **演算子とパラメータの結合制約は機器が強制する**(ホスト側では検証しない): 論理演算(`and` / `or` / `xor` / `not`)とFFTには `:SCALe` / `:OFFSet` が存在せず(ガイド3.16.7 / 3.16.8)、FFTは自前の `fft.scale` / `fft.offset` を持つ。演算子ごとの許容パラメータ表をホストに持たせると、ガイド未記載の組み合わせで正当な操作まで塞いでしまうため、**拒否は機器のエラーキューに委ね**、set直後のエラーキュー確認でそのまま拾う。**演算子とそのパラメータは同じ呼び出しで指定する**(送信順で `:OPERator` が先に出るため、1回の呼び出しで整合が取れる)
@@ -760,7 +760,7 @@ MATH演算の現在設定を読む。**書き込みは一切行わず**、表示
 | `stats` | 解釈できた項目があるときだけ返る。**機器自身のラベル**を snake_case に正規化したキー → **基本単位に揃えた数値** |
 | `warnings` | 解釈できない項目があったとき、およびヒストグラムが無効なときだけ返る(自然文) |
 
-`stats` のキー(実測のラベル順。機器が返す項目がそのまま並ぶ):
+`stats` のキー(実測のラベル順。機器が返す項目がそのまま並ぶ)。**下記13ラベルとその並びは、信号の違う2回の独立した実機測定で同一だった**(2026-08-27 → [verification/mho98-m2.md](verification/mho98-m2.md) 2章 / 7章):
 
 | キー | `<キー>_unit` | 説明 |
 |---|---|---|

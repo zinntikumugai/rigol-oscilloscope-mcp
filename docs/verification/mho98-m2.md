@@ -2,7 +2,7 @@
 
 **対象:** RIGOL MHO98(ファームウェア 00.01.00、LAN SCPI :5555)。IP・シリアルは記録しない
 **実施日:** 2026-08-27
-**状態:** **実施済み**(SCPIレベルのプローブと、実装コードのE2Eを両方実施。**残件2件は「未解決の観測事実」として6章に記録**)
+**状態:** **実施済み**(SCPIレベルのプローブ・実装コードのE2E・実機テストのpytest実行を全て実施。**未解決の観測事実1件は6章、実機テストの実行結果と既知の失敗2件は7章**)
 **規範:** [tools.md](../tools.md) 12章 / [roadmap.md](../roadmap.md) 2.5.2
 **前提:** MHO900-BND適用済み。手順規律は [mho98-math.md](mho98-math.md) と同じ(1コマンド → 応答5s timeout → `:SYSTem:ERRor?` → 記録。**沈黙したら空行付き再接続 → `*IDN?` で復旧確認 → エラーキューをドレイン**)
 **安全条件:** write項目は全て「現在値取得 → set → readback → finally で復元」。カーソル・カウンタ・電圧計・ヒストグラムは**表示・統計層のみ**の操作で、取り込み条件にも出力にも触れない
@@ -147,25 +147,76 @@ stats = {'sum': 16880.0, 'sum_unit': 'hits', 'max': 1.531, 'max_unit': 'V',
 
 ## 6. 未解決(次に試すこと)
 
-### 6.1 `:COUNter:CURRent?` が有効化しても `0` を返す
+### 6.1 有効化したカウンタの現在値が読めない(`0` / `None` で応答が一定しない)
 
 生信号が載っているチャンネルでカウンタを有効化し、2秒の整定待ちを置いても `:COUNter:CURRent?` は `0` のままだった(`:COUNter:ENABle?` は `1`、`:COUNter:SOURce?` は当該チャンネル、`:COUNter:MODE?` は `FREQ`)。
 
+**追試(2026-08-27、実機テストのpytest実行時)で応答が run 間で一定しないことが判明した。** 生信号の載ったCH2でカウンタを有効化した状態で `get_meter_value("counter")` を呼ぶと **`value: None`** が返った:
+
+```
+[meter:counter] applied={'enabled':True,'source':'CH2','mode':'frequency','digits':5} value=None unit='Hz'
+```
+
+`get_meter_value` が `None` を返すのは (1) `:COUNter:ENABle?` が `0`、(2) 応答が空、(3) 測定不能の番兵値 ±9.9E37、のいずれか(`driver/scope.py` の `_readout`)。この呼び出しでは `applied` のとおり有効化されているため、**この状態での `:COUNter:CURRent?` の応答は空または番兵値**だったことになる。一方、**同じコマンドを生ソケットで直接叩いた先の観測では `'0'` が返っていた**。つまり応答は `'0'` と 空/番兵値 の間で **run ごとに揺れている**。
+
 未特定の要因(次に試す順):
 
-1. **ゲート時間** — カウンタが1回の測定に使う時間の設定がガイドにあるか再確認する。2秒の待ちで足りているかも含めて
-2. **トリガ要件** — トリガがかかって取り込みが走っている状態(`:TRIGger:STATus?` が `TD` / `AUTO`)での再測定。停止中は数えない可能性がある
-3. **ソース条件** — 別のアナログch、およびデジタルch(`D0`-`D15`)との比較。信号レベル・しきい値がカウンタ側の判定基準を満たしていない可能性
+1. **整定時間** — 2秒より長く待つ。`None`(値がまだ無い)と `0`(値はあるが0)の違いが待ち時間で説明できるかを見る
+2. **ゲート時間** — カウンタが1回の測定に使う時間の設定がガイドにあるか再確認する
+3. **トリガ要件** — トリガがかかって取り込みが走っている状態(`:TRIGger:STATus?` が `TD` / `AUTO`)での再測定。停止中は数えない可能性がある
+4. **ソース条件** — 別のアナログch(より振幅・スルーレートの大きい信号)、およびデジタルch(`D0`-`D15`)との比較。信号レベル・しきい値がカウンタ側の判定基準を満たしていない可能性
 
-実装側は現状のままで問題ない(値をそのまま返すだけで、`0` を異常として扱ってはいない)。原因が判明したら `get_meter_value` の説明に条件を書き足す。
+**実装側は現状のままで問題ない。コードに「カウンタの読みは非ゼロである」と仮定している箇所は無い**(確認済み: `get_meter_value` は `_readout` の値をそのまま返すだけで、`0` を異常扱いする分岐も、`None` を欠測として補う処理も無い。`0` も `None` もそのまま呼び出し側へ渡る)。**ここを回避するコードは書かない** — 原因が判明したら `get_meter_value` の説明に条件を書き足す。
 
-### 6.2 実機テストのpytest経由での実行
+## 7. 実機テストの実行結果(pytest経由・2026-08-27)
 
-本文書の記録はすべて手動プローブと実装コードの直接呼び出しによるもの。`tests/device/test_readonly.py` / `tests/device/test_write.py` に追加したM2ケース**自体の実機実行は未実施**。
+手動プローブ・実装コードの直接呼び出し(4章)とは別に、`tests/device/` に追加したM2ケースを**pytestで実機実行**した。
+
+| スイート | 結果 |
+|---|---|
+| `-m device`(read-only) | **17 passed, 22 skipped** |
+| `-m device_write`(`RIGOL_TEST_ALLOW_WRITE=1`) | **16 passed, 1 failed, 1 error, 4 skipped** |
+
+**M2のケースは全てPASS**(復元も確認済み)。実測ログ:
+
+```
+[cursor] applied={'mode':'manual','type':'time','source':'CH2','ax':-0.0001999999959,'ay':-0.5,
+                  'bx':0.0001999999959,'by':0.5}
+[cursor] measurement={'mode':'manual','ax_s':-0.0002,'ay_v':-0.5,'bx_s':0.0002,'by_v':0.5,
+                      'xdelta_s':0.0004,'ydelta_v':1.0,'ixdelta_hz':2500.0}
+[meter:counter] applied={'enabled':True,'source':'CH2','mode':'frequency','digits':5} value=None unit='Hz'
+[meter:dvm]     applied={'enabled':True,'source':'CH2','mode':'dc'}     value=0.0 unit='V'
+[histogram] applied={'enabled':True,'type':'vertical','source':'CH2','height':2,
+                     'left_s':-0.0003,'right_s':0.0003,'bottom_v':-1.0,'top_v':1.0,'reset':True}
+[histogram] result raw='[Sum:2.062khits, Peaks:26hits, Max:999.9mV, Min:-999.9mV, Pk_Pk:1.999V,
+             Mean:9.198mV, Median:0V, Mode:-218.7mV, Bin width:15.62mV, Sigma:4.956mV,
+             meanPlusSigma:0.577110, meanPlus2Sigma:1.000000, meanPlus3Sigma:1.000000]'
+            stats={'sum':2062.0,'sum_unit':'hits','max':0.9999,'max_unit':'V','median':0.0, ...}
+監査ログ 44行 tools={... 'configure_math':2, 'configure_cursor':1, 'configure_meter':2,
+                        'configure_histogram':1} results=['success']
+```
+
+読み取れること:
+
+- **カーソルの往復は算術的にも整合している。** 設定した `ax=-0.0002 s` / `bx=0.0002 s` に対し `xdelta_s=0.0004`、`ixdelta_hz=2500.0` で **1/ΔX = 2500 Hz が厳密に一致**する(機器が返す読み値であって、ホスト側の計算値ではない)。manualモードなので `ay` / `by` も設定どおり動かない(3章のtrackモードとの対比)
+- **ヒストグラム統計のラベル集合が2回の独立した測定で一致した**(4章の値と本節の値。信号が違うので数値は当然違うが、`Sum` / `Peaks` / `Max` / `Min` / `Pk_Pk` / `Mean` / `Median` / `Mode` / `Bin width` / `Sigma` / `meanPlusSigma` / `meanPlus2Sigma` / `meanPlus3Sigma` の**13ラベルとその並びは同一**)。2章の書式判定(`[Label:Value, …]` の1行)と `Bin width:15.62mV` の値までが再現している
+- **カウンタの現在値だけが `None`**(6.1)。同じ呼び出しで電圧計は `value=0.0`(数値)を返しており、`_readout` 経路そのものは正常に働いている
+- 監査ログは44行すべて `result='success'`(before / after が揃っていることもテストが検証している)
+
+### 7.1 既知の失敗(M1/M2とは無関係・再診断不要)
+
+writeスイートの failed 1件 / error 1件は**M1・M2の変更とは無関係**で、M1検証時にも同一の症状で観測済みである。**次に実行する人が再診断しなくて済むよう、原因をここに残す。**
+
+| ケース | 症状 | 原因 |
+|---|---|---|
+| `test_configure_decode_uart_set_and_readback` | **teardownでERROR** | 復元fixture(`decode_before`)がスナップショットの全キーを書き戻す際に `:BUS1:PARallel:WIDTh 1` を送り、機器が `-200,"Command execute failed"` を返す。デコード経路はM1/M2で一切触っていない。→ 追跡は [roadmap.md](../roadmap.md) 2.1 の残件へ |
+| `test_audit_log_records_every_write` | **FAILED** | アサーションが監査ログに `configure_afg` を要求するが、AFGのwriteテストが `afg_before` fixture の安全ガード「AFG出力がONです(出力ON状態では検証しない)」で自らskipするため、その記録が残らない。**機器のAFG出力がON**である限り再現する環境依存の失敗で、回帰ではない |
+
+どちらも「実機の現在の状態」に依存する失敗であり、M1/M2ケースのPASS判定には影響しない。
 
 ## 未実施・今後の予定
 
-- **6.1 のカウンタ現在値** — 唯一の機能的な未解決事項
-- **6.2 のM2実機テストのpytest実行**(テストは追加済み・未実行)
+- **6.1 のカウンタ現在値** — 唯一の未解決事項(`0` / `None` の揺れ。実装への対処は不要)
+- **7.1 の既知の失敗2件** — デコード復元の `:BUS1:PARallel:WIDTh` は [roadmap.md](../roadmap.md) 2.1 の残件で追跡。監査ログのケースはAFG出力OFFの状態で再実行すれば通る
 - `:CURSor:XY:*` はXY水平時間軸の対応が前提のためM2スコープ外(`mode="xy"` の受理のみ)
 - DHO800/900系の `:CURSor` / `:COUNter` / `:DVM` / `:HISTogram` 宣言はM2スコープ外(別ガイドの逐語解読が未了。[device-profiles.md](../device-profiles.md) 6.2)
