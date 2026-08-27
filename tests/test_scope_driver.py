@@ -2161,3 +2161,435 @@ def test_math_channel_out_of_range_sends_nothing(
 
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
     assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# MATH演算: configure_math(ガイド3.16章)
+# --------------------------------------------------------------------------
+
+
+def math_writes(scope: FakeScope) -> list[str]:
+    """`:MATH` への書き込みのみ(問い合わせ・エラーキュー確認を除く)。"""
+    return [
+        c for c in scope.command_log if "?" not in c and c.upper().startswith(":MATH")
+    ]
+
+
+def test_configure_math_sends_exact_scpi(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """演算子・ソースはガイド逐語のニモニックで送る。"""
+    applied = driver.configure_math(
+        1, operator="subtract", source1="CH2", source2="REF3"
+    )
+
+    assert math_writes(scope) == [
+        ":MATH1:OPERator SUBTract",
+        ":MATH1:SOURce1 CHANnel2",
+        ":MATH1:SOURce2 REF3",
+    ]
+    assert applied == {
+        "channel": 1,
+        "operator": "subtract",
+        "source1": "CH2",
+        "source2": "REF3",
+    }
+
+
+def test_configure_math_fft_subtree_uses_guide_mnemonics(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    applied = driver.configure_math(
+        2,
+        operator="fft",
+        fft={
+            "window": "blackman",
+            "unit": "vrms",
+            "mode": "average",
+            "average_count": 100,
+            "freq_start_hz": 0.0,
+            "freq_end_hz": 1.0e7,
+            "search_enabled": True,
+            "search_order": "frequency",
+        },
+    )
+
+    assert math_writes(scope) == [
+        ":MATH2:OPERator FFT",
+        ":MATH2:FFT:WINDow BLACkman",
+        ":MATH2:FFT:UNIT VRMS",
+        ":MATH2:FFT:MODE AVERage",
+        ":MATH2:FFT:AVCNt 100",
+        ":MATH2:FFT:FREQuency:STARt 0.0",
+        ":MATH2:FFT:FREQuency:END 10000000.0",
+        ":MATH2:FFT:SEARch:ENABle ON",
+        ":MATH2:FFT:SEARch:ORDer FREQorder",
+    ]
+    assert applied["fft"] == {
+        "window": "blackman",
+        "unit": "vrms",
+        "mode": "average",
+        "average_count": 100,
+        "freq_start_hz": 0.0,
+        "freq_end_hz": 1.0e7,
+        "search_enabled": True,
+        "search_order": "frequency",
+    }
+
+
+def test_configure_math_fft_source_uses_its_own_command(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """FFTの入力chは `:FFT:SOURce`(`:SOURce1` ではない。ガイド3.16.14)。"""
+    applied = driver.configure_math(2, operator="fft", fft={"source": "CH3"})
+
+    assert math_writes(scope) == [
+        ":MATH2:OPERator FFT",
+        ":MATH2:FFT:SOURce CHANnel3",
+    ]
+    assert applied["fft"]["source"] == "CH3"
+
+
+def test_configure_math_fft_source_obeys_the_cascade_rule(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`SOURce1` と同じトークン検証(カスケードは m<n のみ)。送信ゼロで拒否。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_math(1, fft={"source": "MATH2"})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_math_filter_subtree(driver: ScopeDriver, scope: FakeScope) -> None:
+    applied = driver.configure_math(
+        1, operator="bandpass", filter={"type": "bandpass", "w1_hz": 1e5, "w2_hz": 1e6}
+    )
+
+    assert math_writes(scope) == [
+        ":MATH1:OPERator BPASs",
+        ":MATH1:FILTer:TYPE BPASs",
+        ":MATH1:FILTer:W1 100000.0",
+        ":MATH1:FILTer:W2 1000000.0",
+    ]
+    assert applied["filter"] == {"type": "bandpass", "w1_hz": 1e5, "w2_hz": 1e6}
+
+
+def test_configure_math_display_on_is_sent_first(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """表示OFF中の書き込み無視quirk対策(AFGの変調STATeと同じ流儀)。"""
+    driver.configure_math(1, display=True, operator="add", scale=0.5)
+
+    assert math_writes(scope) == [
+        ":MATH1:DISPlay ON",
+        ":MATH1:OPERator ADD",
+        ":MATH1:SCALe 0.5",
+    ]
+
+
+def test_configure_math_display_off_is_sent_last(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_math(1, display=False, operator="add", invert=True)
+
+    assert math_writes(scope) == [
+        ":MATH1:OPERator ADD",
+        ":MATH1:INVert ON",
+        ":MATH1:DISPlay OFF",
+    ]
+
+
+def test_configure_math_logic_sources(driver: ScopeDriver, scope: FakeScope) -> None:
+    applied = driver.configure_math(1, operator="and", lsource1="D0", lsource2="CH4")
+
+    assert math_writes(scope) == [
+        ":MATH1:OPERator AND",
+        ":MATH1:LSOurce1 D0",
+        ":MATH1:LSOurce2 CHANnel4",
+    ]
+    assert applied["lsource1"] == "D0"
+    assert applied["lsource2"] == "CH4"
+
+
+def test_configure_math_cascade_rule_rejects_same_or_higher_math(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`:MATH<n>` のソースに使える MATH<m> は m<n のみ(ガイド3.16.3 Remarks)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_math(1, source1="MATH1")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+    assert driver.configure_math(2, source1="MATH1")["source1"] == "MATH1"
+
+
+def test_configure_math_rejects_ref_out_of_range(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_math(1, source1="REF11")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_math_reports_missing_ref_and_digital_support(
+    scope: FakeScope,
+) -> None:
+    """REF/デジタルを持たない機種では「範囲外」でなく「非対応」と伝える。
+
+    `REF1-REF0` / `D0-D-1` のような無意味な範囲を出さないこと(Copilotレビュー指摘)。
+    """
+    base = load_profile("mho98")
+    profile = Profile(
+        name=base.name,
+        confidence=base.confidence,
+        capabilities={**base.capabilities, "ref_channels": 0, "digital_channels": 0},
+        dialect=base.dialect,
+        limits=base.limits,
+    )
+    transport = FakeTransport(scope)
+    transport.open()
+    driver = ScopeDriver(ScpiSession(transport), profile)
+
+    with pytest.raises(ScopeError) as ref_error:
+        driver.configure_math(1, source1="REF1")
+    assert ref_error.value.code == ErrorCode.INVALID_PARAMETER
+    assert "REF0" not in ref_error.value.message
+    assert "does not support reference waveforms" in ref_error.value.message
+
+    with pytest.raises(ScopeError) as digital_error:
+        driver.configure_math(1, lsource1="D0")
+    assert digital_error.value.code == ErrorCode.INVALID_PARAMETER
+    assert "D-1" not in digital_error.value.message
+    assert "does not support digital channels" in digital_error.value.message
+
+    assert scope.command_log == []
+
+
+def test_configure_math_rejects_unknown_source_and_lsource(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    for kwargs in ({"source1": "EXT"}, {"lsource1": "D16"}, {"lsource2": "REF1"}):
+        with pytest.raises(ScopeError) as excinfo:
+            driver.configure_math(1, **kwargs)
+        assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+        assert scope.command_log == []
+
+
+def test_configure_math_rejects_unknown_enum_value(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_math(1, operator="convolve")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_math(1, operator="fft", fft={"window": "kaiser"})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_math_rejects_unknown_subtree_keys(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_math(1, fft={"windows": "blackman"})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_math(1, filter={"w3_hz": 1.0})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_math_without_any_item_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_math(1)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_math_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.configure_math(1, operator="add")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_configure_math_returns_semantic_readback(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """機器は短形式(`BLAC`)を返すが、appliedはセマンティック名で返る。"""
+    applied = driver.configure_math(1, operator="fft", fft={"window": "blackman"})
+
+    assert scope.math[1]["fft_window"] == "BLAC"
+    assert applied["operator"] == "fft"
+    assert applied["fft"]["window"] == "blackman"
+
+
+# --------------------------------------------------------------------------
+# MATH演算: get_math_config(条件付き読み取り)
+# --------------------------------------------------------------------------
+
+
+def test_get_math_config_reads_display_first(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.get_math_config(1)
+
+    assert scope.command_log[0] == ":MATH1:DISPlay?"
+
+
+def test_get_math_config_arithmetic_skips_fft_and_filter_subtrees(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.math[1]["operator"] = "ADD"
+    config = driver.get_math_config(1)
+
+    assert config["operator"] == "add"
+    assert config["source1"] == "CH1"
+    assert config["scale"] == 1.0
+    assert config["offset_v"] == 0.0
+    assert config["invert"] is False
+    assert "lsource1" not in config
+    assert "fft" not in config
+    assert "filter" not in config
+    assert sent(scope, ":MATH1:FFT") == []
+    assert sent(scope, ":MATH1:FILT") == []
+
+
+def test_get_math_config_logic_reads_lsources_but_not_scale(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.math[1]["operator"] = "AND"
+    config = driver.get_math_config(1)
+
+    assert config["lsource1"] == "CH1"
+    assert config["lsource2"] == "CH1"
+    assert "scale" not in config
+    assert "offset_v" not in config
+    assert sent(scope, ":MATH1:SCAL") == []
+
+
+def test_get_math_config_fft_reads_the_subtree_without_peaks(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """探索が無効ならピーク表は読まない(未検証サブツリーを突かない)。"""
+    scope.math[1]["operator"] = "FFT"
+    config = driver.get_math_config(1)
+
+    assert config["fft"]["source"] == "CH1"
+    assert config["fft"]["window"] == "hanning"
+    assert config["fft"]["unit"] == "db"
+    assert config["fft"]["search_enabled"] is False
+    assert "peaks" not in config
+    assert "scale" not in config
+    assert sent(scope, "SEARCH:RES?") == []
+
+
+def test_get_math_config_fft_with_search_returns_peaks(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.math[1]["operator"] = "FFT"
+    scope.math[1]["fft_search"] = True
+    config = driver.get_math_config(1)
+
+    assert config["fft"]["search_enabled"] is True
+    assert config["peaks"][0] == {
+        "index": 1,
+        "frequency_hz": 2.5e6,
+        "amplitude": -24.98,
+        "amplitude_unit": "dBV",
+    }
+    assert len(config["peaks"]) == 5
+
+
+def test_get_math_config_filter_operator_reads_the_filter_subtree(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.math[1]["operator"] = "BPAS"
+    config = driver.get_math_config(1)
+
+    assert config["operator"] == "bandpass"
+    assert config["filter"] == {
+        "type": "lowpass",
+        "w1_hz": 1.0e6,
+        "w2_hz": 1.0e7,
+    }
+    assert "fft" not in config
+
+
+def test_get_math_config_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.get_math_config(1)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# MATH演算: 波形経路(:WAVeform:SOURce MATH<n>)
+# --------------------------------------------------------------------------
+
+
+def test_read_waveform_accepts_a_math_source(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    raw = driver.read_waveform("MATH2")
+
+    assert ":WAVeform:SOURce MATH2" in scope.command_log
+    assert len(raw.data) > 0
+
+
+def test_read_waveform_math_out_of_range_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.read_waveform("MATH5")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_read_waveform_math_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.read_waveform("MATH1")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_read_waveform_analog_channel_sends_no_math_command(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.read_waveform("CH1")
+
+    assert sent(scope, ":MATH") == []
+
+
+def test_get_math_operator_returns_the_semantic_name(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.math[3]["operator"] = "FFT"
+
+    assert driver.get_math_operator(3) == "fft"
+    assert scope.command_log == [":MATH3:OPERator?"]

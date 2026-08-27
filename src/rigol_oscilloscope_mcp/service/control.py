@@ -71,6 +71,16 @@ def _specified(values: dict) -> dict:
     return {key: value for key, value in values.items() if value is not None}
 
 
+#: `get_math_config` の返却のうち、設定ではなく測定結果として毎回変わりうるキー。
+#: `changed` の判定から除く(監査ログには完全なスナップショットを残す)。
+_MATH_DYNAMIC_KEYS = ("peaks", "peak_warnings")
+
+
+def _math_settings(state: dict) -> dict:
+    """MATH状態から設定項目だけを取り出す(ピーク表などの動的値を除く)。"""
+    return {key: value for key, value in state.items() if key not in _MATH_DYNAMIC_KEYS}
+
+
 def _is_restricted_impedance(impedance: str | None) -> bool:
     """`"50"` のみ昇格対象。表記ゆれ(前後空白)は吸収する。"""
     return isinstance(impedance, str) and impedance.strip() == RESTRICTED_IMPEDANCE
@@ -412,6 +422,65 @@ class ControlService:
             driver.sync_afg_phase(channel)
             record.after({})
         return {"result": "ok"}
+
+    def configure_math(
+        self,
+        driver: ScopeDriver,
+        channel: int = 1,
+        *,
+        display: bool | None = None,
+        operator: str | None = None,
+        source1: str | None = None,
+        source2: str | None = None,
+        lsource1: str | None = None,
+        lsource2: str | None = None,
+        scale: float | None = None,
+        offset_v: float | None = None,
+        invert: bool | None = None,
+        fft: dict | None = None,
+        # `filter` は組込み名と重なるが、Tool引数名(ガイドの :FILTer)を優先する
+        filter: dict | None = None,
+    ) -> dict:
+        """MATH演算を設定する(SAFE_WRITE)。未指定の項目は変更しない。
+
+        configure_decode と同じ根拠で承認は要求しない: 表示・解析層のみを変える
+        完全に可逆な操作で、取り込み設定にも出力にも触れない。引数依存の昇格も無い。
+        """
+        items = {
+            "display": display,
+            "operator": operator,
+            "source1": source1,
+            "source2": source2,
+            "lsource1": lsource1,
+            "lsource2": lsource2,
+            "scale": scale,
+            "offset_v": offset_v,
+            "invert": invert,
+            "fft": fft,
+            "filter": filter,
+        }
+        requested = _specified(items)
+        if not requested:
+            raise _invalid(
+                "No item to change was specified "
+                f"(specify at least one of {' / '.join(items)})",
+                {"channel": channel},
+            )
+
+        args = {"channel": channel, **requested}
+        with self._audited("configure_math", args) as record:
+            before = driver.get_math_config(channel)
+            record.before(before)
+            applied = driver.configure_math(channel, **requested)
+            after = driver.get_math_config(channel)
+            record.after(after)
+
+        return {
+            "channel": after["channel"],
+            "requested": requested,
+            "applied": applied,
+            "changed": _math_settings(before) != _math_settings(after),
+        }
 
     # -- Acquisition ------------------------------------------------------
 

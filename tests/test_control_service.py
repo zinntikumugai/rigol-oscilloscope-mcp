@@ -1515,6 +1515,117 @@ def test_sync_afg_phase_error_is_audited(
 
 
 # ==========================================================================
+# configure_math(MATH演算 / SAFE_WRITE)
+# ==========================================================================
+
+
+def test_configure_math_returns_requested_and_applied(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    result = service.configure_math(
+        driver, 1, operator="subtract", source1="CH2", source2="CH3"
+    )
+
+    assert result["channel"] == 1
+    assert result["requested"] == {
+        "operator": "subtract",
+        "source1": "CH2",
+        "source2": "CH3",
+    }
+    assert result["applied"] == {
+        "channel": 1,
+        "operator": "subtract",
+        "source1": "CH2",
+        "source2": "CH3",
+    }
+
+
+def test_configure_math_passes_the_subtrees_through(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    result = service.configure_math(
+        driver, 2, display=True, operator="fft", fft={"source": "CH1", "unit": "vrms"}
+    )
+
+    assert result["requested"]["display"] is True
+    assert result["requested"]["fft"] == {"source": "CH1", "unit": "vrms"}
+    assert result["applied"]["fft"] == {"source": "CH1", "unit": "vrms"}
+
+
+def test_configure_math_reports_changed(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    assert service.configure_math(driver, 1, operator="fft")["changed"] is True
+    # 同じ設定の再適用は変化なし
+    assert service.configure_math(driver, 1, operator="fft")["changed"] is False
+
+
+def test_configure_math_changed_ignores_dynamic_peaks(
+    service: ControlService, driver: ScopeDriver, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ピーク表は測定のたびに変わるので changed の判定材料にしない。
+
+    設定が同一でも peaks が動くだけで changed=True になっていた(Copilotレビュー指摘)。
+    """
+    service.configure_math(driver, 1, operator="fft", fft={"search_enabled": True})
+
+    reads = iter(
+        [
+            {"channel": 1, "operator": "fft", "peaks": [{"index": 1}]},
+            {"channel": 1, "operator": "fft", "peaks": [{"index": 2}]},
+        ]
+    )
+    monkeypatch.setattr(driver, "get_math_config", lambda channel: next(reads))
+
+    assert service.configure_math(driver, 1, operator="fft")["changed"] is False
+
+
+def test_configure_math_rejects_all_none(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """全項目未指定は機器へ1コマンドも送らずに拒否(configure_afgの前例)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        service.configure_math(driver, 1)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_math_is_audited_with_before_and_after(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    service.configure_math(driver, 1, operator="add", source1="CH2")
+
+    row = operations(audit_path)[0]
+    assert row["tool"] == "configure_math"
+    assert row["result"] == "success"
+    assert row["requested"] == {"channel": 1, "operator": "add", "source1": "CH2"}
+    assert row["before"]["source1"] == "CH1"  # FakeScopeの既定
+    assert row["after"]["operator"] == "add"
+    assert row["after"]["source1"] == "CH2"
+
+
+def test_configure_math_needs_no_confirmation(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    """表示・解析層のみの変更で取り込み設定も出力も変えない(SAFE_WRITE)。"""
+    service.configure_math(driver, 1, operator="add")
+
+    assert confirms(audit_path) == []
+
+
+def test_configure_math_error_is_audited(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    with pytest.raises(ScopeError):
+        service.configure_math(driver, 1, source1="MATH1")  # 自己参照カスケード
+
+    row = operations(audit_path)[0]
+    assert row["result"] == "error"
+    assert row["detail"]["error"]["code"] == ErrorCode.INVALID_PARAMETER
+
+
+# ==========================================================================
 # パッケージ公開
 # ==========================================================================
 
