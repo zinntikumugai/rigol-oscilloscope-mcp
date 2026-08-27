@@ -1295,3 +1295,152 @@ def test_histogram_save_csv_is_silent(scope: FakeScope) -> None:
     """機器ストレージへの書き出しはスコープ外 = 未実装(沈黙)。"""
     with pytest.raises(SilentTimeout):
         scope.handle(":HISTogram:SAVE:CSV")
+
+
+# --------------------------------------------------------------------------
+# リファレンス波形(:REFerence / ガイド3.20)
+# --------------------------------------------------------------------------
+#
+# 他のサブシステムと違い、枠番号は**ニモニックではなくコマンド引数**で渡す
+# (`:REFerence:VSCale <ref>,<scale>` / `:REFerence:VSCale? <ref>`)。
+
+
+def test_reference_defaults_match_the_device(scope: FakeScope) -> None:
+    """既定値は実機の工場出荷状態(firmware 00.01.00)の実測値。"""
+    assert scope.handle(":REFerence:SOURce? 1") == b"CHAN1"
+    assert scope.handle(":REFerence:VSCale? 1") == b"5.000000E-2"
+    assert scope.handle(":REFerence:VOFFset? 1") == b"0.000000E+0"
+    assert scope.handle(":REFerence:COLor? 1") == b"ORAN"
+    assert scope.handle(":REFerence:LABel:CONTent? 1") == b"REF1"
+    assert scope.handle(":REFerence:LABel:ENABle?") == b"0"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_reference_default_colors_cycle_across_the_slots(scope: FakeScope) -> None:
+    """実測: 枠1から ORAN / RED / BLUE / GREE / GRAY の巡回。枠4と枠9が緑。"""
+    colors = [scope.handle(f":REFerence:COLor? {n}") for n in range(1, 11)]
+
+    assert colors == [
+        b"ORAN", b"RED", b"BLUE", b"GREE", b"GRAY",
+        b"ORAN", b"RED", b"BLUE", b"GREE", b"GRAY",
+    ]
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_reference_round_trip_takes_the_slot_as_an_argument(scope: FakeScope) -> None:
+    """`<ref>,<値>` で書き、`? <ref>` で読む。枠どうしは独立している。"""
+    scope.handle(":REFerence:SOURce 2,CHANnel3")
+    scope.handle(":REFerence:VSCale 2,0.5")
+    scope.handle(":REFerence:VOFFset 2,-1.5")
+    scope.handle(":REFerence:COLor 2,GREen")
+    scope.handle(":REFerence:LABel:CONTent 2,probe_a")
+
+    assert scope.handle(":REFerence:SOURce? 2") == b"CHAN3"
+    assert scope.handle(":REFerence:VSCale? 2") == b"5.000000E-1"
+    assert scope.handle(":REFerence:VOFFset? 2") == b"-1.500000E+0"
+    assert scope.handle(":REFerence:COLor? 2") == b"GREE"  # 実測(ガイドは GRE)
+    assert scope.handle(":REFerence:LABel:CONTent? 2") == b"probe_a"
+    # 枠1は触れていない
+    assert scope.handle(":REFerence:SOURce? 1") == b"CHAN1"
+    assert scope.handle(":REFerence:VSCale? 1") == b"5.000000E-2"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_reference_short_form_mnemonics_and_slot10_are_accepted(
+    scope: FakeScope,
+) -> None:
+    scope.handle(":REF:VSC 10,2")
+
+    assert scope.handle(":REF:VSC? 10") == b"2.000000E+0"
+    assert scope.handle(":REFerence:VSCale? 10") == b"2.000000E+0"
+
+
+def test_reference_source_accepts_digital_and_math(scope: FakeScope) -> None:
+    """ガイド3.20.2 の値域は `{D0..D15|CHANnel1..4|MATH1..4}`。
+
+    「現在有効なチャンネルのみ選択できる」というガイドのRemarksは**機器側の
+    条件**で、拒否のされ方(沈黙 / エラーキュー)が実機未検証のため、フェイクは
+    値域だけを見る(勝手な挙動を作らない)。
+    """
+    scope.handle(":REFerence:SOURce 1,D7")
+    assert scope.handle(":REFerence:SOURce? 1") == b"D7"
+
+    scope.handle(":REFerence:SOURce 1,MATH2")
+    assert scope.handle(":REFerence:SOURce? 1") == b"MATH2"
+
+    with pytest.raises(SilentTimeout):
+        scope.handle(":REFerence:SOURce 1,REF2")
+
+
+def test_reference_unknown_color_is_rejected(scope: FakeScope) -> None:
+    with pytest.raises(SilentTimeout):
+        scope.handle(":REFerence:COLor 1,PURPle")
+
+    assert scope.handle(":SYSTem:ERRor?") == OUT_OF_RANGE.encode()
+    assert scope.handle(":REFerence:COLor? 1") == b"ORAN"
+
+
+def test_reference_slot_out_of_range_is_silent(scope: FakeScope) -> None:
+    """枠は1〜10。`11` はどのパターンにも一致せず沈黙する(実機同様)。"""
+    with pytest.raises(SilentTimeout):
+        scope.handle(":REFerence:VSCale? 11")
+
+    with pytest.raises(SilentTimeout):
+        scope.handle(":REFerence:VSCale 11,1")
+
+    with pytest.raises(SilentTimeout):
+        scope.handle(":REFerence:VSCale? 0")
+
+
+def test_reference_query_without_the_slot_is_silent(scope: FakeScope) -> None:
+    """枠番号は引数なので、省いた問い合わせは未定義ヘッダ扱い(沈黙)。"""
+    with pytest.raises(SilentTimeout):
+        scope.handle(":REFerence:VSCale?")
+
+    with pytest.raises(SilentTimeout):
+        scope.handle(":REFerence:VSCale 1")
+
+
+def test_reference_save_is_write_only_and_marks_the_slot(scope: FakeScope) -> None:
+    """`:REFerence:SAVE <ref>` はクエリの無い書き込み専用(応答なし)。"""
+    assert scope.reference[3]["saved"] is False
+
+    assert scope.handle(":REFerence:SAVE 3") is None
+
+    assert scope.reference[3]["saved"] is True
+    assert scope.reference[1]["saved"] is False
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+    with pytest.raises(SilentTimeout):
+        scope.handle(":REFerence:SAVE? 3")
+
+
+def test_reference_reset_restores_the_vertical_defaults(scope: FakeScope) -> None:
+    """`:REFerence:RESet <ref>` は垂直スケールと位置だけを既定へ戻す。"""
+    scope.handle(":REFerence:VSCale 4,0.25")
+    scope.handle(":REFerence:VOFFset 4,2")
+    scope.handle(":REFerence:COLor 4,RED")
+
+    assert scope.handle(":REFerence:RESet 4") is None
+
+    assert scope.handle(":REFerence:VSCale? 4") == b"5.000000E-2"
+    assert scope.handle(":REFerence:VOFFset? 4") == b"0.000000E+0"
+    assert scope.handle(":REFerence:COLor? 4") == b"RED"  # 色は戻らない
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_reference_label_enable_is_global(scope: FakeScope) -> None:
+    """`:REFerence:LABel:ENABle` だけは枠引数を取らない(全枠共通)。"""
+    scope.handle(":REFerence:LABel:ENABle ON")
+
+    assert scope.handle(":REFerence:LABel:ENABle?") == b"1"
+
+    # 枠番号を付けた形は存在しない
+    with pytest.raises(SilentTimeout):
+        scope.handle(":REFerence:LABel:ENABle 1,ON")
+
+
+def test_reference_current_is_not_implemented(scope: FakeScope) -> None:
+    """`:REFerence:CURRent` はM3スコープ外 = 未実装(沈黙)。"""
+    with pytest.raises(SilentTimeout):
+        scope.handle(":REFerence:CURRent 1")

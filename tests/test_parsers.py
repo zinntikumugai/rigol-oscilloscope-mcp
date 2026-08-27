@@ -2,6 +2,7 @@
 
 import pytest
 
+from rigol_oscilloscope_mcp.driver.decode import profile_enum
 from rigol_oscilloscope_mcp.driver.parsers import (
     format_number,
     from_scpi_impedance,
@@ -458,3 +459,63 @@ def test_parse_histogram_result_non_string() -> None:
 
     assert stats == {}
     assert len(warnings) == 1
+
+
+# ---------------------------------------------------------------------------
+# driver/decode.py の列挙マッチャ(`profile_enum`)
+# ---------------------------------------------------------------------------
+#
+# SCPI規格上、機器は「短形式以上・長形式以下」の任意の略形で応答してよい。
+# 実測(MHO98 firmware 00.01.00): ガイド3.20.7 のReturn Formatは `GRE` と
+# 書いてあるが、実機は `GREE` を返す。短形/長形の2形だけを見る実装では
+# 取りこぼすため、前置一致で受理する。
+
+
+def _colors() -> object:
+    """実機と同じ綴りの色テーブル(プロファイル `reference_colors` と同一)。"""
+    _, from_scpi = profile_enum(
+        (
+            ("gray", "GRAY"),
+            ("green", "GREen"),
+            ("blue", "BLUE"),
+            ("red", "RED"),
+            ("orange", "ORANge"),
+        )
+    )
+    return from_scpi
+
+
+@pytest.mark.parametrize("raw", ["GRE", "GREE", "GREEN", " greE "])
+def test_profile_enum_accepts_any_abbreviation_between_the_two_forms(raw: str) -> None:
+    """実測: 実機は `GREE` を返す(ガイド記載の `GRE` ではない)。"""
+    assert _colors()(raw) == "green"
+
+
+@pytest.mark.parametrize("raw", ["GR", "GREENS", "PURPLE", ""])
+def test_profile_enum_rejects_tokens_outside_the_two_forms(raw: str) -> None:
+    with pytest.raises(ScopeError) as error:
+        _colors()(raw)
+    assert error.value.code is ErrorCode.SCPI_ERROR
+
+
+def test_profile_enum_prefers_an_exact_form_over_an_ambiguous_prefix() -> None:
+    """曖昧な前置一致より、短形/長形の完全一致を優先する。"""
+    _, from_scpi = profile_enum((("time", "TIMe"), ("timeout", "TIMeout")))
+
+    # `TIME` は `timeout` の前置でもあるが、`time` の長形式なので一意に読む
+    assert from_scpi("TIME") == "time"
+    assert from_scpi("TIMEO") == "timeout"  # `timeout` だけに一致する前置
+
+    # 短形式が両者で `TIM` に衝突する表。完全一致でも一意でなければ受理しない
+    with pytest.raises(ScopeError) as error:
+        from_scpi("TIM")
+    assert error.value.code is ErrorCode.SCPI_ERROR
+
+
+def test_profile_enum_rejects_an_ambiguous_prefix() -> None:
+    """複数の値に一致しうる略形は、黙って片方を選ばずSCPIエラーにする。"""
+    _, from_scpi = profile_enum((("timer", "TIMer"), ("timeout", "TIMeout")))
+
+    with pytest.raises(ScopeError) as error:
+        from_scpi("TIME")
+    assert error.value.code is ErrorCode.SCPI_ERROR

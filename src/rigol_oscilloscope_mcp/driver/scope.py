@@ -293,6 +293,31 @@ _HISTOGRAM_RANGE_PAIRS: tuple[tuple[str, str], ...] = (
 _HISTOGRAM_PREFIX = ":HISTogram"
 _HISTOGRAM_RESULT_PATH = ":STATistics:RESult?"
 
+# -- リファレンス波形(ガイド3.20章)---------------------------------------
+#
+# **他の全サブシステムと違い、枠番号はニモニックではなくコマンド引数**で渡す
+# (`:REFerence:VSCale <ref>,<scale>` / 問い合わせは `:REFerence:VSCale? <ref>`)。
+# 項目表の形式・種別の記法は `_MATH_ITEMS` と共通で、この並びが送信順。追加した
+# 種別は "rsource"(CH / MATH / D0-D15。REF自身も NONE も取らない)と "label"
+# (引用符無しで埋め込むASCII文字列)。
+_REFERENCE_PREFIX = ":REFerence"
+_REFERENCE_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "rsource"),
+    ("scale", ":VSCale", "number"),
+    ("offset_v", ":VOFFset", "number"),
+    ("color", ":COLor", ("enum", "reference_colors", "the reference waveform color")),
+    ("label", ":LABel:CONTent", "label"),
+)
+#: **全枠共通**のスイッチ(ガイド3.20.6)。枠引数を取らないため項目表を分ける
+_REFERENCE_GLOBAL_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("label_display", ":LABel:ENABle", "bool"),
+)
+#: ラベルに許す文字。値は引用符無しでコマンドへ埋め込むため、SCPIインジェクション
+#: 対策として**ホワイトリスト**で検証する(`;` はコマンドセパレータ、空白は引数の
+#: 区切りで特に危険)。ガイドは「英数字と一部記号」とだけ書き、長さ上限は記載が
+#: 無いため上限は置かない
+_REFERENCE_LABEL_RE = re.compile(r"^[A-Za-z0-9_.+-]+$")
+
 _CHANNEL_RE = re.compile(r"^(?:CH|CHAN|CHANNEL)?\s*([0-9]+)$", re.IGNORECASE)
 _MATH_SOURCE_RE = re.compile(r"^MATH\s*([0-9]+)$", re.IGNORECASE)
 _REF_SOURCE_RE = re.compile(r"^REF\s*([0-9]+)$", re.IGNORECASE)
@@ -373,6 +398,22 @@ def _math_int(value: object, key: str, low: int, high: int | None) -> str:
             {"key": key, "value": value, "min": low, "max": high},
         )
     return str(value)
+
+
+def _reference_label(value: object, key: str) -> str:
+    """リファレンスのラベル文字列を**送信前**に検証する(ガイド3.20.5)。
+
+    引用符無しでそのままコマンドへ埋め込むため、`_validate_afg_arb_file` と同じく
+    ホワイトリストで受理する(`;` によるコマンド注入と、空白による引数の取り違えを
+    送信前に潰す)。
+    """
+    if not isinstance(value, str) or not _REFERENCE_LABEL_RE.match(value):
+        raise _invalid(
+            f"{key} must be a non-empty string of letters, digits, '_', '.', "
+            f"'+' or '-' (no spaces): {value!r}",
+            {"key": key, "value": value},
+        )
+    return value
 
 
 def _optional_number(text: str) -> float | None:
@@ -1713,6 +1754,16 @@ class ScopeDriver:
                 (lambda value, key: self._math_lsource(value, key)),
                 _math_source_readback,
             )
+        if kind == "rsource":
+            return (
+                (lambda value, key: self._reference_source(value, key)),
+                _math_source_readback,
+            )
+        if kind == "label":
+            # 実測(firmware 00.01.00): `:REFerence:LABel:CONTent 1,TESTLBL` の
+            # 読み戻しは引用符無しの `TESTLBL`。つまりこの strip は**現状不要**
+            # だが、他機種・他ファームで引用符が付く可能性に対して無害なので残す
+            return _reference_label, (lambda text: text.strip().strip('"'))
         if isinstance(kind, tuple) and kind[0] == "int":
             _, low, high = kind
             return (
@@ -1728,9 +1779,17 @@ class ScopeDriver:
         channel: int,
         items: tuple[tuple[str, str, object], ...],
         values: dict,
+        argument: str | None = None,
     ) -> list[tuple[str, str, str, object]]:
-        """指定された項目だけの送信計画(検証はここで全て済ませる)。"""
+        """指定された項目だけの送信計画(検証はここで全て済ませる)。
+
+        `argument` は**枠番号をコマンド引数で取る**サブシステム(`:REFerence`)
+        のためのもの。指定すると `<接頭辞><パス> <argument>,<値>` /
+        `<接頭辞><パス>? <argument>` の形になる。
+        """
         plan: list[tuple[str, str, str, object]] = []
+        head = "" if argument is None else f"{argument},"
+        tail = "" if argument is None else f" {argument}"
         for key, path, kind in items:
             value = values.get(key)
             if value is None:
@@ -1739,8 +1798,8 @@ class ScopeDriver:
             plan.append(
                 (
                     key,
-                    f"{prefix}{path} {to_scpi(value, key)}",
-                    f"{prefix}{path}?",
+                    f"{prefix}{path} {head}{to_scpi(value, key)}",
+                    f"{prefix}{path}?{tail}",
                     from_scpi,
                 )
             )
@@ -2353,6 +2412,153 @@ class ScopeDriver:
         """
         self._require("histogram", "the histogram")
         self.session.write_checked(f"{_HISTOGRAM_PREFIX}:RESet")
+
+    # -- リファレンス波形(ガイド3.20章)------------------------------------
+
+    def _reference_slot(self, ref: object) -> int:
+        """枠番号を検証して返す。能力ゲートもここで通す(`_math_prefix` と同形)。"""
+        count = self.ref_channels
+        if count < 1:
+            raise _unsupported(
+                "this model's profile does not support reference waveforms",
+                {"capability": "ref_channels", "profile": self.profile.name},
+            )
+        if isinstance(ref, bool) or not isinstance(ref, int) or not 1 <= ref <= count:
+            raise _invalid(
+                f"reference waveform {ref!r} does not exist "
+                f"(this model has 1-{count})",
+                {"ref": ref, "ref_channels": count},
+            )
+        return ref
+
+    def _reference_source(self, value: object, key: str) -> str:
+        """`:REFerence:SOURce` のトークンを検証して送信形へ(ガイド3.20.2)。
+
+        受理するのは `D0`-`D<digital_channels-1>` / `CH1`-`CH<analog_channels>` /
+        `MATH1`-`MATH<math_channels>`。REF自身も `NONE` も値域に無い。存在検証は
+        デジタル/MATHそれぞれ既存のヘルパへ委ねる。
+
+        **ガイドのRemark「現在有効なチャンネルのみソースに選べる」は、この
+        ファームでは成り立たない**(実測 firmware 00.01.00: CH4の表示をOFFに
+        してから `:REFerence:SOURce 1,CHANnel4` を送るとエラー無しで受理され、
+        `CHAN4` が読み戻った)。したがってホスト側では表示状態を検証しない。
+        """
+        if not isinstance(value, str):
+            raise _invalid(f"{key} is not a string: {value!r}", {"key": key, "value": value})
+        token = value.strip()
+        if _DIGITAL_SOURCE_RE.match(token) is not None:
+            return self._math_lsource(token, key)
+        if _MATH_SOURCE_RE.match(token) is not None:
+            return self._cursor_source(token, key)
+        if _CHANNEL_RE.match(token) is None:
+            raise _invalid(
+                f"cannot interpret {key}: {value!r} (e.g. 'CH1', 'MATH1' or 'D0')",
+                {"key": key, "value": value},
+            )
+        return f"CHANnel{self._channel_number(token)}"
+
+    def configure_reference(
+        self,
+        ref: int,
+        *,
+        source: str | None = None,
+        scale: float | None = None,
+        offset_v: float | None = None,
+        color: str | None = None,
+        label: str | None = None,
+        label_display: bool | None = None,
+    ) -> dict:
+        """リファレンス波形の1枠を設定し、read-backした適用値を返す。
+
+        枠番号は**コマンド引数**で渡す(`:REFerence:VSCale <ref>,<scale>`、
+        問い合わせは `:REFerence:VSCale? <ref>`)。`:MATH<n>` のようにニモニックへ
+        埋め込む形ではない。送信順は SOURce → VSCale → VOFFset → COLor →
+        LABel:CONTent → LABel:ENABle。
+
+        `label_display` だけは**全枠共通のスイッチ**(ガイド3.20.6)で枠引数を
+        取らない。この呼び出しの枠だけでなく全リファレンス波形のラベル表示が
+        切り替わる。
+        """
+        number = self._reference_slot(ref)
+        values = {
+            "source": source,
+            "scale": scale,
+            "offset_v": offset_v,
+            "color": color,
+            "label": label,
+            "label_display": label_display,
+        }
+        if all(value is None for value in values.values()):
+            raise _invalid(
+                f"No item to change was specified (specify at least one of "
+                f"{' / '.join(values)})",
+                {"ref": number},
+            )
+
+        # 先に全項目を検証してから送る(1項目でも不正なら1コマンドも送らない)
+        plan = self._command_plan(
+            _REFERENCE_PREFIX, 0, _REFERENCE_ITEMS, values, argument=str(number)
+        )
+        plan += self._command_plan(
+            _REFERENCE_PREFIX, 0, _REFERENCE_GLOBAL_ITEMS, values
+        )
+
+        applied: dict[str, object] = {"ref": number}
+        for key, set_cmd, query, from_scpi in plan:
+            applied[key] = from_scpi(self.session.set_and_verify(set_cmd, query))
+        return applied
+
+    def get_reference_config(self, ref: int) -> dict:
+        """リファレンス波形1枠の現在設定を意味的なキーで返す。
+
+        `label_display` は全枠共通のスイッチなので、どの枠を読んでも同じ値になる
+        (この枠のラベルが見えるかどうかを決めるのはこの値なので、枠の設定と
+        一緒に返す)。**保存済みの波形があるかどうかを問い合わせるコマンドは
+        存在しない**ため、そこは返せない。
+
+        実測(firmware 00.01.00): 枠ごとの問い合わせは全10枠とも正常応答し、
+        エラーキューは終始 `0,"No error"` だった(沈黙も応答のずれも無し)。
+        全枠を舐める `get_reference_state` の集約読みはそのまま安全に行える。
+        """
+        number = self._reference_slot(ref)
+        config: dict[str, object] = {"ref": number}
+        for key, path, kind in _REFERENCE_ITEMS:
+            _, from_scpi = self._converter(kind, 0)
+            config[key] = from_scpi(
+                self.session.query(f"{_REFERENCE_PREFIX}{path}? {number}")
+            )
+        for key, path, kind in _REFERENCE_GLOBAL_ITEMS:
+            _, from_scpi = self._converter(kind, 0)
+            config[key] = from_scpi(self.session.query(f"{_REFERENCE_PREFIX}{path}?"))
+        return config
+
+    def save_reference(self, ref: int) -> None:
+        """現在の波形を指定枠へ保存する(ガイド3.20.8)。
+
+        **不可逆**: その枠に入っていた波形は失われ、元に戻す手段も「入っているか
+        どうか」を問い合わせる手段も機器に無い。read-backできない書き込み専用の
+        動作コマンド(run/stopと同じ扱い)。
+        """
+        self.session.write_checked(
+            f"{_REFERENCE_PREFIX}:SAVE {self._reference_slot(ref)}"
+        )
+
+    def reset_reference(self, ref: int) -> None:
+        """指定枠の垂直スケールと位置を既定へ戻す(ガイド3.20.9)。
+
+        read-backできない書き込み専用の動作コマンド。保存済みの波形自体は消えない。
+
+        **保存済み波形の無い枠では何も起きないことがある**(実測
+        firmware 00.01.00: 一度も `:REFerence:SAVE` していない枠1に
+        `VSCale 1,0.5` / `VOFFset 1,0.2` を書いてから `:RESet 1` を送ったところ、
+        エラーは積まれないまま値も 5.000000E-1 / 2.000000E-1 のままで、既定の
+        5.000000E-2 / 0.000000 には戻らなかった)。**保存の有無が条件だと確定した
+        わけではない**(観測は1件)。呼び出し側は「戻ったはず」と仮定せず、必要なら
+        `get_reference_config` で読み直すこと。
+        """
+        self.session.write_checked(
+            f"{_REFERENCE_PREFIX}:RESet {self._reference_slot(ref)}"
+        )
 
     # -- Acquisition ------------------------------------------------------
 

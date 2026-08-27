@@ -83,13 +83,37 @@ def _to_number(text: str) -> int | float:
 
 
 def _enum(pairs: tuple[tuple[str, str], ...]) -> tuple[ToScpi, FromScpi]:
-    """意味的な値 ⇔ SCPIニモニック。応答は短形式/長形式の双方を受理する。"""
+    """意味的な値 ⇔ SCPIニモニック。応答は短形式〜長形式の任意の略形を受理する。
+
+    SCPI規格上、機器は短形式以上・長形式以下の**任意の略形**で応答してよく、
+    ガイドのReturn Format欄はあてにならない。実測(MHO98 firmware 00.01.00):
+    ガイド3.20.7 は `:REFerence:COLor?` の緑を `GRE` と書くが、実機が返すのは
+    `GREE`。工場出荷状態の枠4・枠9が緑なので、2形しか見ない実装では未操作の
+    実機で `get_reference_state` が丸ごと落ちる。
+
+    曖昧さの扱い(この表は decode / AFG / MATH / cursor / counter / meter /
+    histogram / reference の全列挙が通る):
+
+    1. 短形式・長形式との**完全一致**を最優先する(規範の2形は必ず一意に読む)
+    2. 完全一致が無ければ前置一致で探し、候補が1個のときだけ受理する
+    3. 候補が2個以上なら黙って片方を選ばず `SCPI_ERROR` にする — 読み値は
+       そのまま書き戻される値なので、推測で確定させると誤設定になる
+
+    現行の全テーブルを走査した限り曖昧になる組は無い(`math_fft_search_orders`
+    の `AMPorder` / `FREQorder` も `counter_modes` も接頭辞が重ならない)。3.は
+    将来テーブルが増えたときのための安全側の既定であり、通常は発火しない。
+    """
     to_token = dict(pairs)
-    from_token: dict[str, str] = {}
+    # 規範の2形は「トークン → 意味的な値の集合」で持つ。別々の値の短形/長形が
+    # 衝突する表(`TIMe` と `TIMeout` は短形がどちらも `TIM`)を、後勝ちで黙って
+    # 潰さないため
+    from_token: dict[str, set[str]] = {}
+    abbreviations: list[tuple[str, int, str]] = []  # (長形式, 短形式長, 意味的な値)
     for semantic, spec in pairs:
         short, long = _forms(spec)
-        from_token[short] = semantic
-        from_token[long] = semantic
+        from_token.setdefault(short, set()).add(semantic)
+        from_token.setdefault(long, set()).add(semantic)
+        abbreviations.append((long, len(short), semantic))
 
     def to_scpi(value: object, key: str) -> str:
         token = value.strip().lower() if isinstance(value, str) else value
@@ -102,9 +126,14 @@ def _enum(pairs: tuple[tuple[str, str], ...]) -> tuple[ToScpi, FromScpi]:
 
     def from_scpi(text: str) -> str:
         token = text.strip().upper()
-        if token not in from_token:
+        matched = from_token.get(token) or {
+            value
+            for long, width, value in abbreviations
+            if len(token) >= width and long.startswith(token)
+        }
+        if len(matched) != 1:
             raise _scpi_error(text)
-        return from_token[token]
+        return matched.pop()
 
     return to_scpi, from_scpi
 

@@ -687,6 +687,87 @@ class ControlService:
             "changed": before != after,
         }
 
+    # -- リファレンス波形(Phase M3)---------------------------------------
+
+    def configure_reference(
+        self,
+        driver: ScopeDriver,
+        ref: int = 1,
+        *,
+        source: str | None = None,
+        scale: float | None = None,
+        offset_v: float | None = None,
+        color: str | None = None,
+        label: str | None = None,
+        label_display: bool | None = None,
+        save: bool | None = None,
+        reset: bool | None = None,
+    ) -> dict:
+        """リファレンス波形を設定する(SAFE_WRITE)。未指定の項目は変更しない。
+
+        承認を要求しない根拠は configure_math / configure_cursor と同じ(表示・
+        解析層のみで、取り込み設定にも出力にも触れない)。
+
+        設定ではない一発動作が2つあり、送る位置が意味的に決まっている:
+
+        - `reset`(`:REFerence:RESet`)は垂直スケール/位置を既定へ戻す**設定**
+          なので、**設定より前**に送る(後に送ると同じ呼び出しの scale /
+          offset_v を捨ててしまう)
+        - `save`(`:REFerence:SAVE`)は「今の波形をこの枠へ焼く」操作なので、
+          ソース選択を含む設定を送り終えた**最後**に送る。**不可逆**で、その枠に
+          入っていた波形は戻せない(枠にデータがあるかを問い合わせる手段も無い)
+
+        設定を1つも伴わない、動作だけの呼び出しも受け付ける。
+        """
+        items = {
+            "source": source,
+            "scale": scale,
+            "offset_v": offset_v,
+            "color": color,
+            "label": label,
+            "label_display": label_display,
+            "save": save,
+            "reset": reset,
+        }
+        requested = _specified(items)
+        if not requested:
+            raise _invalid(
+                "No item to change was specified "
+                f"(specify at least one of {' / '.join(items)})",
+                {"ref": ref},
+            )
+
+        actions = ("save", "reset")
+        settings = {
+            key: value for key, value in requested.items() if key not in actions
+        }
+        args = {"ref": ref, **requested}
+        with self._audited("configure_reference", args) as record:
+            before = driver.get_reference_config(ref)
+            record.before(before)
+            if reset:
+                driver.reset_reference(ref)
+            # 設定が空(動作のみ)なら設定コマンドは1件も送らない
+            applied = (
+                driver.configure_reference(ref, **settings)
+                if settings
+                else {"ref": ref}
+            )
+            if reset:
+                applied["reset"] = True
+            if save:
+                driver.save_reference(ref)
+                applied["save"] = True
+            after = driver.get_reference_config(ref)
+            record.after(after)
+
+        return {
+            "ref": after["ref"],
+            "requested": requested,
+            "applied": applied,
+            "changed": before != after,
+        }
+
     # -- Acquisition ------------------------------------------------------
 
     def run(self, driver: ScopeDriver) -> dict:

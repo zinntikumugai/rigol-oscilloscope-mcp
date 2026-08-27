@@ -1976,6 +1976,126 @@ def test_configure_histogram_error_is_audited(
 
 
 # ==========================================================================
+# configure_reference(Phase M3)
+# ==========================================================================
+
+
+def ref_writes(scope: FakeScope) -> list[str]:
+    """リファレンスへの書き込みのみ。
+
+    このサブシステムの問い合わせは `:REFerence:VSCale? 1` と**末尾が `?` では
+    ない**(枠番号が引数として後ろに付く)ため、共通の `writes` は使えない。
+    """
+    return [c for c in scope.command_log if c.startswith(":REFerence") and "?" not in c]
+
+
+def test_configure_reference_returns_requested_and_applied(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    result = service.configure_reference(
+        driver, 2, source="CH2", scale=0.5, color="blue"
+    )
+
+    assert result["ref"] == 2
+    assert result["requested"] == {"source": "CH2", "scale": 0.5, "color": "blue"}
+    assert result["applied"] == {
+        "ref": 2,
+        "source": "CH2",
+        "scale": 0.5,
+        "color": "blue",
+    }
+    assert result["changed"] is True
+
+
+def test_configure_reference_sends_the_reset_before_the_settings(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """RESet は垂直スケール/位置を既定へ戻す**設定**なので、設定より前に送る。
+
+    後に送ると同じ呼び出しの scale / offset_v を捨ててしまう。
+    """
+    result = service.configure_reference(driver, 1, scale=0.5, reset=True)
+
+    assert ref_writes(scope) == [":REFerence:RESet 1", ":REFerence:VSCale 1,0.5"]
+    assert result["applied"]["reset"] is True
+    assert result["applied"]["scale"] == 0.5
+
+
+def test_configure_reference_sends_the_save_last(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """SAVE は「今の波形をこの枠へ焼く」操作なので、ソース選択の後に送る。"""
+    result = service.configure_reference(driver, 3, source="CH2", save=True)
+
+    assert ref_writes(scope) == [
+        ":REFerence:SOURce 3,CHANnel2",
+        ":REFerence:SAVE 3",
+    ]
+    assert result["applied"]["save"] is True
+    assert scope.reference[3]["saved"] is True
+
+
+def test_configure_reference_accepts_the_actions_alone(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """設定を1つも伴わない保存/リセットだけの呼び出しも通す。"""
+    result = service.configure_reference(driver, 4, save=True, reset=True)
+
+    assert ref_writes(scope) == [":REFerence:RESet 4", ":REFerence:SAVE 4"]
+    assert result["applied"] == {"ref": 4, "reset": True, "save": True}
+
+
+def test_configure_reference_label_display_is_reported_as_a_change(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    """全枠共通のスイッチも `changed` の対象(枠の状態と一緒に読んでいる)。"""
+    assert service.configure_reference(driver, 1, label_display=True)["changed"] is True
+    assert service.configure_reference(driver, 1, label_display=True)["changed"] is False
+
+
+def test_configure_reference_rejects_all_none(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        service.configure_reference(driver, 1)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_reference_rejects_an_unknown_slot_before_sending(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        service.configure_reference(driver, 11, save=True)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_reference_is_audited_with_before_and_after(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    service.configure_reference(driver, 1, color="red", save=True)
+
+    row = operations(audit_path)[0]
+    assert row["tool"] == "configure_reference"
+    assert row["result"] == "success"
+    assert row["requested"] == {"ref": 1, "color": "red", "save": True}
+    assert row["before"]["color"] == "orange"  # 実測の工場出荷値(枠1)
+    assert row["after"]["color"] == "red"
+
+
+def test_configure_reference_needs_no_confirmation(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    """SAVE は不可逆だが表示・解析層のみ(信号は外へ出ない)。承認は求めない。"""
+    service.configure_reference(driver, 1, save=True)
+
+    assert confirms(audit_path) == []
+
+
+# ==========================================================================
 # パッケージ公開
 # ==========================================================================
 

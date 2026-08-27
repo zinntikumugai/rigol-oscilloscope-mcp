@@ -97,7 +97,19 @@ TOOL_CLASSES: dict[str, OperationClass] = {
     "get_meter_value": OperationClass.READ_ONLY,
     "configure_histogram": OperationClass.SAFE_WRITE,
     "get_histogram_result": OperationClass.READ_ONLY,
-    # 10. Raw SCPI(開発用・デフォルト無効)
+    # 10. リファレンス波形(tools.md、Phase M3)
+    # configure_reference も configure_math / configure_cursor と同じ根拠で
+    # SAFE_WRITE: 画面のリファレンストレース(表示・解析層)だけを変える操作で、
+    # 取り込み設定にも出力にも触れない(信号は1mVも外へ出ない)。
+    # **ただし `save=True` は不可逆**で、その枠に入っていた波形は失われる
+    # (枠にデータがあるかを問い合わせるコマンドが機器に無く、undoも無い)。
+    # それでも昇格させないのは、失われるのが機器内の表示用データだけで、
+    # 被測定回路にも利用者の取り込み設定にも影響しないため —— 同じく利用者に
+    # 見えている状態を壊す clear_measurements と同じ扱いとする。不可逆である
+    # ことはTool説明文で呼び出し側へ明示する(server.py)。
+    "configure_reference": OperationClass.SAFE_WRITE,
+    "get_reference_state": OperationClass.READ_ONLY,
+    # 11. Raw SCPI(開発用・デフォルト無効)
     "raw_scpi": OperationClass.DANGEROUS_WRITE,
 }
 
