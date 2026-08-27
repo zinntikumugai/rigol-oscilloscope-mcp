@@ -21,7 +21,7 @@ RIGOL_TEST_ADDRESS=<実機IP> RIGOL_TEST_ALLOW_WRITE=1 uv run pytest -m device_w
 
 **問い:** MATHトレースが無効(表示OFF)の状態で `:MATH<n>:...?` 系のクエリを送ると、SCPIサーバーが沈黙するか。
 
-`:BUS` と同様に「無効時のクエリは送らない」設計へ倒す必要があるかどうかが決まる。実装は `get_math_state` が `:MATH<n>:DISPlay?` を**最初に**読む構造にしてあるので、沈黙するなら同点を短絡点にする局所修正で済む。
+`:BUS` と同様に「無効時のクエリは送らない」設計へ倒す必要があるかどうかが決まる。実装は `get_math_state` が `:MATH<n>:DISPlay?` を**最初に**読む構造にしてあるので、沈黙するならこの読み取りを短絡点にする局所修正で済む。
 
 手順: 本体で MATH1〜4 の表示を全てOFF → `:MATH1:DISPlay?` を単発で送る → 応答とエラーキューを記録 → 応答があれば `get_math_state()`(全チャンネル)を実行。
 
