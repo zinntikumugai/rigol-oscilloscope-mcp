@@ -137,6 +137,26 @@ HISTOGRAM_RIGHT_S = 3e-4
 HISTOGRAM_BOTTOM_V = -1.0
 HISTOGRAM_TOP_V = 1.0
 
+#: リファレンス波形(3.20)。**復元可能な設定だけ**を触る枠と値
+REF_SLOT = 10
+REF_SOURCE = "CH2"
+REF_SCALE_V_PER_DIV = 0.5
+REF_OFFSET_V = -1.0
+REF_COLOR = "orange"
+REF_LABEL = "m3_probe"
+
+#: `:REFerence:SAVE` は**不可逆**(枠に入っていた波形は戻せず、「入っているか」を
+#: 問い合わせるコマンドも無い)。実機は利用者の作業機なので、既定では実行せず
+#: 専用の環境変数を明示したときだけ走らせる(AFG出力ONと同じ二重ゲートの考え方)
+REF_SAVE_ENV = "RIGOL_TEST_ALLOW_REF_SAVE"
+requires_ref_save = pytest.mark.skipif(
+    os.environ.get(REF_SAVE_ENV) != "1",
+    reason=(
+        f"{REF_SAVE_ENV}=1 が未設定"
+        "(リファレンス保存は不可逆 = 明示ゲートの下でのみ行う)"
+    ),
+)
+
 #: `:SINGle` 直後に許容するトリガ状態(実測: WAIT。すぐトリガすると TD を経て STOP)
 SINGLE_STATUSES = ("WAIT", "TD")
 
@@ -1546,6 +1566,130 @@ def test_configure_histogram_round_trip(
     assert stats.get("sum_unit", "hits") == "hits"
 
 
+# -- 11d. リファレンス波形(表示・解析層のみ。保存は既定で実行しない)--------
+
+
+@pytest.fixture
+def reference_before(
+    request: pytest.FixtureRequest, driver: ScopeDriver
+) -> Iterator[dict]:
+    """対象枠の現在設定を控え、teardownで必ず書き戻す。
+
+    `label_display` は**全枠共通のスイッチ**なので、書き戻しも全枠に効く
+    (枠ごとの値ではないため、他の枠を巻き込む心配はない)。保存済みの波形
+    そのものは触らない(このfixtureが復元できるのは設定だけ)。
+
+    なお `source` の書き戻しは、元のソースが**現在無効なチャンネル**だと機器に
+    拒否されうる(ガイド3.20.2 のRemarks)。その場合は復元失敗として大きな声で
+    落ちる — 結合制約の実機挙動はまさにここで確かめたい未検証事項。
+    """
+    before = driver.get_reference_config(REF_SLOT)
+    tag = request.node.name
+    _report(f"[before:{tag}] reference={before}")
+    try:
+        yield before
+    finally:
+        restore = {k: v for k, v in before.items() if k != "ref"}
+        failure: Exception | None = None
+        try:
+            driver.configure_reference(REF_SLOT, **restore)
+        except Exception as exc:  # 復元は最後まで試みる
+            failure = exc
+
+        after = driver.get_reference_config(REF_SLOT)
+        drift = _diff(before, after)
+        _report(f"[restore:{tag}] reference 復元後={after}")
+        if drift:
+            _report(f"[restore:{tag}] **復元漏れ**: {drift}")
+        if failure is not None:
+            _report(f"[restore:{tag}] **復元コマンド失敗**: {failure!r}")
+        assert failure is None, f"リファレンスの復元に失敗: {failure!r}"
+        assert not drift, f"リファレンスが復元されていません: {drift}"
+
+
+def test_configure_reference_round_trip(
+    control: ControlService, driver: ScopeDriver, reference_before: dict
+) -> None:
+    """復元可能な設定だけを書いて read-back する(**保存は行わない**)。
+
+    このサブシステムだけは枠番号を**コマンド引数**で渡す
+    (`:REFerence:VSCale 10,0.5` / `:REFerence:VSCale? 10`)。実機がこの形を
+    受理することの確認が主眼。
+
+    ガイド3.20.1のRemarksは「有効なチャンネルしか選べない」と書くが、**実機では
+    成立しない**(CH4を表示OFFにしても `:REFerence:SOURce 1,CHANnel4` は
+    エラーなく通り `CHAN4` を返す。mho98-m3.md)。よってチャンネルの表示状態は
+    ここでは操作しない。
+    """
+    result = control.configure_reference(
+        driver,
+        REF_SLOT,
+        source=REF_SOURCE,
+        scale=REF_SCALE_V_PER_DIV,
+        offset_v=REF_OFFSET_V,
+        color=REF_COLOR,
+        label=REF_LABEL,
+    )
+    applied = result["applied"]
+    _report(f"[reference] applied={applied} changed={result['changed']}")
+
+    assert result["ref"] == REF_SLOT
+    assert applied["source"] == REF_SOURCE
+    assert applied["color"] == REF_COLOR
+    assert applied["label"] == REF_LABEL
+    for key, expected in (
+        ("scale", REF_SCALE_V_PER_DIV),
+        ("offset_v", REF_OFFSET_V),
+    ):
+        assert applied[key] == pytest.approx(expected, rel=1e-3, abs=1e-9), key
+
+
+def test_configure_reference_reset_runs_before_the_settings(
+    control: ControlService, driver: ScopeDriver, reference_before: dict
+) -> None:
+    """`reset=True` と垂直設定を同時に指定したとき、設定側が残ること。
+
+    `:REFerence:RESet` は垂直スケール/位置を既定へ戻すため、同じ呼び出しの
+    scale / offset_v より**前**に送っている。順序が逆なら設定が捨てられる。
+    保存済みの波形は消えない(消えるのは垂直の見え方だけ)。
+    """
+    result = control.configure_reference(
+        driver,
+        REF_SLOT,
+        reset=True,
+        scale=REF_SCALE_V_PER_DIV,
+        offset_v=REF_OFFSET_V,
+    )
+    applied = result["applied"]
+    _report(f"[reference] reset+設定 applied={applied}")
+
+    assert applied["reset"] is True
+    assert applied["scale"] == pytest.approx(REF_SCALE_V_PER_DIV, rel=1e-3, abs=1e-9)
+    assert applied["offset_v"] == pytest.approx(REF_OFFSET_V, rel=1e-3, abs=1e-9)
+
+
+@requires_ref_save
+def test_save_reference_overwrites_the_slot(
+    control: ControlService, driver: ScopeDriver, reference_before: dict
+) -> None:
+    """**枠の中身を上書きする不可逆テスト**。三重ゲートの下でのみ走る。
+
+    `RIGOL_TEST_ADDRESS` + `RIGOL_TEST_ALLOW_WRITE=1` に加えて
+    `RIGOL_TEST_ALLOW_REF_SAVE=1` が要る。**この枠に入っていた波形は元に戻せ
+    ない**(機器に undo も「保存済みか」の照会も無い)。fixtureが復元するのは
+    設定だけで、波形の中身は復元できないことを承知の上で実行すること。
+    """
+    # ソースに有効/無効の前提は無い(mho98-m3.md。ガイドのRemarksは実機で不成立)
+    result = control.configure_reference(
+        driver, REF_SLOT, source=REF_SOURCE, save=True
+    )
+    _report(f"[reference] save slot={REF_SLOT} applied={result['applied']}")
+
+    assert result["applied"]["save"] is True
+    # 保存自体は read-back できない(機器にクエリが無い)。エラーキューが唯一の判定
+    assert driver.session.drain_error_queue() == []
+
+
 # -- 12. 監査ログ(最後に実行し、それまでの全操作を検証)--------------------
 
 
@@ -1580,5 +1724,6 @@ def test_audit_log_records_every_write(audit_path: Path) -> None:
         "configure_decode",
         "configure_afg",
         "configure_math",
+        "configure_reference",
     } <= set(tools)
     assert {"run", "stop", "single"} <= set(tools)

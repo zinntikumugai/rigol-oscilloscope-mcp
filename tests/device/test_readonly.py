@@ -661,3 +661,45 @@ def test_histogram_config_and_result(driver: ScopeDriver) -> None:
     drained = driver.session.drain_error_queue()
     _report(f"[histogram] 読み取り後のエラーキュー: {drained}")
     assert drained == []
+
+
+# -- 13. リファレンス波形(read-only。設定も保存も一切しない)---------------
+
+#: 1枠あたりで必ず返るキー
+REFERENCE_KEYS = frozenset(
+    {"ref", "source", "scale", "offset_v", "color", "label", "label_display"}
+)
+
+
+def test_reference_state_all_slots(driver: ScopeDriver) -> None:
+    """Ref1〜Ref10 の設定を読む(保存済みかどうかに関わらず全枠)。
+
+    このサブシステムだけは枠番号を**コマンド引数**で渡す
+    (`:REFerence:VSCale? 3`)。未使用の枠を読んでもSCPIサーバーが沈黙しない
+    ことの確認も兼ねる(未検証の形なので、ここが最初の実機接触になる)。
+
+    `label_display` は全枠共通のスイッチなので、全枠で同じ値になること。
+    """
+    assert driver.ref_channels == 10
+
+    displays: set[bool] = set()
+    for number in range(1, driver.ref_channels + 1):
+        config = driver.get_reference_config(number)
+        _report(f"[reference] ref{number}={config}")
+
+        assert config["ref"] == number
+        assert REFERENCE_KEYS == set(config)
+        assert isinstance(config["source"], str)
+        assert isinstance(config["scale"], float)
+        assert isinstance(config["offset_v"], float)
+        assert config["color"] in ("gray", "green", "blue", "red", "orange")
+        assert isinstance(config["label"], str)
+        assert isinstance(config["label_display"], bool)
+        displays.add(config["label_display"])
+
+    assert len(displays) == 1, "label_display は全枠共通のはず"
+
+    # 読み取りだけでエラーキューが汚れていないこと
+    drained = driver.session.drain_error_queue()
+    _report(f"[reference] 読み取り後のエラーキュー: {drained}")
+    assert drained == []

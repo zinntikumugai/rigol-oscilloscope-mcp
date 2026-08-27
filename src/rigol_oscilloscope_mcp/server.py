@@ -1041,6 +1041,102 @@ def create_server(
         """
         return manager.require_scope().get_histogram_result()
 
+    # -- リファレンス波形(tools.md、Phase M3)------------------------------
+
+    @_register
+    def configure_reference(
+        ref: int = 1,
+        source: str | None = None,
+        scale: float | None = None,
+        offset_v: float | None = None,
+        color: str | None = None,
+        label: str | None = None,
+        label_display: bool | None = None,
+        save: bool | None = None,
+        reset: bool | None = None,
+    ) -> dict:
+        """Configure a reference waveform slot. Omitted items are left unchanged.
+
+        A reference waveform is a copy of a trace stored inside the instrument
+        and drawn over the live one, so a signal can be compared against a
+        known-good capture. This only changes what the instrument displays and
+        computes: the acquisition is untouched and no output is driven. ref is
+        the slot 1-10 (see get_capabilities ref_channels). Read the result back
+        with get_reference_state.
+
+        source is what the slot shows and saves: "CH1"-"CH4", a math trace
+        "MATH1"-"MATH4", or a digital channel "D0"-"D15". The instrument only
+        accepts a channel that is currently turned on, and rejects the write
+        otherwise, so display the channel first.
+
+        scale is the vertical scale per division and offset_v the vertical
+        offset in volts, both of the stored trace. color is gray / green /
+        blue / red / orange. label is the text drawn next to the trace
+        (letters, digits, '_', '.', '+' and '-'; no spaces).
+
+        label_display turns the labels on or off for EVERY reference waveform
+        at once - it is a single global switch on the instrument, not a
+        per-slot setting, so it is reported identically for every slot.
+
+        save=true stores the current waveform of the source into this slot. It
+        is sent last, after the settings in the same call, so the source is
+        already selected. IT IS IRREVERSIBLE: whatever that slot held before is
+        overwritten and lost, there is no undo, and there is no way to check
+        beforehand whether the slot already holds a capture. Ask the human user
+        before overwriting a slot they may still need.
+
+        reset=true restores the slot's default vertical scale and offset. It is
+        sent first, before the settings in the same call, so scale and offset_v
+        given together with it survive. It does not erase a stored waveform.
+
+        Specify at least one item to change. The device may snap values, so
+        trust applied (the read-back value), not requested.
+
+        Reference waveforms cannot be downloaded: :WAVeform:SOURce does not
+        accept them. To compare numerically on the host, subtract with
+        configure_math(operator="subtract", source1="CH1", source2="REF1") and
+        fetch the result with capture_waveform(channel="MATH1").
+        """
+        return control.configure_reference(
+            manager.require_scope(),
+            ref,
+            source=source,
+            scale=scale,
+            offset_v=offset_v,
+            color=color,
+            label=label,
+            label_display=label_display,
+            save=save,
+            reset=reset,
+        )
+
+    @_register
+    def get_reference_state(ref: int | None = None) -> dict:
+        """Return the reference waveform settings (source, scale, offset, color, label).
+
+        With ref given (1-10), that slot's settings are returned flat. With ref
+        omitted, every slot is returned under channels, keyed by the slot
+        number as a string: {"channels": {"1": {...}, ..., "10": {...}}}.
+
+        label_display is the instrument's single global label switch, so it has
+        the same value in every slot. Whether a slot actually holds a stored
+        waveform cannot be read: the instrument has no query for it.
+
+        This is read-only and never changes the display. It costs six queries
+        per slot.
+        """
+        driver = manager.require_scope()
+        if ref is not None:
+            return driver.get_reference_config(ref)
+        # 非対応機では ref_channels が 0。1枠だけ問い合わせて
+        # UNSUPPORTED_FEATURE を返させる(空dictを「正常」に見せない)
+        count = driver.ref_channels or 1
+        return {
+            "channels": {
+                str(n): driver.get_reference_config(n) for n in range(1, count + 1)
+            }
+        }
+
     # -- Acquisition(tools.md 4章)-----------------------------------------
 
     @_register

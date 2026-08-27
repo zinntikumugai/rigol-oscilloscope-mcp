@@ -3267,3 +3267,213 @@ def test_histogram_unsupported_profile_sends_nothing(
 
         assert exc.value.code == ErrorCode.UNSUPPORTED_FEATURE
         assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# リファレンス波形(:REFerence / ガイド3.20)
+# --------------------------------------------------------------------------
+
+
+def test_configure_reference_sends_the_slot_as_a_command_argument(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """枠番号はニモニックではなく**引数**(`<ref>,<値>` / 問い合わせは `? <ref>`)。"""
+    applied = driver.configure_reference(
+        2, source="CH3", scale=0.5, offset_v=-1.5, color="green", label="probe_a"
+    )
+
+    assert writes(scope, ":REF") == [
+        ":REFerence:SOURce 2,CHANnel3",
+        ":REFerence:VSCale 2,0.5",
+        ":REFerence:VOFFset 2,-1.5",
+        ":REFerence:COLor 2,GREen",
+        ":REFerence:LABel:CONTent 2,probe_a",
+    ]
+    assert [c for c in scope.command_log if c.startswith(":REFerence") and "?" in c] == [
+        ":REFerence:SOURce? 2",
+        ":REFerence:VSCale? 2",
+        ":REFerence:VOFFset? 2",
+        ":REFerence:COLor? 2",
+        ":REFerence:LABel:CONTent? 2",
+    ]
+    assert applied == {
+        "ref": 2,
+        "source": "CH3",
+        "scale": 0.5,
+        "offset_v": -1.5,
+        "color": "green",
+        "label": "probe_a",
+    }
+
+
+def test_configure_reference_label_display_takes_no_slot(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """ラベル表示は全枠共通のスイッチ(ガイド3.20.6)。枠引数を付けてはならない。"""
+    applied = driver.configure_reference(3, label_display=True)
+
+    assert writes(scope, ":REF") == [":REFerence:LABel:ENABle ON"]
+    assert applied == {"ref": 3, "label_display": True}
+
+
+def test_configure_reference_accepts_digital_and_math_sources(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    assert driver.configure_reference(1, source="D7")["source"] == "D7"
+    assert driver.configure_reference(1, source="MATH2")["source"] == "MATH2"
+    assert writes(scope, ":REF") == [
+        ":REFerence:SOURce 1,D7",
+        ":REFerence:SOURce 1,MATH2",
+    ]
+
+
+def test_configure_reference_rejects_bad_sources(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """値域は CH / MATH / D0-D15 のみ(REF自身も NONE も取らない)。"""
+    for source in ("REF1", "NONE", "CH9", "MATH9", "D16", 1):
+        with pytest.raises(ScopeError) as exc:
+            driver.configure_reference(1, source=source)
+
+        assert exc.value.code == ErrorCode.INVALID_PARAMETER, source
+        assert scope.command_log == [], source
+
+
+def test_configure_reference_rejects_a_slot_out_of_range(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    for ref in (0, 11, "1", True):
+        with pytest.raises(ScopeError) as exc:
+            driver.configure_reference(ref, scale=1.0)
+
+        assert exc.value.code == ErrorCode.INVALID_PARAMETER, ref
+        assert scope.command_log == [], ref
+
+
+def test_configure_reference_rejects_an_unknown_color(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as exc:
+        driver.configure_reference(1, color="purple")
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_reference_rejects_an_unsafe_label(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """ラベルは引用符無しで埋め込むため、`;`(SCPIの区切り)や空白は拒否する。"""
+    for label in ("a;b", "a b", "", 'a"b', 1):
+        with pytest.raises(ScopeError) as exc:
+            driver.configure_reference(1, label=label)
+
+        assert exc.value.code == ErrorCode.INVALID_PARAMETER, label
+        assert scope.command_log == [], label
+
+
+def test_configure_reference_without_any_item_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as exc:
+        driver.configure_reference(1)
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_reference_unsupported_profile_sends_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as exc:
+        generic_driver.configure_reference(1, scale=1.0)
+
+    assert exc.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_get_reference_config_returns_semantic_values(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.reference[5]["source"] = "MATH3"
+    scope.reference[5]["vscale"] = 0.2
+    scope.reference[5]["color"] = "ORAN"
+    scope.reference_global["label_display"] = True
+
+    config = driver.get_reference_config(5)
+
+    assert config == {
+        "ref": 5,
+        "source": "MATH3",
+        "scale": 0.2,
+        "offset_v": 0.0,
+        "color": "orange",
+        "label": "REF5",
+        "label_display": True,
+    }
+
+
+def test_get_reference_config_accepts_the_device_color_abbreviation(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """実測: 実機は緑を `GREE` で返す(ガイド3.20.7 のReturn Formatは `GRE`)。
+
+    工場出荷状態の枠4・枠9が緑なので、これを取りこぼすと未操作の実機で
+    `get_reference_state` が丸ごと落ちる。
+    """
+    scope.reference[4]["color"] = "GREE"
+
+    assert driver.get_reference_config(4)["color"] == "green"
+
+
+def test_get_reference_config_rejects_an_unknown_slot(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as exc:
+        driver.get_reference_config(11)
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_save_reference_sends_the_action_command(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`:REFerence:SAVE <ref>` は引数1つ・read-back不能の書き込み専用命令。"""
+    driver.save_reference(3)
+
+    assert writes(scope, ":REF") == [":REFerence:SAVE 3"]
+    assert scope.reference[3]["saved"] is True
+
+
+def test_reset_reference_sends_the_action_command(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.reference[4]["vscale"] = 0.25
+
+    driver.reset_reference(4)
+
+    assert writes(scope, ":REF") == [":REFerence:RESet 4"]
+    assert scope.reference[4]["vscale"] == 0.05
+
+
+def test_reference_actions_reject_an_unknown_slot(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    for action in (driver.save_reference, driver.reset_reference):
+        with pytest.raises(ScopeError) as exc:
+            action(11)
+
+        assert exc.value.code == ErrorCode.INVALID_PARAMETER
+        assert scope.command_log == []
+
+
+def test_reference_actions_unsupported_profile_send_nothing(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    for action in (generic_driver.save_reference, generic_driver.reset_reference):
+        with pytest.raises(ScopeError) as exc:
+            action(1)
+
+        assert exc.value.code == ErrorCode.UNSUPPORTED_FEATURE
+        assert scope.command_log == []

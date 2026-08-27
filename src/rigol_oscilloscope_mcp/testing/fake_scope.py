@@ -534,6 +534,55 @@ _HISTOGRAM_RESULT_ITEMS: tuple[tuple[str, str], ...] = (
 )
 _HISTOGRAM_HITS = (374, 38)
 
+# ---------------------------------------------------------------------------
+# リファレンス波形(:REFerence / ガイド3.20章)
+# ---------------------------------------------------------------------------
+#
+# **他のサブシステムと違い、枠番号はニモニックではなくコマンド引数**で渡す
+# (`:REFerence:VSCale <ref>,<scale>` / 問い合わせは `:REFerence:VSCale? <ref>`)。
+# そのため属性表は共通の形((内部キー, ニモニック仕様, 型, 既定値))のままで、
+# 展開だけ `_reference_entries` が専用に行う。
+
+#: リファレンス波形の枠数(ガイド3.20: <ref> = 1〜10)
+REF_COUNT = 10
+
+#: リファレンスのソース(ガイド3.20.2)。REF は自身を取れない
+_REFERENCE_SOURCES = (
+    tuple(f"D{n}" for n in range(16))
+    + tuple(f"CHANnel{n}" for n in range(1, 5))
+    + tuple(f"MATH{n}" for n in range(1, MATH_COUNT + 1))
+)
+#: 表示色(ガイド3.20.7)。**緑の綴りだけガイドと実機が食い違う**: ガイドの
+#: Return Format欄は `GRE` だが、実機(firmware 00.01.00)が返すのは `GREE`。
+#: 綴りを `GREEn` にしておくと短形が `GREE` になり、`GREen` / `GREEN` を書いても
+#: 実機と同じ `GREE` を返す。他の4色は実機の返却値と短形が一致する
+_REFERENCE_COLORS = ("GRAY", "GREEn", "BLUE", "RED", "ORANge")
+
+#: 工場出荷時の色は枠1から ORAN / RED / BLUE / GREE / GRAY の5色を巡回する
+#: (枠nは (n-1) mod 5 番目。枠4と枠9が緑 = `GREE`)。実測値
+_REFERENCE_COLOR_CYCLE = ("ORAN", "RED", "BLUE", "GREE", "GRAY")
+
+#: 枠ごとの属性。既定値は**実測**(firmware 00.01.00 の工場出荷状態)であり、
+#: ガイドのDefault欄ではない(VSCale / VOFFset の同欄は設定依存の動的値、
+#: COLor と LABel:CONTent には同欄自体が無い)。色とラベルは枠ごとに違うので
+#: ここの値は代表値として置き、`__init__` が枠ごとに上書きする
+_REFERENCE_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("source", "SOURce", _REFERENCE_SOURCES, "CHAN1"),
+    ("vscale", "VSCale", "nr3", 0.05),
+    ("voffset", "VOFFset", "nr3", 0.0),
+    ("color", "COLor", _REFERENCE_COLORS, _REFERENCE_COLOR_CYCLE[0]),
+    ("label", "LABel:CONTent", "str", ""),
+)
+#: `:REFerence:RESet <ref>` が既定へ戻す項目(ガイド3.20.9: 垂直スケールと位置)
+_REFERENCE_RESET_KEYS = ("vscale", "voffset")
+
+#: 全枠共通の属性(枠引数を取らない。ガイド3.20.6)
+_REFERENCE_GLOBAL_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("label_display", "LABel:ENABle", "bool", False),
+)
+
+_REF_SLOT = r"(10|[1-9])"
+
 
 class FakeScope:
     """MHO98方言のフェイク機器(SCPIコマンド1件単位で応答する)。"""
@@ -618,6 +667,21 @@ class FakeScope:
         self.dvm: dict = {key: default for key, _, _, default in _DVM_PROPS}
         self.histogram: dict = {key: default for key, _, _, default in _HISTOGRAM_PROPS}
         self.histogram["hits"], self.histogram["peak_hits"] = _HISTOGRAM_HITS
+        # リファレンス波形(10枠、3.20)。`saved` は `:REFerence:SAVE` の観測点で、
+        # 機器側に対応するクエリは無い(保存済みかどうかは照会できない)
+        self.reference: dict[int, dict] = {
+            n: {
+                **{key: default for key, _, _, default in _REFERENCE_PROPS},
+                "color": _REFERENCE_COLOR_CYCLE[(n - 1) % len(_REFERENCE_COLOR_CYCLE)],
+                "label": f"REF{n}",
+                "saved": False,
+            }
+            for n in range(1, REF_COUNT + 1)
+        }
+        #: ラベル表示は全枠共通(枠引数を取らない)ので枠の外に持つ
+        self.reference_global: dict = {
+            key: default for key, _, _, default in _REFERENCE_GLOBAL_PROPS
+        }
         # Resultビューの有効化済み測定項目(:MEASure:ITEM? でも追加される — issue #16)
         self.measurement_items: list[str] = []
         self.timebase: dict[str, float] = {"scale": 2.0e-4, "offset": 0.0}
@@ -866,6 +930,7 @@ class FakeScope:
         entries += self._cursor_entries()
         entries += self._meter_entries()
         entries += self._histogram_entries()
+        entries += self._reference_entries()
         return tuple(
             (re.compile(pattern, re.IGNORECASE), handler)
             for pattern, handler in entries
@@ -1178,6 +1243,51 @@ class FakeScope:
         ]
         return entries
 
+    def _reference_entries(self) -> list[tuple[str, Callable]]:
+        """リファレンス波形のディスパッチ表(枠番号は**引数**で受ける)。
+
+        `:REFerence:VSCale 3,0.5` / `:REFerence:VSCale? 3` の形。枠番号を省いた形
+        (`:REFerence:VSCale?`)や範囲外の枠(`11`)はどのパターンにも一致せず、
+        実機同様に沈黙する。`:REFerence:CURRent`(前面パネルの選択状態)はM3
+        スコープ外のため未実装 = 沈黙。
+        """
+        reference = rf":?{_mn('REFerence')}"
+        entries: list[tuple[str, Callable]] = []
+        for key, spec, kind, _default in _REFERENCE_PROPS:
+            path = ":".join(_mn(part) for part in spec.split(":"))
+            entries.append(
+                (
+                    rf"{reference}:{path}\?\s+{_REF_SLOT}",
+                    lambda m, k=key, t=kind: self._prop_query(
+                        self.reference[int(m.group(1))], k, t
+                    ),
+                )
+            )
+            entries.append(
+                (
+                    rf"{reference}:{path}\s+{_REF_SLOT}\s*,\s*{_VALUE}",
+                    lambda m, k=key, t=kind: self._prop_write(
+                        self.reference[int(m.group(1))], k, t, m.group(2)
+                    ),
+                )
+            )
+        # 全枠共通のラベル表示(枠引数なし)は共通の属性表展開に載る
+        entries += self._prop_entries(
+            reference, _REFERENCE_GLOBAL_PROPS, self.reference_global
+        )
+        # 引数1つ・応答なしの書き込み専用命令(クエリ形は存在しない)
+        entries += [
+            (
+                rf"{reference}:{_mn('SAVE')}\s+{_REF_SLOT}",
+                lambda m: self._reference_save(int(m.group(1))),
+            ),
+            (
+                rf"{reference}:{_mn('RESet')}\s+{_REF_SLOT}",
+                lambda m: self._reference_reset(int(m.group(1))),
+            ),
+        ]
+        return entries
+
     # -- 内部: ハンドラ ---------------------------------------------------
 
     def _system_error(self, match: re.Match[str]) -> bytes:
@@ -1457,6 +1567,8 @@ class FakeScope:
             value = self._float(token)
         elif kind == "int":
             value = self._int(token)
+        elif kind == "str":  # 文字列属性(:REFerence:LABel:CONTent)は素通し
+            value = token
         elif isinstance(kind, tuple) and kind[0] == "int":
             _, low, high = kind
             value = self._int(token)
@@ -1530,6 +1642,28 @@ class FakeScope:
             for label, value in _HISTOGRAM_RESULT_ITEMS
         )
         return f"[{entries}]\n".encode("ascii")
+
+    # -- 内部: リファレンス波形 -------------------------------------------
+
+    def _reference_save(self, ref: int) -> None:
+        """指定枠へ現在の波形を保存する(**不可逆**。元の内容は戻せない)。"""
+        self.reference[ref]["saved"] = True
+        return None
+
+    def _reference_reset(self, ref: int) -> None:
+        """垂直スケールと位置だけを既定へ戻す(色・ラベル・ソースは残る)。
+
+        **実機は保存済み波形の無い枠では何も戻さなかった**(実測: `VSCale 1,0.5`
+        / `VOFFset 1,0.2` を書いてから `:RESet 1` を送ってもエラーは出ず、値も
+        既定の 5.000000E-2 / 0.000000 に戻らなかった。その枠は一度も
+        `:REFerence:SAVE` していない)。保存の有無が条件なのか別の条件なのかは
+        1件の観測からは決められないため、**この無反応はフェイクでは模さない**。
+        規則が判明するまでフェイクは常に既定へ戻す側に倒しておく。
+        """
+        defaults = {key: default for key, _, _, default in _REFERENCE_PROPS}
+        for key in _REFERENCE_RESET_KEYS:
+            self.reference[ref][key] = defaults[key]
+        return None
 
     def _histogram_reset(self) -> None:
         self.histogram["hits"] = 0

@@ -152,6 +152,11 @@ dialect:
   dvm_modes: {ac_rms: ACRMs, dc: DC, dc_rms: DCRMs}
   # ヒストグラムの種別(ガイド3.11.3 :HISTogram:TYPE)
   histogram_types: {horizontal: HORizontal, vertical: VERTical}
+  # リファレンス波形の表示色(ガイド3.20.7 :REFerence:COLor)。枠数は
+  # capabilities.ref_channels でゲートする(M1で宣言済み)。`:REFerence` は
+  # 枠番号を**コマンド引数**で取るため接頭辞にファミリ分岐が無く、
+  # ニモニック自体はドライバ側のハードコードとする
+  reference_colors: {gray: GRAY, green: GREen, blue: BLUE, red: RED, orange: ORANge}
   # オプション照会(MHO900専用。DHO800/900には存在しない)。実機検証:
   # docs/verification/mho98-unlicensed.md。*OPT? はRigol全シリーズで未定義
   # ヘッダ(送るとSCPIサーバーが沈黙)なので絶対に使わない。<type>リスト外の
