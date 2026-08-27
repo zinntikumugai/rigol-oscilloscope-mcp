@@ -561,7 +561,7 @@ MATH演算トレース(`:MATH<n>`)を設定する。**既に取り込まれて�
 | `w1_hz` | float | カットオフ周波数1(**Hz**) |
 | `w2_hz` | float | カットオフ周波数2(**Hz**)。`bandpass` / `bandstop` では `w1_hz` < `w2_hz` であること(判定は機器側) |
 
-返却: `channel` / `requested` / `applied`(read-back値。`fft` / `filter` を指定した場合は `applied["fft"]` / `applied["filter"]` にネストして返る)/ `changed`(呼び出し前後の `get_math_state` 相当が変化したか)。
+返却: `channel` / `requested` / `applied`(read-back値。`fft` / `filter` を指定した場合は `applied["fft"]` / `applied["filter"]` にネストして返る)/ `changed`(呼び出し前後の `get_math_state` 相当が変化したか。ピーク表 `peaks` / `peak_warnings` は測定のたびに変わる動的値のため判定から除外する — 監査ログには完全なスナップショットが残る)。
 
 動作・規範:
 
