@@ -44,6 +44,8 @@
 | `analog_channels` | 4 | channel引数の検証 |
 | `digital_channels` | 16 | 将来のLA対応 |
 | `afg_channels` | 2 | 信号発生チャンネル数(`channel` 引数の検証。**範囲外の `:SOURce3` は実機を沈黙させる**) |
+| `math_channels` | 4 | MATH演算トレース本数(`:MATH<n>`)。`configure_math` / `get_math_state` の `channel` 引数と `capture_waveform` の `"MATH<n>"` ソースの検証に使う。**未宣言ならMATH操作自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) |
+| `ref_channels` | 10 | リファレンス波形の本数(`:REF<n>`)。現状は `configure_math` の `source1` / `source2` / `fft.source` に指定された `"REF<n>"` の範囲検証に使う(将来の M3 `:REFerence` でも使う)。未宣言ならREFソース指定が `INVALID_PARAMETER` |
 | `bandwidth_hz` | 実機依存 | 参考情報 |
 | `protocol_decode` | true | デコード対応(`configure_decode` / `get_decode_result` の可否) |
 | `decode_buses` | 4 | デコードバス本数(`bus` 引数の検証。未宣言ならデコード自体を行わない) |
@@ -80,12 +82,20 @@
 | `afg_impedances` | 信号発生器の出力インピーダンス対応表(`:SOURce<n>:IMPedance`) | `highz: OMEG` / `50: FIFTy`(問い合わせの返却は `OMEG` / `FIFTy`) |
 | `afg_mod_types` | 変調タイプの対応表(`:SOURce<n>:MOD:TYPe`)。**未宣言なら `modulation` 引数自体を扱わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) | `am: AM` / `fm: FM` / `pm: PM`(変調ソースは内蔵のみ。`EXTernal` は存在しない) |
 | `afg_mod_waveforms` | 変調波形の対応表(`:MOD:<TYPE>:INTernal:FUNCtion`) | `sine: SINusoid` / `square: SQUare` / `triangle: TRIangle` / `upramp: UPRamp` / `dnramp: DNRamp` / `noise: NOISe` |
+| `math_operators` | 意味的な演算子名 → `:MATH<n>:OPERator` の値。ここに載るトークンだけを送る。**未宣言なら `operator` 引数自体を扱わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) | `add: ADD` / `subtract: SUBTract` / `multiply: MULTiply` / `divide: DIVision` / `and: AND` / `or: OR` / `xor: XOR` / `not: NOT` / `fft: FFT` / `integrate: INTG` / `differentiate: DIFF` / `sqrt: SQRT` / `log10: LG` / `ln: LN` / `exp: EXP` / `abs: ABS` / `lowpass: LPASs` / `highpass: HPASs` / `bandpass: BPASs` / `bandstop: BSTop` / `axb: AXB` の21種(ガイド3.16.2) |
+| `math_fft_windows` | FFTの窓関数の対応表(`:MATH<n>:FFT:WINDow`)。**未宣言なら `fft.window` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `rectangle: RECTangle` / `blackman: BLACkman` / `hanning: HANNing` / `hamming: HAMMing` / `flattop: FLATtop` / `triangle: TRIangle`(ガイド3.16.15) |
+| `math_fft_units` | FFTの縦軸単位の対応表(`:MATH<n>:FFT:UNIT`)。**未宣言なら `fft.unit` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `vrms: VRMS` / `db: DB`(ガイド3.16.16) |
+| `math_fft_modes` | FFTの演算モードの対応表(`:MATH<n>:FFT:MODE`)。**未宣言なら `fft.mode` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `normal: NORMal` / `average: AVERage` / `maxhold: MAXHold`(ガイド3.16.17) |
+| `math_fft_search_orders` | FFTピーク探索の並び順の対応表(`:MATH<n>:FFT:SEARch:ORDer`)。**未宣言なら `fft.search_order` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `amplitude: AMPorder` / `frequency: FREQorder`(ガイド3.16.29) |
+| `math_filter_types` | デジタルフィルタ種別の対応表(`:MATH<n>:FILTer:TYPE`)。**未宣言なら `filter.type` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `lowpass: LPASs` / `highpass: HPASs` / `bandpass: BPASs` / `bandstop: BSTop`(ガイド3.16.31) |
 
 `:SYSTem:OPTion:*` は**MHO900専用**でDHO800/900のガイドには存在しない。したがって `option_query` / `option_types` は `mho98.yaml` にのみ宣言し、`rigol-generic.yaml` には置かない — **キーの不在がそのままゲート**である(4.2の原則の適用例)。`*OPT?` はRigolオシロ全シリーズで未定義ヘッダのため使わない。`<type>` リスト外のトークン(実測: `AUTOA`)でもSCPIサーバーが沈黙するので、`option_types` に載っていないトークンを送ってはならない。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md)(未ライセンス状態でも `AFG50` / `RLU-05` は `1` を返す)。
 
 `decode_protocols` に載せるのは**標準搭載の6種のみ**。I2S(`IIS`)/ FlexRay / MIL-STD-1553(`M1553`)/ CAN-FD(`:BUS<n>:CAN:FDBaud`)はライセンスオプション必須のため意図的に載せず、**不在がそのままゲート**になる(未宣言のプロトコルは送信前に `UNSUPPORTED_FEATURE`)。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 3章(未ライセンス状態でも RS232/IIC/SPI/CAN/LIN/PAR は全て正常応答)。
 
 **AFGの機種差(`afg_*` を MHO98 にしか宣言しない理由):** MHO900シリーズの信号発生は**番号付きの `:SOURce<n>`**(n=1,2)だが、DHO800/900の内蔵ジェネレータは**番号なしの `:SOURce`** で、しかも別売のDGモジュール前提(有無は `:SYSTem:DGSTatus?` で照会する)という**別物の方言**である。共通化せず、検証済み機種のプロファイルにだけ宣言する(不在=非対応のゲート)。実測根拠は [verification/mho98-afg.md](verification/mho98-afg.md)。
+
+**MATHに `math_prefix` 方言キーを作らない理由:** AFGの `afg_prefix` と違い、`:MATH<n>` は**ファミリで分岐している実例が知られていない**(MHO900・DHO800/900のいずれのガイドでも番号付き `:MATH<n>`)。そのため接頭辞はドライバ側で `f":MATH{n}"` とハードコードし、**対応可否のゲートは `math_channels` capability の宣言の有無だけ**が担う(不在=非対応、送信ゼロで `UNSUPPORTED_FEATURE`)。実在しない方言キーを先回りで作らないのが本仕様の原則であり、接頭辞が分岐するファミリが実際に現れた時点で `math_prefix` を導入する。演算子・FFT・フィルタの各対応表(`math_*` の6キー)は方言として持つ(トークンの綴りはガイド逐語で確認したものだけを載せる)。実装は現在 `mho98.yaml` にのみ宣言しており、DHO800/900系は別ガイドの逐語解読が未了のため意図的に未宣言(6.2)。
 
 なお `:BUS` のコア(`:MODE` / `:DISPlay` / `:FORMat` / `:THReshold` と主要プロトコル配下)は、プログラミングガイドを比較する限り **DHO800/900 とMHO900で共通**である。ただし現時点で実機検証済みなのはMHO98だけなので `mho98.yaml` にのみ宣言する。DHO系の実機が1台でも検証できたら、共通部分をファミリプロファイルへ引き上げる(1章の3層解決)。
 
@@ -221,6 +231,7 @@ quirk系(`invalid_query_behavior` / `error_queue_stale_on_connect` / `snaps_to_1
 
 - **シリアルデコード**(`protocol_decode: false`、`decode_protocols` / `decode_formats` / `decode_buses` 未宣言)
 - **AFG**(`afg_channels: 0`、`afg_prefix` ほか未宣言)。DHO914S/924S は1chのジェネレータを内蔵するが、DHO系は**番号なしの `:SOURce`** でMHO900の `:SOURce<n>` とは別方言
+- **MATH演算**(`math_channels` / `ref_channels` / `math_*` の方言6キーとも未宣言)。DHO系ガイドの `:MATH<n>` 章はまだ逐語解読していないため、演算子トークンの集合が同一である保証が無い
 - **ロジックアナライザ**(`digital_channels` は情報として持つがLA操作Tool自体が未実装)
 - **オプション照会**(`:SYSTem:OPTion:*` はMHO900専用でDHOのガイドに存在しない)
 - **50Ω入力**(`impedance_control: false`。DHO800/900の入力は1MΩ固定)

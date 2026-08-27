@@ -205,6 +205,14 @@ Auto Setupは利用者の設定を大きく上書きするため、confirmトー
 
 注: 画面表示データは間引きされている(実測: 表示500 kSa/s vs 実サンプルレート5 MSa/s)。返却メタデータに実効サンプルレートを含める。
 
+**MATHトレースの取得(Phase M1):** `channel` は `"CH1"`〜`"CH4"` に加えて `"MATH1"`〜`"MATH4"` を受理する(新しい引数は増やさない。11章の `configure_math` で設定したトレースをそのまま読む)。
+
+- `:WAVeform:SOURce MATH<n>` を送る(ガイド3.28.1 の `{CHANnel1-4|MATH1-4}`)。**取得できるのは画面に表示されているデータ・`NORMal` モードのみ**(ガイド逐語。本サーバーは元から `:WAVeform:MODE NORMal` で読むため追加処理は無い)。**先にそのMATHトレースの表示をONにしておくこと**
+- MATHソースのときだけ `:MATH<n>:OPERator?` を**1回**追加照会する。アナログチャンネルの取得経路には `:MATH` 系のコマンドを一切送らず、返却の形も従来と変わらない(後方互換)
+- **演算子が `fft` のトレースは横軸が周波数**になる。この場合は返却に `x_unit: "Hz"` が付き、`sample_interval_s` は周波数刻み(Hz)、`time_origin_s` は開始周波数を意味する。時間軸前提の `effective_sample_rate_sa_per_s` は**返さない**。`fft` 以外の演算子(および全アナログチャンネル)は従来どおり時間軸で、`x_unit` は付かない
+- **FFTトレースのプリアンブル解釈(xincrementがHz/ptか)は実機検証待ち**。その旨は返却の `note` にも英語で明示している(検証後に文言を確定する → [verification/mho98-math.md](verification/mho98-math.md))
+- MATHチャンネル番号の検証は `math_channels` capability に委ね、未宣言の機種・範囲外の番号は**送信ゼロ**で `UNSUPPORTED_FEATURE` / `INVALID_PARAMETER`
+
 ### `analyze_waveform` — READ_ONLY / Phase 4
 
 波形を取得し、**ホスト側(サーバー側)で**解析して要約数値だけを返す。機器の解析機能は使わない(未確認SCPIを送らない方針のため)。
@@ -213,7 +221,7 @@ Auto Setupは利用者の設定を大きく上書きするため、confirmトー
 
 | 名前 | 型 | 必須 | 説明 |
 |---|---|---|---|
-| `channel` | string | – | 既定 `"CH1"` |
+| `channel` | string | – | 既定 `"CH1"`。`capture_waveform` と同じく `"MATH1"`〜`"MATH4"` も受理する(下記のとおりFFT演算のトレースのみ拒否) |
 | `analyses` | string[] | – | `"stats"` / `"fft"` の部分集合。省略時は全解析。未知の名前は `INVALID_PARAMETER`(`detail.valid` に有効名) |
 | `max_points` | int | – | `capture_waveform` と同一の意味(既定/上限は設定値。超過は丸めて `max_points_clamped: true`) |
 
@@ -232,6 +240,8 @@ FFTの実装:
 - Hann窓 → 2の冪へゼロパディング → radix-2 FFT(stdlibのみ。追加依存なし)
 - 振幅はコヒーレントゲイン(0.5)補正と単側スペクトルの×2を適用済み
 - 直流はピーク探索から除外し、窓掛け前に平均を引く(1レコードに数周期しか無い波形で直流の窓漏れが信号ビンを覆うのを防ぐ)
+
+**MATHトレースの解析(Phase M1):** 非FFTのMATHトレース(加減乗除・微積分・フィルタ等)は通常どおり解析できる。**演算子が `fft` のMATHトレースは波形を取得する前に `INVALID_PARAMETER` で拒否する** — 横軸が既に周波数であり、時間軸前提の統計もホスト側FFTも意味を持たないため。機上のピーク表が要るなら `get_math_state`(11章)、スペクトルの点列が要るなら `capture_waveform` を使う(エラーメッセージでも両者を案内する)。判定は `capture_waveform` と同じ `:MATH<n>:OPERator?` 1回の照会で行い、アナログチャンネルには何も送らない。
 
 注(周波数確度): ゼロパディングでビン間隔は細かくなるが、**真の分解能は `frequency_resolution_hz` = 1 /(点数 × `sample_interval_s`)が上限**。返り値の桁をそれ以上に信用しない。画面データが間引きされている場合は `sample_interval_s` 自体が実サンプルレートより粗い。周波数・周期の高確度な値が要るときは機器のカウンタを使う `measure` を優先する。
 
@@ -485,8 +495,105 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `enable_afg` | DANGEROUS_WRITE | 4 |
 | `disable_afg` | SAFE_WRITE | 4 |
 | `sync_afg_phase` | SAFE_WRITE | 4 |
+| `configure_math` | SAFE_WRITE | M1 |
+| `get_math_state` | READ_ONLY | M1 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は28(Phase 1: 12 + Phase 2: 7 + Phase 4: 9。`recommend_setup` / `raw_scpi` は未登録)。
+登録Tool数は30(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**にある(既存章番号の参照を壊さないため末尾に追加している)。
 
 将来(Phase 4の残り): `:PERiod` / `:VOLTage:HIGH`/`:LOW`(恒久スキップ。`frequency_hz`/`amplitude_vpp`+`offset_v`で表現可能なため)、DHOファミリの `:SOURce`(番号なし・DGモジュール)対応、Logic Analyzer。
+
+---
+
+## 11. MATH演算(Phase M1)
+
+オシロ内蔵の演算トレース(`:MATH1`〜`:MATH4`、ガイド3.16章)を扱う。加減乗除・論理演算・FFT・微積分系・デジタルフィルタを機器側で計算させ、その結果を1本のトレースとして表示・取得する。
+
+**本章は章番号を末尾に置いている。** コード内コメントやテストが「tools.md 6章」「10章」のように既存の章番号を参照しているため、機能章の途中へ挿入して既存章を繰り下げることはしない(位置づけとしては5〜7章と同列の機能章)。
+
+MATHトレースの**波形取得は新Toolを作らず** `capture_waveform` / `analyze_waveform` の `channel` 引数拡張で行う(5章)。FFTのピーク探索結果も専用Toolを作らず `get_math_state` の返却に含める。
+
+### `configure_math` — SAFE_WRITE / Phase M1
+
+MATH演算トレース(`:MATH<n>`)を設定する。**既に取り込まれている波形から機器内部で別トレースを計算させるだけ**の操作で、取り込み設定(垂直軸・水平軸・トリガ)にも信号発生の出力にも一切触れず、完全に可逆である。したがって `configure_decode`(6章)と同じ根拠で SAFE_WRITE とし、confirmトークンを要求しない。引数条件付きの昇格(`configure_channel` の50Ωのようなもの)も無い。
+
+引数(未指定項目は変更しない。1項目も指定しなければ `INVALID_PARAMETER`):
+
+| 名前 | 型 | 説明 |
+|---|---|---|
+| `channel` | int | MATHトレース番号。既定 1(MHO98は1〜4。範囲は `math_channels` capability。**範囲外は送信前に拒否**) |
+| `display` | bool | トレース表示のON/OFF(`:DISPlay`)。**ONは最初・OFFは最後**に送る(下記) |
+| `operator` | string | 演算子。`add` / `subtract` / `multiply` / `divide` / `and` / `or` / `xor` / `not` / `fft` / `integrate` / `differentiate` / `sqrt` / `log10` / `ln` / `exp` / `abs` / `lowpass` / `highpass` / `bandpass` / `bandstop` / `axb` |
+| `source1` | string | 算術演算の第1オペランド(`:SOURce1`)。`"CH1"`〜`"CH4"` / `"REF1"`〜`"REF10"` / **自分より小さい番号の** `"MATH1"`〜`"MATH3"` |
+| `source2` | string | 同じく第2オペランド(`:SOURce2`) |
+| `lsource1` | string | 論理演算(`and` / `or` / `xor` / `not`)の第1オペランド(`:LSOurce1`)。`"D0"`〜`"D15"` / `"CH1"`〜`"CH4"`。算術のソースとは**別コマンド**なので別引数にしている |
+| `lsource2` | string | 同じく第2オペランド(`:LSOurce2`) |
+| `scale` | float | 演算結果トレースの垂直スケール(1目盛あたり。`:SCALe`)。単位は演算子依存 |
+| `offset_v` | float | 演算結果トレースの垂直オフセット(V。`:OFFSet`) |
+| `invert` | bool | 演算結果トレースの上下反転(`:INVert`) |
+| `fft` | object | FFT演算の設定。下表(`operator="fft"` 用) |
+| `filter` | object | デジタルフィルタの設定。下表(`operator` が `lowpass` / `highpass` / `bandpass` / `bandstop` のとき用) |
+
+`fft` のキー(全て任意。ガイド3.16.14-3.16.29):
+
+| キー | 型 | 説明 |
+|---|---|---|
+| `source` | string | **FFTの入力チャンネル**(`:FFT:SOURce`)。FFTで実際に使われるのは `source1` ではなく**こちら**。トークンの規則は `source1` と同じ(CH / REF / 下位のMATH) |
+| `window` | string | 窓関数。`rectangle` / `blackman` / `hanning` / `hamming` / `flattop` / `triangle` |
+| `unit` | string | 縦軸単位。`vrms`(実効電圧)/ `db`(デシベル) |
+| `mode` | string | 演算モード。`normal` / `average` / `maxhold` |
+| `average_count` | int | 平均回数(`mode="average"` 用)。2〜1000 |
+| `scale` | float | FFTトレースの縦軸スケール(1目盛あたり。単位は `unit` に従う) |
+| `offset` | float | FFTトレースの縦軸オフセット(単位は `unit` に従う) |
+| `freq_start_hz` | float | 表示する周波数範囲の開始(**Hz**) |
+| `freq_end_hz` | float | 表示する周波数範囲の終了(**Hz**) |
+| `search_enabled` | bool | 機器内蔵のピーク探索表のON/OFF。**ONのときだけ `get_math_state` が `peaks` を返す** |
+| `search_num` | int | 探索するピーク本数。1以上(**上限はガイド抽出がページ跨ぎで欠落しているため置いていない** — 機器のクランプに委ね `applied` で見せる) |
+| `search_threshold` | float | ピーク判定のしきい値(縦軸単位 = `unit`) |
+| `search_excursion` | float | ピーク判定の振れ幅(縦軸単位 = `unit`) |
+| `search_order` | string | ピーク表の並び順。`amplitude`(振幅順)/ `frequency`(周波数順) |
+
+`filter` のキー(全て任意。ガイド3.16.31-3.16.33):
+
+| キー | 型 | 説明 |
+|---|---|---|
+| `type` | string | フィルタ種別。`lowpass` / `highpass` / `bandpass` / `bandstop` |
+| `w1_hz` | float | カットオフ周波数1(**Hz**) |
+| `w2_hz` | float | カットオフ周波数2(**Hz**)。`bandpass` / `bandstop` では `w1_hz` < `w2_hz` であること(判定は機器側) |
+
+返却: `channel` / `requested` / `applied`(read-back値。`fft` / `filter` を指定した場合は `applied["fft"]` / `applied["filter"]` にネストして返る)/ `changed`(呼び出し前後の `get_math_state` 相当が変化したか。ピーク表 `peaks` / `peak_warnings` は測定のたびに変わる動的値のため判定から除外する — 監査ログには完全なスナップショットが残る)。
+
+動作・規範:
+
+- **送信順は固定**: `display=true` を**最初**に、`display=false` を**最後**に送り、その間を `:OPERator` → `:SOURce1` → `:SOURce2` → `:LSOurce1` → `:LSOurce2` → `:FFT:*` → `:FILTer:*` → `:SCALe` → `:OFFSet` → `:INVert` の順で送る。根拠は**表示OFF中の書き込みがエラーなく無視される実機quirk**(表示OFFチャンネルへの `:SCALe`([verification/mho98-mvp.md](verification/mho98-mvp.md) 3.3)、AFGの `MOD:STATe` OFF中のパラメータ書き込み([verification/mho98-afg.md](verification/mho98-afg.md) 6章)と同族)への対策で、**効かせたい書き込みは表示ONの後・表示OFFは全部書き終えてから**という形にしてある。MATHでの同quirkの**実機確認は未実施**(順序はFakeScopeでテスト固定済み。[verification/mho98-math.md](verification/mho98-math.md) で確認する)。各項目は set → エラーキュー確認 → read-back(0.3節)
+- **検証は全て送信前**に行う(1項目でも不正なら**1コマンドも送らずに** `INVALID_PARAMETER`。実機は不正トークン1発でSCPIサーバー全体が沈黙するため)。対象はMATHチャンネル番号、ソーストークンの形と範囲、列挙値、`average_count`(2〜1000)、`search_num`(1以上)、`fft` / `filter` の未知キー(`detail.allowed` に許容キーを返す)
+- **MATHソースのカスケード則**: `source1` / `source2` / `fft.source` に別のMATHトレースを指定できるが、**自分より小さい番号だけ**(`MATH3` は `MATH1` / `MATH2` を読めるが、`MATH3` 自身や `MATH4` は読めない。ガイド3.16.3 / 3.16.4 の Remarks)。自己参照・上位参照は送信前に `INVALID_PARAMETER`。`REF<n>` の範囲は `ref_channels`、`lsource*` の `D<n>` の範囲は `digital_channels` capability が持つ
+- **演算子とパラメータの結合制約は機器が強制する**(ホスト側では検証しない): 論理演算(`and` / `or` / `xor` / `not`)とFFTには `:SCALe` / `:OFFSet` が存在せず(ガイド3.16.7 / 3.16.8)、FFTは自前の `fft.scale` / `fft.offset` を持つ。演算子ごとの許容パラメータ表をホストに持たせると、ガイド未記載の組み合わせで正当な操作まで塞いでしまうため、**拒否は機器のエラーキューに委ね**、set直後のエラーキュー確認でそのまま拾う。**演算子とそのパラメータは同じ呼び出しで指定する**(送信順で `:OPERator` が先に出るため、1回の呼び出しで整合が取れる)
+- **`applied` を信用し `requested` を信用しない**: 機器は範囲外の値をエラーなくクランプ・スナップすることがある(AFGの振幅で実測 — [verification/mho98-afg.md](verification/mho98-afg.md) 2章)。唯一信頼できる検出手段は read-back した `applied` との突合であり、Tool description でもLLMに `applied` を見るよう明示している
+- **プロファイルゲート**: `math_channels` capability が未宣言なら**送信ゼロ**で `UNSUPPORTED_FEATURE`。演算子・FFT窓・FFT単位・FFTモード・探索順・フィルタ種別の各対応表(`math_operators` / `math_fft_windows` / `math_fft_units` / `math_fft_modes` / `math_fft_search_orders` / `math_filter_types`)も同様に、未宣言なら該当項目を送らず `UNSUPPORTED_FEATURE`([device-profiles.md](device-profiles.md) 2.1 / 2.2)。現在の宣言は `mho98.yaml` のみで、DHO800/900系は別ガイドの逐語解読が未了のため意図的に宣言していない。なお `:MATH<n>` の接頭辞に**方言キーは作っていない**(ファミリで分岐する実例が無いためドライバのハードコードとし、`math_channels` の宣言の不在をそのままゲートにしている)
+- **意図的に非対応**(ガイド3.16に存在するが実装しない): `:FFT:HSCale` / `:FFT:HCENter`(`fft.freq_start_hz` / `fft.freq_end_hz` で表現できる別表現。AFGの `:PERiod` 恒久スキップと同じ原則)、`GRID` / `EXPand` / `RESet` / `WAVetype` / `SENSitivity` / `DISTance` / `THReshold`(論理演算のしきい値)/ `WINDow:TITLe?` / `LABel:SHOW` / `DISMode`
+
+### `get_math_state` — READ_ONLY / Phase M1
+
+MATH演算の現在設定を読む。**書き込みは一切行わず**、表示状態も変えない。
+
+引数: `channel`(int、任意)。省略時は全MATHチャンネル。
+
+返却: `channel` 指定時は1トレース分をフラットに返す。省略時は `{"channels": {"1": {...}, ..., "4": {...}}}`(キーはトレース番号の文字列。`get_afg_state` と同じ形)。
+
+| キー | 説明 |
+|---|---|
+| `channel` / `display` / `operator` / `source1` / `source2` / `invert` | 常に返る |
+| `scale` / `offset_v` | 論理演算・FFT**以外**の演算子のときだけ返る(ガイド3.16.7 / 3.16.8) |
+| `lsource1` / `lsource2` | 論理演算(`and` / `or` / `xor` / `not`)のときだけ返る |
+| `fft` | `operator="fft"` のときだけ返る。`configure_math` の `fft` と同じキー一式 |
+| `peaks` | `operator="fft"` かつ `fft.search_enabled` が true のときだけ返る。各要素は `index` / `frequency_hz` / `amplitude` / `amplitude_unit` |
+| `peak_warnings` | 解釈できないピーク行があったときだけ返る(自然文) |
+| `filter` | `operator` がフィルタ系のときだけ返る。`type` / `w1_hz` / `w2_hz` |
+
+動作・規範:
+
+- **演算子に応じた条件付き読み取り**: 問い合わせ本数を抑えるためだけでなく、**実機未検証のサブツリーを不用意に突かない**ため(不正・未定義ヘッダ1発でSCPIサーバーが沈黙するため)、読むのは「その演算子で意味を持つ項目」だけに絞る。`add` のような算術演算ではFFT配下を1本も問い合わせない。1トレースあたりの問い合わせは共通部が5本(`display` / `operator` / `source1` / `source2` / `invert`)、算術・論理演算ではこれに2本を足して7本、FFT演算では19本(+ピーク表を読む場合1本)
+- **`:DISPlay?` を最初に読む**。MATH無効時にクエリが沈黙するかどうかは**実機未確認**であり、判明した場合にここを短絡点にできるよう先頭に置いてある([verification/mho98-math.md](verification/mho98-math.md) の最初のプローブ項目)
+- **ピーク表は fail-open**: `:MATH<n>:FFT:SEARch:RES?` の応答は `5,6.50125MHz,-32.34dBV` 形式の行(ガイド3.16.30)としてパースし、**解釈できない行は例外にせず** `{"raw": "<元の行>"}` として残して `peak_warnings` に説明を積む。周波数サフィックスは `Hz` / `kHz` / `MHz` / `GHz`、振幅の単位は `unit` 依存で全集合が未検証のため**末尾の英字を逐語で保持**する。行区切りは改行と `;` の両方を受理するが、**実機の実際の区切りは未検証**(LAN transportの `query()` は1行しか読まないため、真に複数行で返る場合は切り詰められる — [verification/mho98-math.md](verification/mho98-math.md) の確認項目)
+- `channel` 省略時も、非対応機(`math_channels` 未宣言)では**1本だけ問い合わせて `UNSUPPORTED_FEATURE` を返させる**(空の `channels` を「正常」に見せない)
