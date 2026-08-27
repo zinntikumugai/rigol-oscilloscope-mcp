@@ -1015,7 +1015,7 @@ class ScopeDriver:
         ):
             raise _invalid(
                 f"function generator channel {channel!r} does not exist "
-                f"(this model has channel 1-{count})",
+                f"(this model has channels 1-{count})",
                 {"channel": channel, "afg_channels": count},
             )
         presence = self.profile.dialect.get("afg_presence_query")
@@ -1361,6 +1361,39 @@ class ScopeDriver:
         """
         _, prefix = self._afg_prefix(channel)
         self.session.write_checked(f"{prefix}:PHASe:SYNChronize")
+
+    # -- MATH演算(ガイド3.16章)-------------------------------------------
+
+    @property
+    def math_channels(self) -> int:
+        """MATH演算チャンネル数(プロファイル未宣言なら 0 = 非対応)。"""
+        count = self.profile.capabilities.get("math_channels")
+        return count if isinstance(count, int) and count > 0 else 0
+
+    def _math_prefix(self, channel: int) -> tuple[int, str]:
+        """`(番号, ":MATH<n>")`。**範囲外の番号は絶対に送らない**。
+
+        `:MATH<n>` にファミリ分岐の実例が無いため接頭辞はここでハードコードし、
+        宣言の不在(`math_channels` 未宣言)をそのまま非対応のゲートにする
+        (AFGの `_afg_prefix` と違い、方言テンプレートも実在照会も持たない)。
+        """
+        count = self.math_channels
+        if count < 1:
+            raise _unsupported(
+                "this model's profile does not declare how many math channels exist",
+                {"capability": "math_channels", "profile": self.profile.name},
+            )
+        if (
+            isinstance(channel, bool)
+            or not isinstance(channel, int)
+            or not 1 <= channel <= count
+        ):
+            raise _invalid(
+                f"math channel {channel!r} does not exist "
+                f"(this model has channels 1-{count})",
+                {"channel": channel, "math_channels": count},
+            )
+        return channel, f":MATH{channel}"
 
     # -- Acquisition ------------------------------------------------------
 

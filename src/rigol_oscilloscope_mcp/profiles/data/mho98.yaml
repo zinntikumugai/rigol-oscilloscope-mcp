@@ -9,6 +9,8 @@ capabilities:
   analog_channels: 4
   digital_channels: 16
   afg_channels: 2
+  math_channels: 4 # ガイド3.16(<n> = 1〜4)
+  ref_channels: 10 # ガイド3.16.3(SOURce範囲のREF1〜REF10)
   protocol_decode: true
   decode_buses: 4 # :BUS1〜:BUS4(実測: :BUS4:MODE? まで応答、:BUS5 は沈黙)
   waveform_download: true
@@ -90,6 +92,48 @@ dialect:
     upramp: UPRamp
     dnramp: DNRamp
     noise: NOISe
+  # MATH演算(:MATH<n>、ガイド3.16章)。`:MATH<n>` にファミリ分岐の実例が無いため
+  # 接頭辞はドライバ側のハードコードとし、範囲は capabilities.math_channels で
+  # ゲートする。DHO800/900系は別ガイドの逐語解読が済んでいないため未宣言。
+  # MATH演算子(ガイド3.16.2 :MATH<n>:OPERator)
+  math_operators:
+    add: ADD
+    subtract: SUBTract
+    multiply: MULTiply
+    divide: DIVision
+    and: AND
+    or: OR
+    xor: XOR
+    not: NOT
+    fft: FFT
+    integrate: INTG
+    differentiate: DIFF
+    sqrt: SQRT
+    log10: LG
+    ln: LN
+    exp: EXP
+    abs: ABS
+    lowpass: LPASs
+    highpass: HPASs
+    bandpass: BPASs
+    bandstop: BSTop
+    axb: AXB
+  # FFTの窓関数(ガイド3.16.15 :MATH<n>:FFT:WINDow)
+  math_fft_windows:
+    rectangle: RECTangle
+    blackman: BLACkman
+    hanning: HANNing
+    hamming: HAMMing
+    flattop: FLATtop
+    triangle: TRIangle
+  # FFTの縦軸単位(ガイド3.16.16 :MATH<n>:FFT:UNIT)
+  math_fft_units: {vrms: VRMS, db: DB}
+  # FFTの演算モード(ガイド3.16.17 :MATH<n>:FFT:MODE)
+  math_fft_modes: {normal: NORMal, average: AVERage, maxhold: MAXHold}
+  # FFTピーク探索の並び順(ガイド3.16.29 :MATH<n>:FFT:SEARch:ORDer)
+  math_fft_search_orders: {amplitude: AMPorder, frequency: FREQorder}
+  # デジタルフィルタ(ガイド3.16.31 :MATH<n>:FILTer:TYPE)
+  math_filter_types: {lowpass: LPASs, highpass: HPASs, bandpass: BPASs, bandstop: BSTop}
   # オプション照会(MHO900専用。DHO800/900には存在しない)。実機検証:
   # docs/verification/mho98-unlicensed.md。*OPT? はRigol全シリーズで未定義
   # ヘッダ(送るとSCPIサーバーが沈黙)なので絶対に使わない。<type>リスト外の
