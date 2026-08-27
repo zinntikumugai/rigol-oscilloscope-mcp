@@ -497,9 +497,15 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `sync_afg_phase` | SAFE_WRITE | 4 |
 | `configure_math` | SAFE_WRITE | M1 |
 | `get_math_state` | READ_ONLY | M1 |
+| `configure_cursor` | SAFE_WRITE | M2 |
+| `get_cursor_measurement` | READ_ONLY | M2 |
+| `configure_meter` | SAFE_WRITE | M2 |
+| `get_meter_value` | READ_ONLY | M2 |
+| `configure_histogram` | SAFE_WRITE | M2 |
+| `get_histogram_result` | READ_ONLY | M2 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は30(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**にある(既存章番号の参照を壊さないため末尾に追加している)。
+登録Tool数は36(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
 
 将来(Phase 4の残り): `:PERiod` / `:VOLTage:HIGH`/`:LOW`(恒久スキップ。`frequency_hz`/`amplitude_vpp`+`offset_v`で表現可能なため)、DHOファミリの `:SOURce`(番号なし・DGモジュール)対応、Logic Analyzer。
 
@@ -598,3 +604,180 @@ MATH演算の現在設定を読む。**書き込みは一切行わず**、表示
 - **ピーク表は複数行応答**: `:MATH<n>:FFT:SEARch:RES?` は行を**改行で区切り、末尾に終端の空行を1本**返す(ピーク無し・探索OFFなら空行1本のみ)。`query()` は1行しか読まず、読み残しが以降の全クエリをdesyncさせる(実機で `ConnectionResetError` を観測)ため、**この応答だけは `Transport.query_lines()` で終端の空行まで読み切る**。`;` 区切りは実機に現れないがパーサ側では引き続き受理する
 - **ピーク表は fail-open**: 各行を `5,6.50125MHz,-32.34dBV` 形式(ガイド3.16.30)としてパースし、**解釈できない行は例外にせず** `{"raw": "<元の行>"}` として残して `peak_warnings` に説明を積む。**周波数・振幅とも SI接頭辞を換算する**(周波数は `Hz` / `kHz` / `MHz` / `GHz`、振幅は実機実測の `851.6mVrms` → `amplitude=0.8516` / `amplitude_unit="Vrms"`)。ただし `dBV` / `dBm` の先頭 `d` はデシ接頭辞ではないため、**dB系は換算せず値も単位もそのまま**返す
 - `channel` 省略時も、非対応機(`math_channels` 未宣言)では**1本だけ問い合わせて `UNSUPPORTED_FEATURE` を返させる**(空の `channels` を「正常」に見せない)
+
+---
+
+## 12. カーソル・計測器・ヒストグラム(Phase M2)
+
+機器が画面上に重ねて表示する「測定の補助表示」3系統を扱う。カーソル(`:CURSor`、ガイド3.8章)、周波数カウンタ(`:COUNter`、3.7章)と電圧計(`:DVM`、3.10章)、ヒストグラム(`:HISTogram`、3.11章)。いずれも**既に取り込まれている波形に対する表示・統計の層**であり、取り込み条件(垂直軸・水平軸・トリガ)にも信号発生の出力にも触れない。
+
+**本章も章番号を末尾に置いている**(11章と同じ理由 — 既存章番号への参照を壊さないため)。位置づけとしては5〜7章・11章と同列の機能章である。
+
+3系統とも「設定Tool(SAFE_WRITE)+ 読み取りTool(READ_ONLY)」の対で構成し、`configure_*` は**未指定の項目を変更しない**差分適用、返却は `requested` / `applied` / `changed`(0.3節)で揃えている。カウンタと電圧計は「有効化 + ソース + モード + 現在値1本」という同形のサブシステムなので、**Toolを2対に分けず** `kind` 引数1つで切り替える(`configure_meter` / `get_meter_value`)。
+
+### `configure_cursor` — SAFE_WRITE / Phase M2
+
+カーソル(`:CURSor`)を設定する。**機器が画面に描くカーソルを動かすだけ**の操作で、取り込みにも出力にも触れず完全に可逆である。したがって `configure_math`(11章)・`configure_decode`(6章)と同じ根拠で SAFE_WRITE とし、confirmトークンを要求しない。引数条件付きの昇格も無い。
+
+引数(未指定項目は変更しない。1項目も指定しなければ `INVALID_PARAMETER`):
+
+| 名前 | 型 | 説明 |
+|---|---|---|
+| `mode` | string | カーソルのモード。`off` / `manual` / `track` / `xy`。**最初に送る**(以降の書き込み先サブツリーを決めるため) |
+| `type` | string | **manual専用**。カーソルが何を測るか。`time`(時間)/ `amplitude`(振幅) |
+| `source` | string | **manual専用**のカーソル対象。`"CH1"`〜`"CH4"` / `"MATH1"`〜`"MATH4"` / `"NONE"` |
+| `source1` | string | **track専用**。カーソルA が追従する波形(値域は `source` と同じ) |
+| `source2` | string | **track専用**。カーソルB が追従する波形(値域は `source` と同じ) |
+| `ax` | float | カーソルA のX位置(**秒**) |
+| `ay` | float | カーソルA のY位置(**V**) |
+| `bx` | float | カーソルB のX位置(**秒**) |
+| `by` | float | カーソルB のY位置(**V**) |
+
+返却: `mode`(適用後のモード)/ `requested` / `applied`(read-back値)/ `changed`(呼び出し前後の**設定**が変化したか。読み値 — ΔX・ΔY等 — は `get_cursor_measurement` の責務で常に動くため判定から除外する。**trackモードのYは設定側の `CAY` / `CBY` も波形に追従して動く**ため、`changed` は実質「利用者が変えた項目」だけを見ることになる → [verification/mho98-m2.md](verification/mho98-m2.md) (c))。
+
+動作・規範:
+
+- **位置とソースは「今のモードのサブツリー」に属する**。`:CURSor:MANual:*` と `:CURSor:TRACk:*` は別コマンド群であり、書き込み先は `mode` を指定すればその値、**省略すれば実機の `:CURSor:MODE?` を1本読んで**決める。`type` / `source` はmanual専用、`source1` / `source2` はtrack専用で、**サブツリー違いの指定は送信前に `INVALID_PARAMETER`**(取り違えを黙って無視しない)
+- **`mode="xy"` は受理するが、そのサブツリーは公開していない**。`xy` は機器が持つ正当なモードなので `cursor_modes` に載せて設定できるが、`:CURSor:XY:*` の位置コマンドはXY水平時間軸の対応が前提のためM2スコープ外とした。**`off` / `xy` では位置・ソースの書き込み先が定まらないため、位置を伴う呼び出しは送信前に拒否する**
+- **単位は引数名が持つ**: X(`ax` / `bx`)は**秒**、Y(`ay` / `by`)は**V**。機器の `:CAX` / `:CAY` はそれぞれ秒・Vをそのまま取る(0.2節)
+- **検証は全て送信前**に行う(1項目でも不正なら**1コマンドも送らずに** `INVALID_PARAMETER`)。対象はモード・種別の列挙値、ソーストークンの形と範囲(`MATH<n>` は `math_channels`、`CH<n>` は `analog_channels`)、サブツリー違いの項目。REF波形・デジタルchは `:CURSor` の値域に無いため受理しない
+- **`applied` を信用し `requested` を信用しない**(11章と同じ)。各項目は set → エラーキュー確認 → read-back(0.3節)
+- **プロファイルゲート**: `cursor` capability が未宣言なら**送信ゼロ**で `UNSUPPORTED_FEATURE`。`cursor_modes` / `cursor_types` の各対応表も同様に、未宣言なら該当項目を送らず `UNSUPPORTED_FEATURE`([device-profiles.md](device-profiles.md) 2.1 / 2.2)
+- **意図的に非対応**(ガイド3.8にあるが実装しない): `:CURSor:MANual:VUNit`(ガイド本文がページ欠落で値域不明 — 確認できていないトークンを実機に送らないというAGENTS.mdルール2の適用)、`:CURSor:MANual:TUNit`(値が `{SECond}` の1つしかなく、設定させる意味が無い)、`:CURSor:XY:*`(XY時間軸の対応が前提)、`:CURSor:MEASure:INDicator`(画面のインジケータ表示のみ)
+
+### `get_cursor_measurement` — READ_ONLY / Phase M2
+
+カーソルの読み値(A/B の位置・Δ・1/ΔX)を読む。**書き込みは一切行わない**。
+
+引数: なし。
+
+返却:
+
+| キー | 説明 |
+|---|---|
+| `mode` | 現在のカーソルモード。**常に返る** |
+| `ax_s` / `bx_s` | カーソルA / B のX位置(**秒**) |
+| `ay_v` / `by_v` | カーソルA / B のY位置(**V**) |
+| `xdelta_s` | ΔX(カーソルB − A、**秒**) |
+| `ydelta_v` | ΔY(カーソルB − A、**V**) |
+| `ixdelta_hz` | 1/ΔX(その時間差に相当する周波数、**Hz**) |
+
+動作・規範:
+
+- **モードが `off` / `xy` のときは `mode` だけを返す**。読める値が無いだけでなく、非活性のサブツリーを問い合わせに行かないため(未検証ニモニックを不用意に突かない方針)。値のキーは**付けない**(`null` を並べて「測れているが値が無い」と誤読させない)
+- **測定不能は `null`**: 機器の番兵値(±9.9E37。例えば ΔX = 0 のときの 1/ΔX)は `None` に落とす。空応答も同様に `None`(無効な計測系が空行を返す実測に合わせた共通処理 → [verification/mho98-m2.md](verification/mho98-m2.md) 1章)
+- **設定側の位置(`:CAX` / `:CAY`)と読み値(`:AXValue` / `:AYValue`)は別物**。trackモードでは前者も波形に追従して動くうえ、両者は**サンプル時点が違うため桁数も値も一致しない**(実測 → [verification/mho98-m2.md](verification/mho98-m2.md) (c))。カーソルが実際に何を指しているかを見るならこのToolの返り値を使う
+- **プロファイルゲート**: `cursor` capability が未宣言なら送信ゼロで `UNSUPPORTED_FEATURE`
+
+### `configure_meter` — SAFE_WRITE / Phase M2
+
+周波数カウンタ(`:COUNter`)または電圧計(`:DVM`)を設定する。どちらも**画面に読み値を1つ足すだけ**で、取り込みにも出力にも触れない。SAFE_WRITE の根拠は `configure_cursor` と同じ。
+
+引数(`kind` 以外は未指定なら変更しない。`kind` 以外を1項目も指定しなければ `INVALID_PARAMETER`):
+
+| 名前 | 型 | 説明 |
+|---|---|---|
+| `kind` | string | **必須**。`"counter"`(周波数カウンタ)/ `"dvm"`(電圧計) |
+| `enabled` | bool | 読み値の表示ON/OFF。**最初に送る** |
+| `source` | string | 測定対象。**カウンタは `"CH1"`〜`"CH4"` に加え `"D0"`〜`"D15"`(デジタルch)も取る**が、**電圧計はアナログchのみ**(ガイド3.10.3。デジタルchは送信前に拒否) |
+| `mode` | string | 測定モード。**カウンタ**は `frequency`(周波数)/ `period`(周期)/ `totalize`(イベント数の累計)。**電圧計**は `ac_rms`(DC成分を除いた実効値)/ `dc`(平均)/ `dc_rms`(実効値) |
+| `digits` | int | **カウンタ専用**。分解能の桁数(`:COUNter:NDIGits`、3〜6) |
+| `totalize_enabled` | bool | **カウンタ専用**。Totalize統計の表示(`:COUNter:TOTalize:ENABle`) |
+| `clear_totalize` | bool | **カウンタ専用**。総カウントを0に戻す(`:COUNter:TOTalize:CLEar`)。**設定を送り終えた後**に実行する |
+
+返却: `kind` / `requested` / `applied`(read-back値。`clear_totalize` を指定した場合は `applied["clear_totalize"] = true` が付く)/ `changed`(呼び出し前後の設定が変化したか)。
+
+動作・規範:
+
+- **モードとの結合制約は機器が強制する**(ホスト側では検証しない): `digits` はTotalizeモードでは無効、`totalize_enabled` は逆にTotalizeモード**以外**(周波数・周期)で意味を持つ(ガイド3.7.5 / 3.7.6)。`clear_totalize` はTotalizeモードのときだけ受理される。ホストにモード別の許容表を持たせるとガイド未記載の組み合わせで正当な操作まで塞ぐため、**拒否は機器のエラーキューに委ね**、set直後のエラーキュー確認でそのまま `SCPI_ERROR` として拾う。したがって**モードとそれに依存する項目は同じ呼び出しで指定する**(送信順で `:MODE` が `:NDIGits` / `:TOTalize:ENABle` より先に出るため、1回の呼び出しなら整合が取れる)
+- **送信順は固定**: `enabled` → `source` → `mode` → `digits` → `totalize_enabled` → (最後に)`clear_totalize`。`enabled` を先頭に置くのは「無効な状態への書き込みが拒否される」実測(下記)への対策で、`clear_totalize` を最後に置くのは「モードを変えて数え直す」が1往復で済むようにするため
+- **`clear_totalize` はカウンタ専用**: `kind="dvm"` に指定すれば**送信前に** `INVALID_PARAMETER`。設定を1つも伴わない「クリアだけ」の呼び出しは受け付ける(設定コマンドは1本も送らない)
+- **無効なカウンタへ `totalize_enabled` だけを送ると機器が拒否する**(実測。`:COUNter:TOTalize:ENABle OFF` が **カウンタ無効時は現在値と同じ値でも** `-200,"Command execute failed"` を返す → [verification/mho98-m2.md](verification/mho98-m2.md) 5章)。`enabled=true` を同じ呼び出しに含めれば先に送られるため踏まない
+- **`applied` を信用し `requested` を信用しない**(11章と同じ)。各項目は set → エラーキュー確認 → read-back(0.3節)
+- **プロファイルゲート**: `kind="counter"` は `frequency_counter`、`kind="dvm"` は `dvm` capability が未宣言なら**送信ゼロ**で `UNSUPPORTED_FEATURE`。`counter_modes` / `dvm_modes` の対応表も同様([device-profiles.md](device-profiles.md) 2.1 / 2.2)
+- **意図的に非対応**: `:COUNter` / `:DVM` のガイド節はここに挙げた項目で尽きている(現在値は `get_meter_value` が読む)
+
+### `get_meter_value` — READ_ONLY / Phase M2
+
+周波数カウンタ / 電圧計の現在値を、**単位とモードを添えて**読む。書き込みは一切行わない。
+
+引数: `kind`(string、必須。`"counter"` / `"dvm"`)。
+
+返却: `get_meter_config` 相当の設定一式(`kind` / `enabled` / `source` / `mode`、カウンタではさらに `digits` / `totalize_enabled`)に、次の2つを加えたもの。
+
+| キー | 説明 |
+|---|---|
+| `value` | 現在値(float)。**測定できないときは `null`** |
+| `unit` | `value` の単位。カウンタは `mode` に応じて `"Hz"`(frequency)/ `"s"`(period)/ `"counts"`(totalize)、電圧計は全モードで `"V"` |
+
+動作・規範:
+
+- **単位はモード依存なので値だけを返さない**。Totalizeは無次元のイベント数なので、それが分かる語 `"counts"` を単位の位置に置く(ガイド3.7.4 / 3.10.4)
+- **無効な計では現在値を問い合わせず `value: null`** を返す。実機の電圧計は無効時に `:DVM:CURRent?` へ**空応答**を返し、そのままパースすると `SCPI_ERROR`(機器故障に見える)になるため、`:ENABle?` を先に1本読んで短絡する(有効なら合計2本)。「なぜ値が無いのか」は同じ返却に含まれる `enabled: false` が示す → [verification/mho98-m2.md](verification/mho98-m2.md) 1章
+- **設定一式を必ず添える**: 無効な計の値には意味が無く、どのソースを見ているかも合わせて示す必要があるため
+- **プロファイルゲート**: `configure_meter` と同じ(未対応機・未知の `kind` では機器へ1コマンドも送らない)
+
+### `configure_histogram` — SAFE_WRITE / Phase M2
+
+波形ヒストグラム(`:HISTogram`)を設定する。**既に取り込まれている波形から機器が統計を計算して表示するだけ**で、取り込みにも出力にも触れない。SAFE_WRITE の根拠は `configure_cursor` と同じ。
+
+引数(未指定項目は変更しない。1項目も指定しなければ `INVALID_PARAMETER`):
+
+| 名前 | 型 | 説明 |
+|---|---|---|
+| `enabled` | bool | ヒストグラムのON/OFF。**最初に送る** |
+| `type` | string | 種別。`horizontal`(時間軸方向のヒストグラム)/ `vertical`(電圧方向) |
+| `source` | string | 対象チャンネル。**アナログchのみ**(`"CH1"`〜`"CH4"`) |
+| `height` | int | 画面上の表示高さ(div。1〜4) |
+| `left_s` | float | 集計ウィンドウの左端(**秒**) |
+| `right_s` | float | 同じく右端(**秒**) |
+| `bottom_v` | float | 集計ウィンドウの下端(**V**) |
+| `top_v` | float | 同じく上端(**V**) |
+| `reset` | bool | 統計をリセットして取り直す(`:HISTogram:RESet`)。**設定を送り終えた後**に実行する |
+
+返却: `requested` / `applied`(read-back値。`reset` を指定した場合は `applied["reset"] = true` が付く)/ `changed`(呼び出し前後の**設定**が変化したか。統計はヒット数が増え続ける動的値なので判定に含めない — `get_histogram_result` の責務)。
+
+動作・規範:
+
+- **範囲の大小制約(`left_s` < `right_s`、`bottom_v` < `top_v`)はガイド明記だが、ホスト側の検証は「同じ呼び出しで両端が指定されたときだけ」**行う(ガイド3.11.5-3.11.8 の Remarks)。片側だけの指定は現在の反対側との突合が要り、その突合のために毎回1本余計に読むのは割に合わないため機器に委ねている。**そのため片側だけを動かして現在の反対側を追い越すと機器がエラーを返し `SCPI_ERROR` になる — その場合の対処は「両端を同時に指定して呼び直す」**
+- **送信順は固定**: `enabled` → `type` → `source` → `height` → `left_s` → `right_s` → `bottom_v` → `top_v` → (最後に)`reset`。`reset` を最後に置くのは「対象を変えて取り直す」が1往復で済むようにするため。設定を1つも伴わない「リセットだけ」の呼び出しも受け付ける(設定コマンドは1本も送らない)
+- **検証は全て送信前**(1項目でも不正なら1コマンドも送らない)。対象は種別の列挙値、`source` の形と範囲(**デジタルchは送信前に拒否** — ガイドが値域をアナログchに限っているため)、`height` の 1〜4、上記の大小関係
+- **`applied` を信用し `requested` を信用しない**(11章と同じ)。各項目は set → エラーキュー確認 → read-back(0.3節)
+- **プロファイルゲート**: `histogram` capability が未宣言なら**送信ゼロ**で `UNSUPPORTED_FEATURE`。`histogram_types` も同様([device-profiles.md](device-profiles.md) 2.1 / 2.2)
+- **意図的に非対応**: `:HISTogram:SAVE:CSV`(**機器のストレージへファイルを書く**操作で、本サーバーの保存先規約(0章・実行ディレクトリ基準の許可ルート)の外にあり、操作クラスも別建てになる。M2スコープ外)
+
+### `get_histogram_result` — READ_ONLY / Phase M2
+
+ヒストグラムの統計を読む(`:HISTogram:STATistics:RESult?`)。書き込みは一切行わない。
+
+引数: なし。
+
+返却:
+
+| キー | 説明 |
+|---|---|
+| `raw` | **常に返る**。機器が返した応答行そのまま(例 `"[Sum:30.37khits, Max:1.562V, Min:-999.9mV, ...]"`)。ヒストグラム無効時は空文字 |
+| `stats` | 解釈できた項目があるときだけ返る。**機器自身のラベル**を snake_case に正規化したキー → **基本単位に揃えた数値** |
+| `warnings` | 解釈できない項目があったとき、およびヒストグラムが無効なときだけ返る(自然文) |
+
+`stats` のキー(実測のラベル順。機器が返す項目がそのまま並ぶ):
+
+| キー | `<キー>_unit` | 説明 |
+|---|---|---|
+| `sum` | `"hits"` | 総ヒット数(`30.37khits` → `30370.0`) |
+| `peaks` | `"hits"` | 機器のラベル `Peaks` の値(ヒット数。実測 `234hits`) |
+| `max` / `min` / `pk_pk` | `"V"`(vertical) | 最大 / 最小 / P-P |
+| `mean` / `median` / `mode` | `"V"`(vertical) | 平均 / 中央値 / 最頻値 |
+| `bin_width` | `"V"`(vertical) | ビン幅 |
+| `sigma` | `"V"`(vertical) | 標準偏差 |
+| `mean_plus_sigma` / `mean_plus2_sigma` / `mean_plus3_sigma` | **なし** | σ倍数の項目(無次元。`_unit` キーは付かない)。実測値は `0.581421` / `1.000000` / `1.000000` で0〜1の比率に見えるが、**ガイドに定義の記載が無いため意味は確定していない** |
+
+動作・規範:
+
+- **`raw` は必ず残す**。機器が持つラベル集合はガイドに逐語の一覧が無く、ファームウェアや種別(horizontal / vertical)で増減しうるため、正規化に失敗しても元の応答から人が読めるようにしておく。`stats` の単位も**機器が付けてきた単位そのまま**(`horizontal` なら時間の単位になる)であり、ホストが単位を推測して付け直すことはしない
+- **SI接頭辞は換算して基本単位へ揃える**(`30.37khits` → `sum=30370.0` / `sum_unit="hits"`、`-999.9mV` → `min=-0.9999` / `min_unit="V"`)。単位を持たない項目(`meanPlusSigma` 系)は数値のみで `_unit` を付けない
+- **解釈は fail-open**: 読めなかった項目は飛ばして `warnings` に積むだけで、他の項目と `raw` は返す(`get_math_state` のピーク表と同じ方針)
+- **無効時は統計クエリ自体を送らない**。実測では無効時に `[]` を返しつつ**エラーキューに `-200,"Command execute failed"` を積む**(沈黙はしない)ため、送ってしまうと共有状態が汚れ、**次の無関係な書き込みのエラーキュー確認に化けて出る**。`:HISTogram:ENABle?` を先に1本読んで短絡し、`raw: ""` + `warnings` を返す → [verification/mho98-m2.md](verification/mho98-m2.md) 1章 / 5章
+- **応答は1行で終端の空行が無い**(実測223バイト、改行1個)。FFTピーク表(11章)と違い `query_lines()` は使えない — 使うと実機ではタイムアウトまで固まる。`query()` で1行だけ読む。なお同名に見える `:MEASure:HISTogram:STATistics:RESult?`(ガイド3.17.32)は**別サブシステムの別書式**(引用符付きの入れ子リスト)であり、混同しないこと
+- **安定したスナップショットが要るなら先に `stop`**(取り込み中は統計が増え続ける)
+- **プロファイルゲート**: `histogram` capability が未宣言なら送信ゼロで `UNSUPPORTED_FEATURE`

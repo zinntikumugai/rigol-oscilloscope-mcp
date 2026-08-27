@@ -34,6 +34,7 @@ from rigol_oscilloscope_mcp.service import (
     capture_screenshot,
     capture_waveform,
     get_decode_result,
+    get_meter_value,
     get_state,
     measure,
 )
@@ -553,3 +554,110 @@ def test_math_fft_peak_table_and_frequency_axis(
     assert result["points"] * result["frequency_step_hz"] == pytest.approx(
         end_hz, rel=1e-3
     )
+
+
+# -- 12. カーソル・計測器・ヒストグラム(read-only。設定は一切変えない)-----
+
+#: カーソルの読み値キー(`off` / `xy` 以外のモードで返る)
+CURSOR_READOUT_KEYS = frozenset(
+    {"ax_s", "ay_v", "bx_s", "by_v", "xdelta_s", "ydelta_v", "ixdelta_hz"}
+)
+#: 計の種別 → 期待する単位の集合(tools.md 12章)
+METER_UNITS = {
+    "counter": {"Hz", "s", "counts"},
+    "dvm": {"V"},
+}
+
+
+def test_cursor_config_and_measurement(driver: ScopeDriver) -> None:
+    """カーソルの設定と読み値を読む(モードは変えない)。
+
+    **カーソルOFFが通常の休息状態**であり、そこで壊れないことがこのテストの
+    主眼。OFF / XY では位置サブツリーを持たないため `mode` だけが返る
+    (mho98-m2.md 3章)。
+    """
+    config = driver.get_cursor_config()
+    _report(f"[cursor] config={config}")
+    assert config["mode"] in ("off", "manual", "track", "xy")
+
+    measurement = driver.get_cursor_measurement()
+    _report(f"[cursor] measurement={measurement}")
+    assert measurement["mode"] == config["mode"]
+
+    if config["mode"] in ("off", "xy"):
+        # 非活性のサブツリーは問い合わせない = 値のキーは付かない
+        assert set(measurement) == {"mode"}
+        return
+
+    assert CURSOR_READOUT_KEYS <= set(measurement)
+    for key in CURSOR_READOUT_KEYS:
+        value = measurement[key]
+        # 測定不能の番兵値(±9.9E37)と空応答は None に落ちる
+        assert value is None or isinstance(value, float), (key, value)
+
+
+@pytest.mark.parametrize("kind", ["counter", "dvm"])
+def test_meter_value_answers(driver: ScopeDriver, kind: str) -> None:
+    """周波数カウンタ / 電圧計を読む(有効化はしない)。
+
+    **無効が通常の休息状態**であり、そこが実装を壊した経路そのものである
+    (無効な電圧計の `:DVM:CURRent?` は空応答 → mho98-m2.md 1章)。
+    無効なら `value` は None、有効なら数値が返ること。
+    """
+    result = get_meter_value(driver, kind)
+    _report(f"[meter:{kind}] {result}")
+
+    assert result["kind"] == kind
+    assert isinstance(result["enabled"], bool)
+    assert isinstance(result["source"], str)
+    assert isinstance(result["mode"], str)
+    assert result["unit"] in METER_UNITS[kind]
+
+    value = result["value"]
+    if not result["enabled"]:
+        assert value is None, "無効な計は現在値を問い合わせない"
+    else:
+        assert value is None or isinstance(value, float)
+
+    if kind == "counter":
+        assert isinstance(result["digits"], int)
+        assert isinstance(result["totalize_enabled"], bool)
+
+
+def test_histogram_config_and_result(driver: ScopeDriver) -> None:
+    """ヒストグラムの設定と統計を読む(有効化はしない)。
+
+    **無効が通常の休息状態**で、無効時の統計クエリは `[]` を返しつつ
+    エラーキューに `-200` を積む(mho98-m2.md 1章)。実装は無効なら
+    クエリ自体を送らないため、**このテストの後でエラーキューが汚れて
+    いないこと**まで確認する。
+    """
+    config = driver.get_histogram_config()
+    _report(f"[histogram] config={config}")
+
+    assert isinstance(config["enabled"], bool)
+    assert config["type"] in ("horizontal", "vertical")
+    assert isinstance(config["source"], str)
+    assert isinstance(config["height"], int)
+    for key in ("left_s", "right_s", "bottom_v", "top_v"):
+        assert isinstance(config[key], float), key
+    assert config["left_s"] < config["right_s"]
+    assert config["bottom_v"] < config["top_v"]
+
+    result = driver.get_histogram_result()
+    _report(f"[histogram] result={result}")
+    assert isinstance(result["raw"], str)
+
+    if not config["enabled"]:
+        assert result["raw"] == ""
+        assert any("disabled" in w for w in result["warnings"])
+    else:
+        # 単一行・終端の空行なし(query_lines では固まる)
+        assert result["raw"].startswith("[")
+        for key, value in result.get("stats", {}).items():
+            assert isinstance(value, (float, str)), key
+
+    # 無効時に統計クエリを送っていないことの回帰確認
+    drained = driver.session.drain_error_queue()
+    _report(f"[histogram] 読み取り後のエラーキュー: {drained}")
+    assert drained == []
