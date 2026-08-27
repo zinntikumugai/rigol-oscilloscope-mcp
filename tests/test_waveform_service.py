@@ -290,11 +290,36 @@ def test_math_operator_is_queried_once(
 def test_fft_math_source_reports_a_frequency_axis(
     driver: ScopeDriver, config: Config, scope: FakeScope
 ) -> None:
+    """実機実測(MHO98 fw 00.01.00): 周波数刻み = xincrement × 1e9。
+
+    xorigin は時間軸の値が残る(開始周波数ではない)ため、開始周波数は
+    `:MATH<n>:FFT:FREQuency:STARt?` から読む。
+    """
     scope.math[1]["operator"] = "FFT"
+    scope.math[1]["fft_freq_start"] = 500.0
 
     result = capture_waveform(driver, config, "MATH1")
 
     assert result["x_unit"] == "Hz"
+    assert result["frequency_step_hz"] == pytest.approx(XINCREMENT * 1e9)
+    assert result["frequency_start_hz"] == pytest.approx(500.0)
+    # 時間軸前提のメタデータは意味を持たないので返さない
+    assert "sample_interval_s" not in result
+    assert "time_origin_s" not in result
     assert "effective_sample_rate_sa_per_s" not in result
     assert "FFT" in result["note"]
-    assert "verification" in result["note"].lower()
+    assert "pending" not in result["note"].lower()
+
+
+def test_fft_math_source_queries_only_operator_and_start_frequency(
+    driver: ScopeDriver, config: Config, scope: FakeScope
+) -> None:
+    """FFT経路で増える `:MATH` 問い合わせは演算子と開始周波数の2本だけ。"""
+    scope.math[1]["operator"] = "FFT"
+
+    capture_waveform(driver, config, "MATH1")
+
+    assert [c for c in scope.command_log if "MATH1:" in c] == [
+        ":MATH1:OPERator?",
+        ":MATH1:FFT:FREQuency:STARt?",
+    ]

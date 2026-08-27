@@ -35,11 +35,17 @@ NOTE = (
 
 #: FFT演算のMATHトレースはx軸が周波数(時間ではない)
 FFT_NOTE = (
-    "This is an FFT trace: the x axis is frequency, so sample_interval_s is the "
-    "frequency step in Hz and time_origin_s is the start frequency. "
-    "The interpretation of the preamble x increment for FFT traces is still "
-    "pending verification on a real device."
+    "This is an FFT trace: the x axis is frequency. frequency_step_hz is the "
+    "preamble x increment multiplied by 1e9 (the device reports the step in GHz) "
+    "and frequency_start_hz is read from the FFT start frequency, because the "
+    "preamble x origin keeps a stale time-domain value on an FFT trace. "
+    "Measured on an MHO98 (firmware 00.01.00, 2026-08-27)."
 )
+
+#: プリアンブルの xincrement → 周波数刻み(Hz)の換算係数。
+#: 実機実測(MHO98 fw 00.01.00): 表示終端18250/36500/100000 Hz のいずれでも
+#: xincrement × 1e9 が刻み(= 点数1000 × 刻み = 表示終端周波数)と一致した。
+FFT_STEP_PER_XINCREMENT = 1e9
 
 FILE_PREFIX = "rigol_waveform_"
 FILE_SUFFIX = ".csv"
@@ -124,8 +130,10 @@ def capture_waveform(
     一時ファイルの削除は呼び出し側の責務(サーバーは消さない)。
 
     MATHソース(`MATH1`-`MATH4`)ではFFT演算かどうかを1回照会し、FFTなら
-    `x_unit: "Hz"` を添えて `effective_sample_rate_sa_per_s`(時間軸前提の値)を
-    省く。アナログchでは追加の問い合わせを一切行わず、返却の形も変わらない。
+    周波数軸のメタデータ(`x_unit` / `frequency_step_hz` / `frequency_start_hz`)を
+    返して、時間軸前提の値(`sample_interval_s` / `time_origin_s` /
+    `effective_sample_rate_sa_per_s`)は**返さない**。アナログchでは追加の
+    問い合わせを一切行わず、返却の形も変わらない。
     """
     operator = math_operator(driver, channel)
     samples, preamble, clamped = read_samples(driver, config, channel, max_points)
@@ -133,13 +141,18 @@ def capture_waveform(
     result = {
         "channel": source_name(channel, operator),
         "points": len(samples),
-        "sample_interval_s": preamble.xincrement,
-        "time_origin_s": preamble.xorigin,
     }
     if operator == "fft":
+        # xorigin は時間軸の値が残る(実機実測)ので、開始周波数は機器から読む。
         result["x_unit"] = "Hz"
+        result["frequency_step_hz"] = preamble.xincrement * FFT_STEP_PER_XINCREMENT
+        result["frequency_start_hz"] = driver.get_math_fft_start_hz(
+            math_source_number(channel)
+        )
         result["note"] = FFT_NOTE
     else:
+        result["sample_interval_s"] = preamble.xincrement
+        result["time_origin_s"] = preamble.xorigin
         result["effective_sample_rate_sa_per_s"] = 1.0 / preamble.xincrement
         result["note"] = NOTE
     if clamped:

@@ -1220,14 +1220,14 @@ class FakeScope:
         return None
 
     def _math_peaks(self, match: re.Match[str]) -> bytes:
-        """ピーク探索結果テーブル(ガイド3.16.30)。
+        """ピーク探索結果テーブル(ガイド3.16.30 / 実機実測の書式)。
 
-        探索が無効なときの実機挙動は未確認(要実機検証)。`_bus_data` の
-        イベントテーブル無効時と同じ流儀で、ここでは空応答を返す。
+        実機MHO98(fw 00.01.00)は行を改行で区切り、**末尾に終端の空行を1本**
+        足して返す。探索が無効なときは空行1本だけ(行ゼロ)。
         """
         if not self._math(match)["fft_search"]:
-            return b""
-        return "\n".join(_MATH_FFT_PEAKS).encode("ascii")
+            return b"\n"
+        return ("\n".join(_MATH_FFT_PEAKS) + "\n\n").encode("ascii")
 
     def _measure_item(self, match: re.Match[str]) -> bytes:
         item = match.group(1).strip().upper()

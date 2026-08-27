@@ -2516,7 +2516,10 @@ def test_get_math_config_fft_with_search_returns_peaks(
         "amplitude": -24.98,
         "amplitude_unit": "dBV",
     }
+    # 実機のピーク表は複数行(1行読みだと先頭行しか取れない)
     assert len(config["peaks"]) == 5
+    assert config["peaks"][-1]["index"] == 5
+    assert "peak_warnings" not in config
 
 
 def test_get_math_config_filter_operator_reads_the_filter_subtree(
@@ -2593,3 +2596,24 @@ def test_get_math_operator_returns_the_semantic_name(
 
     assert driver.get_math_operator(3) == "fft"
     assert scope.command_log == [":MATH3:OPERator?"]
+
+
+def test_get_math_fft_start_hz_reads_one_field(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """FFTトレースの開始周波数だけを1本の問い合わせで読む。
+
+    プリアンブルの xorigin は時間軸の値が残るため(実機実測)、開始周波数は
+    こちらから読む必要がある。
+    """
+    scope.math[1]["fft_freq_start"] = 250.0
+
+    assert driver.get_math_fft_start_hz(1) == pytest.approx(250.0)
+    assert scope.command_log == [":MATH1:FFT:FREQuency:STARt?"]
+
+
+def test_get_math_fft_start_hz_rejects_an_unknown_channel(driver: ScopeDriver) -> None:
+    with pytest.raises(ScopeError) as exc:
+        driver.get_math_fft_start_hz(9)
+
+    assert exc.value.code == ErrorCode.INVALID_PARAMETER

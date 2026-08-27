@@ -201,7 +201,7 @@ Auto Setupは利用者の設定を大きく上書きするため、confirmトー
 
 引数: `channel`(必須)、`max_points`(任意、既定/上限は設定による)、`format`(任意)
 
-返却: サンプル配列(小規模時)またはファイル参照(大規模時)+ メタデータ(`sample_interval_s`, `time_origin_s`, 電圧変換係数, `channel`, `timestamp`)。巨大データはMCPレスポンスに直接格納せず、一時ファイルに保存してパスとメタデータを返す。電圧変換はプロファイルのプリアンブル規約(yorigin / yreference)に従いサーバー側で実施し、LLMには物理量(V)で返す。
+返却: サンプル配列(小規模時)またはファイル参照(大規模時)+ メタデータ(`sample_interval_s`, `time_origin_s`, 電圧変換係数, `channel`, `timestamp`。FFT演算のMATHトレースのみ時間軸のキーの代わりに `frequency_step_hz` / `frequency_start_hz` を返す。下記「MATHトレースの取得」)。巨大データはMCPレスポンスに直接格納せず、一時ファイルに保存してパスとメタデータを返す。電圧変換はプロファイルのプリアンブル規約(yorigin / yreference)に従いサーバー側で実施し、LLMには物理量(V)で返す。
 
 注: 画面表示データは間引きされている(実測: 表示500 kSa/s vs 実サンプルレート5 MSa/s)。返却メタデータに実効サンプルレートを含める。
 
@@ -209,8 +209,8 @@ Auto Setupは利用者の設定を大きく上書きするため、confirmトー
 
 - `:WAVeform:SOURce MATH<n>` を送る(ガイド3.28.1 の `{CHANnel1-4|MATH1-4}`)。**取得できるのは画面に表示されているデータ・`NORMal` モードのみ**(ガイド逐語。本サーバーは元から `:WAVeform:MODE NORMal` で読むため追加処理は無い)。**先にそのMATHトレースの表示をONにしておくこと**
 - MATHソースのときだけ `:MATH<n>:OPERator?` を**1回**追加照会する。アナログチャンネルの取得経路には `:MATH` 系のコマンドを一切送らず、返却の形も従来と変わらない(後方互換)
-- **演算子が `fft` のトレースは横軸が周波数**になる。この場合は返却に `x_unit: "Hz"` が付き、`sample_interval_s` は周波数刻み(Hz)、`time_origin_s` は開始周波数を意味する。時間軸前提の `effective_sample_rate_sa_per_s` は**返さない**。`fft` 以外の演算子(および全アナログチャンネル)は従来どおり時間軸で、`x_unit` は付かない
-- **FFTトレースのプリアンブル解釈(xincrementがHz/ptか)は実機検証待ち**。その旨は返却の `note` にも英語で明示している(検証後に文言を確定する → [verification/mho98-math.md](verification/mho98-math.md))
+- **演算子が `fft` のトレースは横軸が周波数**になる。この場合の返却は `x_unit: "Hz"` / `frequency_step_hz` / `frequency_start_hz` で、**時間軸前提のキー(`sample_interval_s` / `time_origin_s` / `effective_sample_rate_sa_per_s`)は返さない**(意味を持たないか、誤読を招くため)。`fft` 以外の演算子(および全アナログチャンネル)は従来どおり時間軸で、`x_unit` は付かない
+- **FFTのx軸は実機検証で確定済み**(MHO98 / fw 00.01.00 / 2026-08-27 → [verification/mho98-math.md](verification/mho98-math.md) (c))。プリアンブルの xincrement は Hz/pt ではなく **GHz/pt** で、`frequency_step_hz` = xincrement × 1e9(表示範囲3通りで `点数 × 刻み = 表示終端周波数` が厳密に一致)。**xorigin は開始周波数ではなく時間軸の値が残る**ため、`frequency_start_hz` は `:MATH<n>:FFT:FREQuency:STARt?` から読む(FFT時のみ問い合わせ1本を追加。合計2本)。この関係は返却の `note` にも英語で記載している
 - MATHチャンネル番号の検証は `math_channels` capability に委ね、未宣言の機種・範囲外の番号は**送信ゼロ**で `UNSUPPORTED_FEATURE` / `INVALID_PARAMETER`
 
 ### `analyze_waveform` — READ_ONLY / Phase 4
@@ -594,6 +594,7 @@ MATH演算の現在設定を読む。**書き込みは一切行わず**、表示
 動作・規範:
 
 - **演算子に応じた条件付き読み取り**: 問い合わせ本数を抑えるためだけでなく、**実機未検証のサブツリーを不用意に突かない**ため(不正・未定義ヘッダ1発でSCPIサーバーが沈黙するため)、読むのは「その演算子で意味を持つ項目」だけに絞る。`add` のような算術演算ではFFT配下を1本も問い合わせない。1トレースあたりの問い合わせは共通部が5本(`display` / `operator` / `source1` / `source2` / `invert`)、算術・論理演算ではこれに2本を足して7本、FFT演算では19本(+ピーク表を読む場合1本)
-- **`:DISPlay?` を最初に読む**。MATH無効時にクエリが沈黙するかどうかは**実機未確認**であり、判明した場合にここを短絡点にできるよう先頭に置いてある([verification/mho98-math.md](verification/mho98-math.md) の最初のプローブ項目)
-- **ピーク表は fail-open**: `:MATH<n>:FFT:SEARch:RES?` の応答は `5,6.50125MHz,-32.34dBV` 形式の行(ガイド3.16.30)としてパースし、**解釈できない行は例外にせず** `{"raw": "<元の行>"}` として残して `peak_warnings` に説明を積む。周波数サフィックスは `Hz` / `kHz` / `MHz` / `GHz`、振幅の単位は `unit` 依存で全集合が未検証のため**末尾の英字を逐語で保持**する。行区切りは改行と `;` の両方を受理するが、**実機の実際の区切りは未検証**(LAN transportの `query()` は1行しか読まないため、真に複数行で返る場合は切り詰められる — [verification/mho98-math.md](verification/mho98-math.md) の確認項目)
+- **`:DISPlay?` を最初に読む**。**MATH表示OFF時もクエリは沈黙しない**ことを実機で確認済み(MHO98 / fw 00.01.00 / 2026-08-27。MATH1〜4の全チャンネル)。短絡は不要だが、機種によって挙動が違った場合にここを短絡点にできるよう先頭のまま維持する
+- **ピーク表は複数行応答**: `:MATH<n>:FFT:SEARch:RES?` は行を**改行で区切り、末尾に終端の空行を1本**返す(ピーク無し・探索OFFなら空行1本のみ)。`query()` は1行しか読まず、読み残しが以降の全クエリをdesyncさせる(実機で `ConnectionResetError` を観測)ため、**この応答だけは `Transport.query_lines()` で終端の空行まで読み切る**。`;` 区切りは実機に現れないがパーサ側では引き続き受理する
+- **ピーク表は fail-open**: 各行を `5,6.50125MHz,-32.34dBV` 形式(ガイド3.16.30)としてパースし、**解釈できない行は例外にせず** `{"raw": "<元の行>"}` として残して `peak_warnings` に説明を積む。**周波数・振幅とも SI接頭辞を換算する**(周波数は `Hz` / `kHz` / `MHz` / `GHz`、振幅は実機実測の `851.6mVrms` → `amplitude=0.8516` / `amplitude_unit="Vrms"`)。ただし `dBV` / `dBm` の先頭 `d` はデシ接頭辞ではないため、**dB系は換算せず値も単位もそのまま**返す
 - `channel` 省略時も、非対応機(`math_channels` 未宣言)では**1本だけ問い合わせて `UNSUPPORTED_FEATURE` を返させる**(空の `channels` を「正常」に見せない)

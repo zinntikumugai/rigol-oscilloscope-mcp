@@ -476,3 +476,80 @@ def test_afg_state_answers(driver: ScopeDriver) -> None:
             "symmetry_percent",
         )
     )
+
+
+# -- 11. MATH演算(read-only。表示・設定は一切変えない)---------------------
+
+#: どの演算子でも返る共通キー
+MATH_COMMON_KEYS = frozenset(
+    {"channel", "display", "operator", "source1", "source2", "invert"}
+)
+
+
+def test_math_state_all_channels(driver: ScopeDriver) -> None:
+    """MATH1〜4 の設定を読む(表示OFFのトレースも含めて全チャンネル)。
+
+    2026-08-27 実測: 表示OFFのMATHチャンネルへ `:MATH<n>:DISPlay?` 等を送っても
+    SCPIサーバーは沈黙しない(mho98-math.md (a))。ここはその回帰確認も兼ねる。
+    """
+    assert driver.math_channels == 4
+
+    for number in range(1, driver.math_channels + 1):
+        config = driver.get_math_config(number)
+        _report(f"[math] math{number}={config}")
+
+        assert config["channel"] == number
+        assert MATH_COMMON_KEYS <= set(config)
+        assert isinstance(config["display"], bool)
+        assert isinstance(config["operator"], str)
+        assert isinstance(config["invert"], bool)
+
+
+def test_math_fft_peak_table_and_frequency_axis(
+    driver: ScopeDriver, device_config: Config
+) -> None:
+    """FFT演算のMATHがあれば、ピーク表と周波数軸メタデータを読む。
+
+    read-onlyスイートなので**FFTの設定は行わない**。利用者が前面パネル等で
+    FFTを組んでいるときだけ実行し、そうでなければskipする(write側の
+    `test_configure_math_round_trip` が設定つきの経路を担う)。
+    """
+    fft_channel = next(
+        (
+            n
+            for n in range(1, driver.math_channels + 1)
+            if driver.get_math_config(n)["operator"] == "fft"
+        ),
+        None,
+    )
+    if fft_channel is None:
+        pytest.skip("FFT演算のMATHトレースがありません(前面パネルで設定が必要)")
+
+    config = driver.get_math_config(fft_channel)
+    _report(f"[math] math{fft_channel} fft={config['fft']}")
+
+    # ピーク表は複数行応答(改行区切り + 終端の空行)。1行読みだと切り詰められる
+    if config["fft"]["search_enabled"]:
+        peaks = config["peaks"]
+        _report(f"[math] peaks={peaks}")
+        assert "peak_warnings" not in config
+        for peak in peaks:
+            assert isinstance(peak["frequency_hz"], float)
+            # 振幅の単位はSI接頭辞を外した形(`851.6mVrms` → 0.8516 `Vrms`)
+            assert peak["amplitude_unit"] in ("Vrms", "dBV", "dBm")
+
+    result = capture_waveform(driver, device_config, f"MATH{fft_channel}")
+    _report(
+        f"[math] capture MATH{fft_channel}: points={result['points']} "
+        f"step={result['frequency_step_hz']:g} Hz "
+        f"start={result['frequency_start_hz']:g} Hz"
+    )
+
+    assert result["x_unit"] == "Hz"
+    assert "sample_interval_s" not in result
+    assert "effective_sample_rate_sa_per_s" not in result
+    # 実測の関係式: 点数 × 周波数刻み = 表示終端周波数
+    end_hz = config["fft"]["freq_end_hz"]
+    assert result["points"] * result["frequency_step_hz"] == pytest.approx(
+        end_hz, rel=1e-3
+    )

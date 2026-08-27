@@ -180,6 +180,9 @@ class _FakeTransport:
     def query(self, command: str, timeout_s: float | None = None) -> str:
         return "OK"
 
+    def query_lines(self, command: str, timeout_s: float | None = None) -> list[str]:
+        return ["OK"]
+
     def query_binary(self, command: str, timeout_s: float | None = None) -> bytes:
         return b"OK"
 

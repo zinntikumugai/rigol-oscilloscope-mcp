@@ -42,6 +42,7 @@ from rigol_oscilloscope_mcp.service import (
     ConnectionManager,
     ControlService,
     analyze_waveform,
+    capture_waveform,
     get_acquisition_dict,
     get_channel_dict,
     get_timebase_dict,
@@ -112,6 +113,11 @@ requires_afg_loopback = pytest.mark.skipif(
     os.environ.get(AFG_LOOPBACK_ENV) != "1",
     reason=f"{AFG_LOOPBACK_ENV}=1 が未設定(AFG出力→CH1のBNC接続が必要)",
 )
+
+#: MATH演算の検証チャンネルと表示周波数範囲(表示・解析層のみに効く)
+MATH_CHANNEL = 1
+MATH_FFT_START_HZ = 0.0
+MATH_FFT_END_HZ = 100000.0
 
 #: `:SINGle` 直後に許容するトリガ状態(実測: WAIT。すぐトリガすると TD を経て STOP)
 SINGLE_STATUSES = ("WAIT", "TD")
@@ -1094,6 +1100,118 @@ def test_clear_measurements(control: ControlService, driver: ScopeDriver) -> Non
     assert outcome == {"result": "ok"}  # write_checkedがエラーキューを確認済み
 
 
+# -- 11b. MATH演算(表示・解析層のみ。出力には触れない)----------------------
+
+
+@pytest.fixture
+def math_before(request: pytest.FixtureRequest, driver: ScopeDriver) -> Iterator[dict]:
+    """MATH1 の現在設定を控え、teardownで必ず書き戻す。
+
+    復元は「演算子を元へ戻してから各パラメータ」の順で行う(パラメータの
+    有効・無効は演算子に依存するため)。`display` は最後に元へ戻す。
+    """
+    before = driver.get_math_config(MATH_CHANNEL)
+    tag = request.node.name
+    _report(f"[before:{tag}] math{MATH_CHANNEL}={before}")
+    try:
+        yield before
+    finally:
+        restore: dict = {
+            key: before[key]
+            for key in ("operator", "source1", "source2", "invert")
+        }
+        # 演算子依存で返らないキーは、返っていたときだけ復元対象にする
+        for key in ("lsource1", "lsource2", "scale", "offset_v", "fft", "filter"):
+            if key in before:
+                restore[key] = before[key]
+        restore["display"] = before["display"]
+
+        failure: Exception | None = None
+        try:
+            driver.configure_math(MATH_CHANNEL, **restore)
+        except Exception as exc:  # 復元は最後まで試みる
+            failure = exc
+
+        after = driver.get_math_config(MATH_CHANNEL)
+        drift = _diff(before, after)
+        _report(f"[restore:{tag}] math{MATH_CHANNEL} 復元後={after}")
+        if drift:
+            _report(f"[restore:{tag}] **復元漏れ**: {drift}")
+        if failure is not None:
+            _report(f"[restore:{tag}] **復元コマンド失敗**: {failure!r}")
+        assert failure is None, f"MATH{MATH_CHANNEL} の復元に失敗: {failure!r}"
+        assert not drift, f"MATH{MATH_CHANNEL} が復元されていません: {drift}"
+
+
+def test_configure_math_round_trip(
+    control: ControlService, driver: ScopeDriver, math_before: dict
+) -> None:
+    """算術演算 → FFT の順に設定し、read-backで確認する(復元はfixture)。
+
+    FFT経路では実機実測の3点も併せて確認する:
+
+    - ピーク表が複数行応答でも切り詰められないこと(改行区切り + 終端の空行)
+    - 振幅の単位がSI接頭辞を外した形で返ること
+    - `capture_waveform` の周波数軸メタデータが実測の関係式と合うこと
+    """
+    arithmetic = control.configure_math(
+        driver,
+        MATH_CHANNEL,
+        display=True,
+        operator="add",
+        source1="CH1",
+        source2="CH2",
+    )
+    applied = arithmetic["applied"]
+    _report(f"[math] add applied={applied} changed={arithmetic['changed']}")
+
+    assert applied["operator"] == "add"
+    assert applied["source1"] == "CH1"
+    assert applied["source2"] == "CH2"
+
+    fft_result = control.configure_math(
+        driver,
+        MATH_CHANNEL,
+        operator="fft",
+        fft={
+            "source": "CH1",
+            "window": "hanning",
+            "unit": "vrms",
+            "search_enabled": True,
+            "freq_start_hz": MATH_FFT_START_HZ,
+            "freq_end_hz": MATH_FFT_END_HZ,
+        },
+    )
+    _report(f"[math] fft applied={fft_result['applied']}")
+
+    config = driver.get_math_config(MATH_CHANNEL)
+    _report(f"[math] fft readback={config['fft']} peaks={config.get('peaks')}")
+
+    assert config["operator"] == "fft"
+    assert config["fft"]["window"] == "hanning"
+    assert config["fft"]["unit"] == "vrms"
+    assert config["fft"]["freq_start_hz"] == pytest.approx(
+        MATH_FFT_START_HZ, rel=REL_TOLERANCE, abs=ABS_TOLERANCE
+    )
+    assert "peak_warnings" not in config
+    for peak in config["peaks"]:
+        assert peak["amplitude_unit"] == "Vrms"  # `mVrms` は換算済み
+
+    capture = capture_waveform(driver, Config(), f"MATH{MATH_CHANNEL}")
+    _report(
+        f"[math] capture points={capture['points']} "
+        f"step={capture['frequency_step_hz']:g} Hz "
+        f"start={capture['frequency_start_hz']:g} Hz"
+    )
+
+    assert capture["x_unit"] == "Hz"
+    assert "sample_interval_s" not in capture
+    # 実測の関係式: 点数 × 周波数刻み = 表示終端周波数
+    assert capture["points"] * capture["frequency_step_hz"] == pytest.approx(
+        config["fft"]["freq_end_hz"], rel=1e-3
+    )
+
+
 # -- 12. 監査ログ(最後に実行し、それまでの全操作を検証)--------------------
 
 
@@ -1127,5 +1245,6 @@ def test_audit_log_records_every_write(audit_path: Path) -> None:
         "configure_trigger",
         "configure_decode",
         "configure_afg",
+        "configure_math",
     } <= set(tools)
     assert {"run", "stop", "single"} <= set(tools)

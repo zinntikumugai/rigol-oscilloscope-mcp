@@ -99,8 +99,21 @@ class LanTransport:
     def query(self, command: str, timeout_s: float | None = None) -> str:
         deadline = self._deadline(timeout_s)
         self._send(command, deadline)
-        line = self._read_line(command, deadline)
-        return line.decode("ascii", errors="replace").rstrip("\r\n")
+        return self._next_line(command, deadline)
+
+    def query_lines(self, command: str, timeout_s: float | None = None) -> list[str]:
+        """複数行応答を、終端の**空行**が来るまで読む(空行自体は返さない)。
+
+        実機MHO98の `:MATH<n>:FFT:SEARch:RES?` は行を改行で区切り、最後に空行を
+        1本足して終わる(ピークが無いときは空行1本だけ)。`query` の1行読みでは
+        残りが受信バッファに居座り、以降のqueryが前問の応答を読むdesyncになる。
+        """
+        deadline = self._deadline(timeout_s)
+        self._send(command, deadline)
+        lines: list[str] = []
+        while line := self._next_line(command, deadline):
+            lines.append(line)
+        return lines
 
     def query_binary(self, command: str, timeout_s: float | None = None) -> bytes:
         deadline = self._deadline(timeout_s)
@@ -195,6 +208,11 @@ class LanTransport:
         out = bytes(self._buf[:n])
         del self._buf[:n]
         return out
+
+    def _next_line(self, command: str, deadline: float) -> str:
+        """1行読んで、終端の改行を落とした文字列で返す。"""
+        raw = self._read_line(command, deadline)
+        return raw.decode("ascii", errors="replace").rstrip("\r\n")
 
     def _read_line(self, command: str, deadline: float) -> bytes:
         """デッドラインまでに '\\n' 終端の1行を読む(改行を含めて返す)。"""

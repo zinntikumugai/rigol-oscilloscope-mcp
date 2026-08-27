@@ -919,18 +919,33 @@ def test_math_channel5_is_silent(scope: FakeScope) -> None:
 
 
 def test_math_fft_peak_table_requires_search_enabled(scope: FakeScope) -> None:
-    """ピーク表はサーチ有効時のみ。無効時は空応答(要実機検証)。"""
-    assert scope.handle(":MATH1:FFT:SEARch:RES?") == b""
+    """ピーク表はサーチ有効時のみ。無効時は空行1本(実機実測)。"""
+    assert scope.handle(":MATH1:FFT:SEARch:RES?") == b"\n"
 
     scope.handle(":MATH1:FFT:SEARch:ENABle ON")
     table = scope.handle(":MATH1:FFT:SEARch:RES?")
 
     assert table is not None
-    lines = table.decode("ascii").splitlines()
+    # 実機実測の形: 行を改行で区切り、末尾に終端の空行が1本つく
+    assert table.endswith(b"\n\n")
+    lines = table.decode("ascii").split("\n")
     assert lines[0] == "1,2.50000MHz,-24.98dBV"
-    assert lines[-1] == "5,6.50125MHz,-32.34dBV"
+    assert lines[4] == "5,6.50125MHz,-32.34dBV"
+    assert lines[5:] == ["", ""]
     # 他チャンネルのサーチ状態には影響しない
-    assert scope.handle(":MATH2:FFT:SEARch:RES?") == b""
+    assert scope.handle(":MATH2:FFT:SEARch:RES?") == b"\n"
+
+
+def test_fake_transport_query_lines_stops_at_the_blank_line(scope: FakeScope) -> None:
+    transport = FakeTransport(scope)
+    transport.open()
+    scope.handle(":MATH1:FFT:SEARch:ENABle ON")
+
+    lines = transport.query_lines(":MATH1:FFT:SEARch:RES?")
+
+    assert len(lines) == 5
+    assert lines[0] == "1,2.50000MHz,-24.98dBV"
+    assert transport.query_lines(":MATH2:FFT:SEARch:RES?") == []
 
 
 def test_waveform_source_accepts_math(scope: FakeScope) -> None:

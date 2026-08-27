@@ -330,11 +330,37 @@ def test_parse_fft_peaks_frequency_suffixes(text: str, expected_hz: float) -> No
 
 
 def test_parse_fft_peaks_keeps_the_amplitude_unit_verbatim() -> None:
-    """振幅の単位はFFT:UNIT依存で全集合が未検証のため、逐語で保持する。"""
+    """接頭辞の無い単位はそのまま保持する。"""
     peaks, _ = parse_fft_peaks("1,1.0kHz,0.25Vrms")
 
     assert peaks[0]["amplitude"] == pytest.approx(0.25)
     assert peaks[0]["amplitude_unit"] == "Vrms"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_value", "expected_unit"),
+    [
+        # 実機実測(MHO98 fw 00.01.00、`:MATH1:FFT:UNIT VRMS`)
+        ("1,9.09294kHz,851.6mVrms", 0.8516, "Vrms"),
+        ("5,129.047Hz,14.51mVrms", 0.01451, "Vrms"),
+        ("1,1.0kHz,12.0uVrms", 12.0e-6, "Vrms"),
+        ("1,1.0kHz,12.0µVrms", 12.0e-6, "Vrms"),
+        ("1,1.0kHz,1.5kVrms", 1500.0, "Vrms"),
+        # dB系の先頭 d は deci接頭辞ではない(値も単位もそのまま)
+        ("1,9.09061kHz,-1.373dBV", -1.373, "dBV"),
+        ("4,63.0150kHz,-35.15dBV", -35.15, "dBV"),
+        ("1,1.0kHz,-10.0dBm", -10.0, "dBm"),
+    ],
+)
+def test_parse_fft_peaks_amplitude_si_prefix(
+    text: str, expected_value: float, expected_unit: str
+) -> None:
+    """振幅もSI接頭辞を換算する(`851.6mVrms` は 0.8516 Vrms)。"""
+    peaks, warnings = parse_fft_peaks(text)
+
+    assert warnings == []
+    assert peaks[0]["amplitude"] == pytest.approx(expected_value)
+    assert peaks[0]["amplitude_unit"] == expected_unit
 
 
 def test_parse_fft_peaks_falls_open_on_unparsable_lines() -> None:
