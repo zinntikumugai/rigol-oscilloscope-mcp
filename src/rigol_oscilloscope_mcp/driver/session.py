@@ -56,6 +56,13 @@ class ScpiSession:
         logger.debug("<- %s", response.strip())
         return response
 
+    def query_lines(self, command: str) -> list[str]:
+        """複数行で返る応答を終端の空行まで読む(FFTピーク表専用の経路)。"""
+        logger.debug("-> %s", command)
+        lines = self.transport.query_lines(command, self.timeout_s)
+        logger.debug("<- <%d lines>", len(lines))
+        return lines
+
     def query_binary(self, command: str, timeout_s: float | None = None) -> bytes:
         """バイナリブロック応答を返す。スクリーンショット等は長めの猶予を渡す。"""
         logger.debug("-> %s", command)

@@ -47,7 +47,14 @@ class FakeTransport:
             pass
 
     def query(self, command: str, timeout_s: float | None = None) -> str:
-        return self._respond(command, timeout_s).decode("ascii")
+        # 実機のLAN/USBはいずれも1行しか読まない。フェイクも同じ意味論にして
+        # 「複数行応答を query で読む」実装ミスがテストで露見するようにする。
+        return self._respond(command, timeout_s).decode("ascii").split("\n", 1)[0]
+
+    def query_lines(self, command: str, timeout_s: float | None = None) -> list[str]:
+        text = self._respond(command, timeout_s).decode("ascii")
+        head = text.split("\n\n", 1)[0].strip("\n")
+        return head.split("\n") if head else []
 
     def query_binary(self, command: str, timeout_s: float | None = None) -> bytes:
         buffer = bytearray(self._respond(command, timeout_s))

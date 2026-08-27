@@ -205,6 +205,81 @@ def test_write_appends_newline_and_sends_ascii() -> None:
     assert received == [":RUN"]
 
 
+# --- query_lines(複数行応答)-----------------------------------------------
+
+
+def test_query_lines_reads_until_the_terminating_blank_line() -> None:
+    """実機MHO98の `:MATH1:FFT:SEARch:RES?`(改行区切り + 末尾に空行1本)。"""
+
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        conn.sendall(b"1,9.09061kHz,-1.373dBV\n2,27.0239kHz,-20.45dBV\n\n")
+        wait_close(conn)
+
+    with stub(handler) as transport:
+        assert transport.query_lines(":MATH1:FFT:SEARch:RES?") == [
+            "1,9.09061kHz,-1.373dBV",
+            "2,27.0239kHz,-20.45dBV",
+        ]
+
+
+def test_query_lines_empty_table_is_just_a_blank_line() -> None:
+    """探索OFF時の実機応答は空行1本のみ(行ゼロ)。"""
+
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        conn.sendall(b"\n")
+        wait_close(conn)
+
+    with stub(handler) as transport:
+        assert transport.query_lines(":MATH1:FFT:SEARch:RES?") == []
+
+
+def test_query_lines_does_not_desync_the_next_query() -> None:
+    """終端の空行まで読み切るので、次のqueryが自分の応答を読む。"""
+    commands: list[str] = []
+
+    def handler(conn: socket.socket) -> None:
+        commands.append(recv_command(conn))
+        conn.sendall(b"1,1.00000kHz,-1.0dBV\n2,2.00000kHz,-2.0dBV\n\n")
+        commands.append(recv_command(conn))
+        conn.sendall(b"1.800000E+0\n")
+        wait_close(conn)
+
+    with stub(handler) as transport:
+        assert len(transport.query_lines("RES?")) == 2
+        assert transport.query("EXCursion?") == "1.800000E+0"
+
+    assert commands == ["RES?", "EXCursion?"]
+
+
+def test_query_lines_strips_crlf() -> None:
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        conn.sendall(b"1,1.00000kHz,-1.0dBV\r\n\r\n")
+        wait_close(conn)
+
+    with stub(handler) as transport:
+        assert transport.query_lines("RES?") == ["1,1.00000kHz,-1.0dBV"]
+
+
+def test_query_lines_times_out_without_the_blank_line_and_closes() -> None:
+    """行は届くが終端の空行が来ない場合も query と同じくTIMEOUT + 切断。"""
+
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        conn.sendall(b"1,1.00000kHz,-1.0dBV\n")
+        wait_close(conn)
+
+    with stub(handler, timeout_s=0.2) as transport:
+        with pytest.raises(ScopeError) as exc:
+            transport.query_lines("RES?")
+
+        assert exc.value.code == ErrorCode.TIMEOUT
+        assert exc.value.detail["command"] == "RES?"
+        assert transport.is_open is False
+
+
 # --- query_binary -----------------------------------------------------------
 
 

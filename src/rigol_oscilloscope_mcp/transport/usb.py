@@ -137,6 +137,23 @@ class UsbTransport:
                 raise self._failure(command, exc) from exc
         return response.rstrip("\r\n")
 
+    def query_lines(self, command: str, timeout_s: float | None = None) -> list[str]:
+        """複数行応答を、終端の**空行**が来るまで読む(LanTransportと同じ意味論)。
+
+        USBTMCでもメッセージは終端文字で区切られて届くため、`read()` を空行まで
+        繰り返す。読み残しは次のqueryのdesyncになるので途中では止めない。
+        """
+        instrument = self._require_open(command)
+        lines: list[str] = []
+        with self._timeout_override(instrument, timeout_s):
+            try:
+                instrument.write(command)
+                while (line := instrument.read().rstrip("\r\n")) != "":
+                    lines.append(line)
+            except self._visa_error as exc:
+                raise self._failure(command, exc) from exc
+        return lines
+
     def query_binary(self, command: str, timeout_s: float | None = None) -> bytes:
         instrument = self._require_open(command)
         with self._timeout_override(instrument, timeout_s):

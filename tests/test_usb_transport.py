@@ -407,6 +407,48 @@ def test_query_failure_is_not_masked_by_timeout_restore(
     assert link.is_open is False
 
 
+def test_query_lines_reads_until_the_blank_line(visa: FakeVisa) -> None:
+    """複数行応答(FFTピーク表)は終端の空行まで読む(LANと同じ意味論)。"""
+    link = opened(visa)
+    visa.instrument.responses.extend(
+        ["1,9.09061kHz,-1.373dBV", "2,27.0239kHz,-20.45dBV", "", "NEXT"]
+    )
+
+    lines = link.query_lines(":MATH1:FFT:SEARch:RES?")
+
+    assert lines == ["1,9.09061kHz,-1.373dBV", "2,27.0239kHz,-20.45dBV"]
+    assert visa.instrument.written == [":MATH1:FFT:SEARch:RES?"]
+    # 終端の空行までで止まるので、次の応答は残っている
+    assert link.query("NEXT?") == "NEXT"
+
+
+def test_query_lines_empty_table_is_just_a_blank_line(visa: FakeVisa) -> None:
+    link = opened(visa)
+    visa.instrument.responses.append("")
+
+    assert link.query_lines(":MATH1:FFT:SEARch:RES?") == []
+
+
+def test_query_lines_timeout_maps_to_timeout_error(visa: FakeVisa) -> None:
+    link = opened(visa)
+    visa.instrument.read_error = FakeVisaIOError(VI_ERROR_TMO)
+
+    with pytest.raises(ScopeError) as excinfo:
+        link.query_lines(":MATH1:FFT:SEARch:RES?")
+
+    assert excinfo.value.code == ErrorCode.TIMEOUT
+    assert link.is_open is False
+
+
+def test_query_lines_without_open_is_disconnected() -> None:
+    link = UsbTransport(RESOURCE)
+
+    with pytest.raises(ScopeError) as excinfo:
+        link.query_lines(":MATH1:FFT:SEARch:RES?")
+
+    assert excinfo.value.code == ErrorCode.DEVICE_DISCONNECTED
+
+
 def test_query_without_open_is_disconnected() -> None:
     link = UsbTransport(RESOURCE)
 

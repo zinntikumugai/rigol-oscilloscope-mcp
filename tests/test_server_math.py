@@ -251,7 +251,10 @@ def test_capture_waveform_of_an_fft_trace_reports_a_frequency_axis(
     result = data(server, "capture_waveform", {"channel": "MATH1"})
 
     assert result["x_unit"] == "Hz"
+    assert result["frequency_step_hz"] > 0
+    assert isinstance(result["frequency_start_hz"], float)
     assert "effective_sample_rate_sa_per_s" not in result
+    assert "sample_interval_s" not in result
 
 
 def test_analyze_waveform_rejects_an_fft_trace(server) -> None:

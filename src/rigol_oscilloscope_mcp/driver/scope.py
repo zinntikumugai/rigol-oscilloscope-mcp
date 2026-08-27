@@ -1818,8 +1818,12 @@ class ScopeDriver:
             }
             config["fft"] = fft
             if fft["search_enabled"]:
+                # ピーク表だけは複数行応答(実機実測: 改行区切り + 終端の空行)。
+                # 1行読みでは残りが受信バッファに居座り、以降のqueryがdesyncする。
                 peaks, warnings = parse_fft_peaks(
-                    self.session.query(f"{prefix}{_MATH_FFT_PEAKS_PATH}")
+                    "\n".join(
+                        self.session.query_lines(f"{prefix}{_MATH_FFT_PEAKS_PATH}")
+                    )
                 )
                 config["peaks"] = peaks
                 if warnings:
@@ -1844,6 +1848,15 @@ class ScopeDriver:
         _, prefix = self._math_prefix(channel)
         _, from_scpi = self._afg_enum("math_operators", "the math operator")
         return from_scpi(self.session.query(f"{prefix}:OPERator?"))
+
+    def get_math_fft_start_hz(self, channel: int) -> float:
+        """FFTトレースの開始周波数だけを返す(問い合わせ1本)。
+
+        プリアンブルの xorigin は**時間軸の値が残る**(実機実測: FFT表示中でも
+        -2.5e-3 s)。周波数軸の原点はこのフィールドからしか得られない。
+        """
+        number, prefix = self._math_prefix(channel)
+        return float(self._math_read(prefix, number, ":FFT:FREQuency:STARt", "number"))
 
     # -- Acquisition ------------------------------------------------------
 

@@ -113,12 +113,28 @@ def parse_eng_number(text: str) -> float:
 #: FFTピーク表の周波数サフィックス(ガイド3.16.30の返却例は MHz)
 _FREQ_SUFFIXES = {"hz": 1.0, "khz": 1e3, "mhz": 1e6, "ghz": 1e9}
 
-#: `5,6.50125MHz,-32.34dBV` の1行。振幅の単位は末尾の英字をそのまま保持する
-#: (`:MATH<n>:FFT:UNIT` 依存で全集合が未検証のため、こちらでは列挙しない)。
+#: 振幅列のSI接頭辞(実機実測: `:FFT:UNIT VRMS` は `851.6mVrms` と接頭辞付きで返る)。
+#: **大文字小文字を区別する**(`m`=ミリ / `M`=メガ)。`d`(デシ)は意図的に持たない
+#: — `dBV` / `dBm` の先頭 `d` を接頭辞と誤読しないため。
+_AMPLITUDE_PREFIXES = {
+    "p": 1e-12, "n": 1e-9, "u": 1e-6, "µ": 1e-6, "μ": 1e-6,
+    "m": 1e-3, "k": 1e3, "K": 1e3, "M": 1e6, "G": 1e9,
+}
+
+#: `5,6.50125MHz,-32.34dBV` の1行。振幅の単位は接頭辞を外して保持する
+#: (`:MATH<n>:FFT:UNIT` 依存で全集合が未検証のため、単位本体は列挙しない)。
 _FFT_PEAK_RE = re.compile(
     r"^(\d+)\s*,\s*([+-]?[\d.]+(?:[eE][+-]?\d+)?)\s*([A-Za-z]*)\s*,\s*"
-    r"([+-]?[\d.]+(?:[eE][+-]?\d+)?)\s*([A-Za-z]*)$"
+    r"([+-]?[\d.]+(?:[eE][+-]?\d+)?)\s*([A-Za-zµμ]*)$"
 )
+
+
+def _amplitude(value: float, unit: str) -> tuple[float, str]:
+    """`(851.6, "mVrms")` → `(0.8516, "Vrms")`。dB系と接頭辞なしはそのまま。"""
+    if unit[:2].lower() == "db":  # dBV / dBm: 先頭の d はデシ接頭辞ではない
+        return value, unit
+    scale = _AMPLITUDE_PREFIXES.get(unit[:1]) if len(unit) > 1 else None
+    return (value, unit) if scale is None else (value * scale, unit[1:])
 
 
 def parse_fft_peaks(text: object) -> tuple[list[dict], list[str]]:
@@ -130,8 +146,11 @@ def parse_fft_peaks(text: object) -> tuple[list[dict], list[str]]:
     積む(**例外は投げない** — ピーク表は付加情報であり、1行の想定外で
     `get_math_state` 全体を落とさない)。
 
-    行区切りは改行のほか `;` も受理する(ガイドは複数行の例を示すが、実機の
-    実際の区切りは未検証 — 実機検証項目)。
+    実機MHO98(fw 00.01.00)の区切りは**改行**で、末尾に終端の空行が1本つく
+    (読み出しは `Transport.query_lines`)。念のため `;` 区切りも受理する。
+
+    周波数・振幅の両列ともSI接頭辞を換算する(`851.6mVrms` → 0.8516 `Vrms`)。
+    ただし `dBV` / `dBm` の先頭 `d` は接頭辞ではないため換算しない。
     """
     if not isinstance(text, str):
         return [], [f"peak search response is not a string: {text!r}"]
@@ -150,12 +169,13 @@ def parse_fft_peaks(text: object) -> tuple[list[dict], list[str]]:
             peaks.append({"raw": line})
             warnings.append(f"cannot interpret peak search line: {line!r}")
             continue
+        amplitude, unit = _amplitude(float(match.group(4)), match.group(5))
         peaks.append(
             {
                 "index": int(match.group(1)),
                 "frequency_hz": float(match.group(2)) * scale,
-                "amplitude": float(match.group(4)),
-                "amplitude_unit": match.group(5),
+                "amplitude": amplitude,
+                "amplitude_unit": unit,
             }
         )
     return peaks, warnings

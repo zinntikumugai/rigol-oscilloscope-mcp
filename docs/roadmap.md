@@ -78,13 +78,13 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 
 (:LA は 2.2 に既載のため本表から除外)
 
-### 2.5.1 M1: MATH演算(実装完了・実機検証は残件)
+### 2.5.1 M1: MATH演算(実装完了・実機検証は (e) を除き完了)
 
 **`configure_math`(SAFE_WRITE)と `get_math_state`(READ_ONLY)を実装済み**([tools.md](tools.md) 11章)。ホスト側FFT(`analyze_waveform`)との棲み分けは当初の想定どおり — 機上FFTは「画面に出る(人間が確認できる)」「ピーク表がテキストで取れる(波形転送ゼロ)」点で別価値がある。
 
 - **`configure_math`**: 演算子21種(加減乗除・論理4種・FFT・微積分系・デジタルフィルタ4種・AXB)、算術ソース(`source1` / `source2`)と論理ソース(`lsource1` / `lsource2`)、垂直(`scale` / `offset_v` / `invert`)、`fft` サブ辞書(入力ch・窓・単位・モード・平均回数・縦軸・表示周波数範囲・ピーク探索6項目)、`filter` サブ辞書(種別・W1・W2)。**送信順は表示ONが先頭・OFFが末尾**に固定(表示OFF中の書き込み無視quirk対策)。検証は全て送信前で、不正が1つでもあれば1コマンドも送らない
 - **`get_math_state`**: 演算子に応じた条件付き読み取り(未検証サブツリーを突かない)。`:MATH<n>:FFT:SEARch:RES?` のピーク表は当初方針どおり**Toolを増やさず**返却の `peaks` に含める(解釈できない行は `raw` + `peak_warnings` で fail-open)
-- **波形取得**: 当初の「`source` 引数拡張」ではなく**既存の `channel` 引数を拡張**する形で実現した(引数を増やさない)。`capture_waveform` / `analyze_waveform` が `"MATH1"`〜`"MATH4"` を受理し、`read_samples` 経路をそのまま流用する。FFT演算のトレースは `x_unit: "Hz"` を付けて `effective_sample_rate_sa_per_s` を省き、`analyze_waveform` では**取得前に `INVALID_PARAMETER` で拒否**する(横軸が周波数のトレースに時間軸統計・ホスト側FFTは意味を持たないため)
+- **波形取得**: 当初の「`source` 引数拡張」ではなく**既存の `channel` 引数を拡張**する形で実現した(引数を増やさない)。`capture_waveform` / `analyze_waveform` が `"MATH1"`〜`"MATH4"` を受理し、`read_samples` 経路をそのまま流用する。FFT演算のトレースは `x_unit: "Hz"` / `frequency_step_hz` / `frequency_start_hz` を返して時間軸前提のキーを省き、`analyze_waveform` では**取得前に `INVALID_PARAMETER` で拒否**する(横軸が周波数のトレースに時間軸統計・ホスト側FFTは意味を持たないため)
 - **プロファイル宣言**: capabilities に `math_channels` / `ref_channels`、dialect に `math_operators` / `math_fft_windows` / `math_fft_units` / `math_fft_modes` / `math_fft_search_orders` / `math_filter_types`(`mho98.yaml` のみ。[device-profiles.md](device-profiles.md) 2.1 / 2.2)。`:MATH<n>` はファミリ分岐の実例が無いため `math_prefix` 方言は作らず、`math_channels` の宣言の不在をそのままゲートにしている
 - **`:WAVeform:SOURce MATH<n>` の可否は解決済み**: ガイド3.28.1に `{CHANnel1-4|MATH1-4}` と逐語で記載があり(`NORMal` モード限定 = 既定で使用しているモード)、M1最大のリスクだった「取得不能なら画面キャプチャ頼み」は回避できた
 
@@ -93,14 +93,20 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 - `:FFT:HSCale` / `:FFT:HCENter` — `fft.freq_start_hz` / `fft.freq_end_hz` で表現できる別表現(AFGの `:PERiod` 恒久スキップと同じ原則)
 - `GRID` / `EXPand` / `RESet` / `WAVetype` / `SENSitivity` / `DISTance` / `THReshold`(論理演算のしきい値)/ `WINDow:TITLe?` / `LABel:SHOW` / `DISMode` — 画面装飾・本体UI寄りの項目で、MCPから触る価値が薄い
 
-**残件(実機検証。記録先は [verification/mho98-math.md](verification/mho98-math.md) — 現時点では手順のみのスケルトンで、実測結果は未記入):**
+**実機検証(2026-08-27、MHO98 / fw 00.01.00。記録: [verification/mho98-math.md](verification/mho98-math.md)):**
 
-1. **MATH表示OFF時のクエリ挙動(沈黙の有無)** — fail-dangerousのため最初に確認する。沈黙する場合は `get_math_state` が先頭で読む `:DISPlay?` を短絡点にする
-2. `:MATH1:OPERator?` の工場出荷デフォルトreadbackトークン(短形の実測裏取り)
-3. **FFTトレースのプリアンブル解釈**(横軸Hz時の xincrement / xorigin)と、`:FFT:SEARch:RES?` の実フォーマット(`UNIT VRMS` / `DB` の両方、行区切りが改行か `;` か)。**LAN transportの `query()` は1行しか読まないため、真に複数行で返る場合は切り詰められる**(実装が明示している未解決リスク)
-4. `configure_math` の往復(現在値取得 → set → readback → finally復元)
-5. 表示OFF中の書き込み無視quirkの有無 — 結果次第でAFG式の送信前拒否を追加する
-6. FFT + ピーク表 + `capture_waveform("MATH1")` のE2E(`x_unit` と `note` の文言を確定する)
+実測で**実装バグ3件**が判明し、いずれも修正済み(テスト付き):
+
+1. **`:FFT:SEARch:RES?` は複数行応答**(改行区切り + 末尾に終端の空行。`;` は現れない)。`query()` が1行しか読まないため読み残しが以降の全クエリをdesyncさせ、実機で `ConnectionResetError` を観測した(再接続で回復)→ `Transport.query_lines()`(LAN / USB / Fake + Protocol)を追加し、ピーク表だけをその経路で読む
+2. **ピーク表の振幅にSI接頭辞が付く**(`851.6mVrms`)。逐語保持では値が1000倍ずれていた → 周波数列と同じ換算を振幅列にも適用(`dBV` / `dBm` の先頭 `d` はデシ接頭辞ではないため除外)
+3. **FFTプリアンブルのx軸が想定と違った**。xincrement は Hz/pt ではなく **GHz/pt**(`frequency_step_hz` = xincrement × 1e9。表示範囲3通りで `点数 × 刻み = 表示終端周波数` が厳密に一致)、**xorigin は開始周波数ではなく時間軸の値が残る** → `capture_waveform` は `frequency_step_hz` / `frequency_start_hz`(`:FFT:FREQuency:STARt?` から読む)を返し、時間軸前提のキーはFFTトレースでは返さない
+
+併せて確定した事項: **MATH表示OFFでもクエリは沈黙しない**(4チャンネルで確認。`:DISPlay?` 先読みの短絡は不要)/ `:MATH1:OPERator?` のデフォルトは短形 `ADD`(写像は正しい)/ `:WAVeform:STARt` / `:STOP` はMATHソースでも有効(`max_points` が効く)。
+
+**残件:**
+
+1. **表示OFF中の書き込み無視quirkの有無**(検証項目 (e)。未実施の唯一の項目)— 結果次第でAFG式の送信前拒否を追加する
+2. 追加した実機テスト(`tests/device/test_readonly.py` のMATH状態読み取り、`tests/device/test_write.py::test_configure_math_round_trip`)の実機実行
 
 ## 3. プラグイン化(完了・要件へ昇格)
 
