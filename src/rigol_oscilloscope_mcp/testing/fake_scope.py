@@ -252,6 +252,20 @@ _SOURCES = (
     + ("OFF",)
 )
 
+#: パラレルのデータソース(ガイド3.4.10.1)。デジタルchのグループ・アナログch・USER
+_PARALLEL_BUSES = (
+    "D7D0", "D15D8", "D15D0", "D0D7", "D8D15", "D0D15",
+    "CHANnel1", "CHANnel2", "CHANnel3", "CHANnel4", "USER",
+)
+
+#: ビット別ソース(ガイド3.4.10.6)。`OFF` は値域に無いので `_SOURCES` から外す
+_PARALLEL_BIT_SOURCES = _SOURCES[:-1]
+
+#: データソースが USER のときだけ書けるパラレル項目(ガイド3.4.10.4-3.4.10.6 の
+#: Remark。実機実測でも USER 以外では `-200` で拒否される —
+#: docs/verification/mho98-phase4.md 5章)。`:SOURce` は専用ハンドラ側で見る
+_PARALLEL_USER_ONLY = frozenset({"width", "bitx"})
+
 #: プロトコル別プロパティ: (内部キー, ニモニック仕様, 型, 既定値)。
 #: 型: "bool" / "int" / "float" / "src" / 列挙のタプル。
 #: 既定値はMHO900プログラミングガイド 3.4 の初期値(BAUD 9600 等は実機実測とも一致)。
@@ -298,9 +312,11 @@ _BUS_PROTOCOL_PROPS: dict[str, tuple[tuple[str, str, object, object], ...]] = {
         ("baud", "BAUD", "int", 9600),
     ),
     "PARallel": (
+        ("bus", "BUS", _PARALLEL_BUSES, "CHAN1"),
         ("clk", "CLK", "src", "OFF"),
         ("slope", "SLOPe", ("POSitive", "NEGative"), "POS"),
         ("width", "WIDTh", "int", 8),
+        ("bitx", "BITX", "int", 0),
         ("endian", "ENDian", ("MSB", "LSB"), "MSB"),
         ("polarity", "POLarity", ("POSitive", "NEGative"), "POS"),
     ),
@@ -637,6 +653,11 @@ class FakeScope:
             }
             for n in range(1, BUS_COUNT + 1)
         }
+        for state in self.buses.values():
+            # パラレルのビット別ソースは「`:BITX` で選び `:SOURce` で割り当てる」
+            # 対の状態で、1キー=1ニモニックの props 表に収まらないので別に持つ
+            # (ビット番号 → ソース。未割り当てのビットは query 側が既定を返す)
+            state["PARallel"]["sources"] = {}
         # 信号発生(2ch)。既定はガイドの初期値 = 実機プローブの実測値
         self.afg: dict[int, dict] = {
             n: {
@@ -982,6 +1003,16 @@ class FakeScope:
             (rf"{bus}:{_mn('EVENt')}\?", lambda m: b"1" if self._bus(m)["event"] else b"0"),
             (rf"{bus}:{_mn('EVENt')}\s+{_VALUE}", self._bus_event_write),
             (rf"{bus}:{_mn('DATA')}\?", self._bus_data),
+            # `:PARallel:SOURce` は選択中ビット(`:BITX`)のソースなので props 表の
+            # 「1キー=1値」に収まらない。専用ハンドラで対として扱う
+            (
+                rf"{bus}:{_mn('PARallel')}:{_mn('SOURce')}\?",
+                self._bus_parallel_source_query,
+            ),
+            (
+                rf"{bus}:{_mn('PARallel')}:{_mn('SOURce')}\s+{_VALUE}",
+                self._bus_parallel_source_write,
+            ),
             (rf"{bus}:{_mn('THReshold')}\?\s+{_VALUE}", self._bus_threshold_query),
             (
                 rf"{bus}:{_mn('THReshold')}\s+(\S+)\s*,\s*(\S+)",
@@ -1464,6 +1495,9 @@ class FakeScope:
     def _bus_prop_write(
         self, match: re.Match[str], protocol: str, key: str, kind: object, token: str
     ) -> None:
+        if protocol == "PARallel" and key in _PARALLEL_USER_ONLY:
+            if self._bus_parallel_user(match) is None:
+                return None
         if kind == "bool":
             value: object = self._on_off(token)
         elif kind == "int":
@@ -1475,6 +1509,40 @@ class FakeScope:
         else:
             value = self._enum(token, kind)  # 列挙(仕様タプル)
         self._bus(match)[protocol][key] = value
+        return None
+
+    def _bus_parallel_user(self, match: re.Match[str]) -> dict | None:
+        """データソースが USER のときだけパラレル状態を返す。
+
+        実機実測(firmware 00.01.00、mho98-phase4.md 5章): USER 以外では
+        `:WIDTh` / `:BITX` / `:SOURce` の書き込みが `-200,"Command execute failed"`
+        で拒否される。**沈黙はせず**エラーキューに積むだけなので、ここでも
+        `SilentTimeout` は投げずに値を据え置く。
+        """
+        parallel = self._bus(match)["PARallel"]
+        if parallel["bus"] != "USER":
+            self.error_queue.append(EXECUTE_ERROR)
+            return None
+        return parallel
+
+    def _bus_parallel_source_query(self, match: re.Match[str]) -> bytes:
+        """選択中ビットのソースを返す(問い合わせはUSER以外でも拒否しない)。
+
+        書き込みと違い、問い合わせが拒否されるかは実機未確認。`:WIDTh?` は
+        USER 以外でも問題なく返るのが実測なので、ここでも拒否しない。
+        既定値はガイドの "Related to the selected bit" を「ビット i → D i」と
+        解釈した(要実機検証)。
+        """
+        parallel = self._bus(match)["PARallel"]
+        bit = parallel["bitx"]
+        return str(parallel["sources"].get(bit, f"D{bit}")).encode("ascii")
+
+    def _bus_parallel_source_write(self, match: re.Match[str]) -> None:
+        parallel = self._bus_parallel_user(match)
+        if parallel is not None:
+            parallel["sources"][parallel["bitx"]] = self._enum(
+                match.group(2), _PARALLEL_BIT_SOURCES
+            )
         return None
 
     # -- 内部: 信号発生 ---------------------------------------------------

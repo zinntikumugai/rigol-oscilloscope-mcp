@@ -1189,13 +1189,15 @@ def test_configure_decode_lin(driver: ScopeDriver, scope: FakeScope) -> None:
 
 
 def test_configure_decode_parallel(driver: ScopeDriver, scope: FakeScope) -> None:
-    driver.configure_decode(
+    applied = driver.configure_decode(
         1,
         "parallel",
         settings={
             "clk_source": "CH4",
             "clk_slope": "falling",
-            "bus_width": 8,
+            "bus": "user",
+            "bus_width": 2,
+            "bit_sources": ["CH1", "D3"],
             "endian": "lsb",
             "polarity": "negative",
         },
@@ -1205,10 +1207,84 @@ def test_configure_decode_parallel(driver: ScopeDriver, scope: FakeScope) -> Non
         ":BUS1:MODE PARallel",
         ":BUS1:PARallel:CLK CHANnel4",
         ":BUS1:PARallel:SLOPe NEGative",
-        ":BUS1:PARallel:WIDTh 8",
+        ":BUS1:PARallel:BUS USER",
+        ":BUS1:PARallel:WIDTh 2",
         ":BUS1:PARallel:ENDian LSB",
         ":BUS1:PARallel:POLarity NEGative",
+        ":BUS1:PARallel:BITX 0",
+        ":BUS1:PARallel:SOURce CHANnel1",
+        ":BUS1:PARallel:BITX 1",
+        ":BUS1:PARallel:SOURce D3",
     ]
+    assert applied["settings"]["bus"] == "user"
+    assert applied["settings"]["bus_width"] == 2
+    assert applied["settings"]["bit_sources"] == ["CH1", "D3"]
+
+
+def test_configure_decode_parallel_sends_bus_before_width(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """送信順は**呼び出し側のキー順ではなく表の並び**(`:BUS` が `:WIDTh` の前提)。"""
+    driver.configure_decode(1, "parallel", settings={"bus_width": 4, "bus": "user"})
+
+    assert bus_writes(scope) == [
+        ":BUS1:MODE PARallel",
+        ":BUS1:PARallel:BUS USER",
+        ":BUS1:PARallel:WIDTh 4",
+    ]
+
+
+def test_configure_decode_parallel_width_without_user_bus_is_device_rejected(
+    driver: ScopeDriver,
+) -> None:
+    """`bus` を `user` にしないままの `bus_width` は**機器が** `-200` で拒す。
+
+    ホスト側では結合を検証しない(機器自身がエラーを自己申告する経路に任せる)。
+    """
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "parallel", settings={"bus_width": 4})
+
+    assert excinfo.value.code == ErrorCode.SCPI_ERROR
+
+
+def test_configure_decode_parallel_bit_sources_use_the_current_width(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`bus_width` を同時に指定しないときは現在のバス幅(FakeScope既定=8)で検証する。"""
+    driver.configure_decode(1, "parallel", settings={"bus": "user"})
+    scope.command_log.clear()
+
+    driver.configure_decode(1, "parallel", settings={"bit_sources": ["D0", "D1"]})
+
+    assert bus_writes(scope) == [
+        ":BUS1:MODE PARallel",
+        ":BUS1:PARallel:BITX 0",
+        ":BUS1:PARallel:SOURce D0",
+        ":BUS1:PARallel:BITX 1",
+        ":BUS1:PARallel:SOURce D1",
+    ]
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"bus": "d16_d0"},
+        {"bus_width": 17},
+        {"bit_sources": "CH1"},
+        {"bit_sources": []},
+        {"bit_sources": ["CH1", "CH9"]},
+        {"bit_sources": ["D16"]},
+        {"bus_width": 2, "bit_sources": ["CH1", "CH2", "CH3"]},
+    ],
+)
+def test_configure_decode_parallel_rejects_bad_bit_sources_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope, settings: dict
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "parallel", settings=settings)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
 
 
 # -- 送信前に失敗する検証 --------------------------------------------------
@@ -1344,6 +1420,77 @@ def test_get_decode_config_round_trip(driver: ScopeDriver) -> None:
         "polarity",
         "rx_threshold_v",
     }
+
+
+def test_get_decode_config_parallel_reads_bit_sources_by_walking_bitx(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """ビット別ソースは一括問い合わせが無いので `:BITX` で1ビットずつ選び直して読む。"""
+    driver.configure_decode(
+        1,
+        "parallel",
+        settings={"bus": "user", "bus_width": 3, "bit_sources": ["CH1", "D3", "CH2"]},
+    )
+    scope.buses[1]["PARallel"]["bitx"] = 2  # 読み取り後に復元されること
+    scope.command_log.clear()
+
+    config = driver.get_decode_config(1, include_bit_sources=True)
+
+    assert config["settings"]["bus"] == "user"
+    assert config["settings"]["bit_sources"] == ["CH1", "D3", "CH2"]
+    assert scope.buses[1]["PARallel"]["bitx"] == 2
+    assert sent(scope, ":BITX") == [
+        ":BUS1:PARallel:BITX?",
+        ":BUS1:PARallel:BITX 0",
+        ":BUS1:PARallel:BITX 1",
+        ":BUS1:PARallel:BITX 2",
+        ":BUS1:PARallel:BITX 2",
+    ]
+
+
+def test_get_decode_config_omits_bit_sources_by_default(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """既定の読み取りは**書き込みを一切行わない**(`:BITX` を1本も送らない)。"""
+    driver.configure_decode(
+        1,
+        "parallel",
+        settings={"bus": "user", "bus_width": 2, "bit_sources": ["CH1", "D3"]},
+    )
+    scope.command_log.clear()
+
+    config = driver.get_decode_config(1)
+
+    assert config["settings"]["bus"] == "user"
+    assert "bit_sources" not in config["settings"]
+    assert [c for c in scope.command_log if "?" not in c] == []
+
+
+def test_get_decode_config_enum_readback_is_repeatable(driver: ScopeDriver) -> None:
+    """同じトークンを2度読んでも同じ意味的な値になる(列挙表を壊さない)。
+
+    `CHAN1` のように**短形が長形の前置になっていない**トークンは、読み取りが
+    表を破壊すると2回目で `SCPI_ERROR` になる。
+    """
+    driver.configure_decode(1, "parallel", settings={"bus": "ch2"})
+
+    assert driver.get_decode_config(1)["settings"]["bus"] == "ch2"
+    assert driver.get_decode_config(1)["settings"]["bus"] == "ch2"
+
+
+def test_get_decode_config_parallel_skips_bit_sources_unless_user(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """データソースが USER 以外のバスでは `:BITX` を1本も送らない(機器が拒否する)。"""
+    driver.configure_decode(1, "parallel", settings={"bus": "ch1"})
+    scope.command_log.clear()
+
+    config = driver.get_decode_config(1, include_bit_sources=True)
+
+    assert config["settings"]["bus"] == "ch1"
+    assert "bit_sources" not in config["settings"]
+    assert sent(scope, ":BITX") == []
+    assert sent(scope, ":PARALLEL:SOUR") == []
 
 
 def test_get_decode_config_uses_threshold_query_form(

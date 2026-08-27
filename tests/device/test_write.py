@@ -74,6 +74,10 @@ DECODE_BUS = 1
 DECODE_BAUD_BPS = 115200
 #: 標準搭載プロトコル(オプション必須のものはプロファイルに無い)
 DECODE_PROTOCOLS = ("uart", "i2c", "spi", "can", "lin", "parallel")
+#: パラレル(データソース=User)の検証値。ビット別ソースはCH1を避ける
+#: (CH1はプローブ補正信号の観測に使われているため)
+DECODE_BUS_WIDTH = 2
+DECODE_BIT_SOURCES = ("CH2", "CH3")
 
 #: 信号発生(AFG)の検証チャンネルと値。**設定系のテストは出力に触れない**
 AFG_CHANNEL = 1
@@ -725,7 +729,8 @@ def decode_before(
     利用者の設定であることに変わりはないので他のwrite検証と同じ規律で扱う。
     プロトコルがオプション必須(未対応)の場合はテスト自体をskipする。
     """
-    before = driver.get_decode_config(DECODE_BUS)
+    # `bit_sources` まで含めて控える(この走査だけは `:BITX` の書き込みを伴う)
+    before = driver.get_decode_config(DECODE_BUS, include_bit_sources=True)
     tag = request.node.name
     _report(f"[before:{tag}] bus{DECODE_BUS}={before}")
     if before["protocol"] not in DECODE_PROTOCOLS:
@@ -734,17 +739,22 @@ def decode_before(
         yield before
     finally:
         failure: Exception | None = None
-        # `bus_width`(:BUS<n>:PARallel:WIDTh)は書き戻せない。ガイド3.4.10.4は
-        # 「データソースが User(:PARallel:BUS USER)のときのみ使用可能」と述べ、
-        # 実測でも USER 以外では全ての値が -200 で拒否される(mho98-phase4.md)。
-        # 実装は前提の :PARallel:BUS を露出していない(roadmap 2.1 の follow-up)ため、
-        # 現状は復元対象から外す。値は書けないので元のまま変わらない。
-        settings = {
-            key: value
-            for key, value in before["settings"].items()
-            if key != "bus_width"
+        # `bus_width` / `bit_sources`(:BUS<n>:PARallel:WIDTh / :BITX + :SOURce)は
+        # **データソースが User のときだけ**書ける(ガイド3.4.10.4-3.4.10.6、
+        # 実測 mho98-phase4.md 5章)。`configure_decode` の送信順は `bus` → `bus_width`
+        # で固定されているので、1回の呼び出しでは「USERへ入って幅を戻す」と
+        # 「本来の bus へ戻す」を同時に行えない。**2段**で書き戻す。
+        settings = dict(before["settings"])
+        user_only = {
+            key: settings.pop(key)
+            for key in ("bus_width", "bit_sources")
+            if key in settings
         }
         try:
+            if user_only:
+                driver.configure_decode(
+                    DECODE_BUS, before["protocol"], settings={"bus": "user", **user_only}
+                )
             driver.configure_decode(
                 DECODE_BUS,
                 before["protocol"],
@@ -756,7 +766,7 @@ def decode_before(
         except Exception as exc:  # 復元は最後まで試みる
             failure = exc
 
-        after = driver.get_decode_config(DECODE_BUS)
+        after = driver.get_decode_config(DECODE_BUS, include_bit_sources=True)
         drift = _diff(before, after)
         _report(f"[restore:{tag}] bus{DECODE_BUS} 復元後={after}")
         if drift:
@@ -806,6 +816,75 @@ def test_configure_decode_uart_set_and_readback(
     readback = driver.get_decode_config(DECODE_BUS)
     assert readback["protocol"] == "uart"
     assert readback["settings"]["baud_bps"] == DECODE_BAUD_BPS
+
+
+def test_configure_decode_parallel_user_bus_set_and_readback(
+    control: ControlService,
+    driver: ScopeDriver,
+    decode_before: dict,
+) -> None:
+    """パラレルの `bus` → `bus_width` → `bit_sources` を1呼び出しで往復させる。
+
+    `:PARallel:WIDTh` は**データソースが User のときだけ**受理される
+    (ガイド3.4.10.4、切り分けは mho98-phase4.md 5章)。`bus` を公開したことで
+    前提を同一呼び出しで満たせるようになったことを実機で確認する。
+
+    `bit_sources` はデータソースが User のバスでしか読めない(User以外では
+    `:BITX` の書き込み自体が拒否される)ため、fixtureのスナップショットには
+    含まれない。**Userへ入った直後の値をこのテスト自身で控えて書き戻す。**
+    """
+    control.configure_decode(driver, DECODE_BUS, "parallel")
+    parallel_before = driver.get_decode_config(DECODE_BUS)["settings"]
+    control.configure_decode(driver, DECODE_BUS, "parallel", settings={"bus": "user"})
+    user_before = driver.get_decode_config(
+        DECODE_BUS, include_bit_sources=True
+    )["settings"]
+    _report(f"[decode] bus{DECODE_BUS} parallel before={parallel_before} user={user_before}")
+
+    try:
+        started = time.perf_counter()
+        result = control.configure_decode(
+            driver,
+            DECODE_BUS,
+            "parallel",
+            settings={
+                "bus": "user",
+                "bus_width": DECODE_BUS_WIDTH,
+                "bit_sources": list(DECODE_BIT_SOURCES),
+            },
+        )
+        elapsed = time.perf_counter() - started
+
+        applied = result["applied"]["settings"]
+        _report(
+            f"[decode] bus{DECODE_BUS} parallel applied={applied} "
+            f"changed={result['changed']} 所要 {elapsed:.3f}s"
+        )
+
+        assert applied["bus"] == "user"
+        assert applied["bus_width"] == DECODE_BUS_WIDTH
+        assert applied["bit_sources"] == list(DECODE_BIT_SOURCES)
+
+        readback = driver.get_decode_config(
+            DECODE_BUS, include_bit_sources=True
+        )["settings"]
+        assert readback["bus_width"] == DECODE_BUS_WIDTH
+        assert readback["bit_sources"] == list(DECODE_BIT_SOURCES)
+    finally:
+        # User配下の値はUserのうちに戻し、そのあとで元のデータソースへ戻す
+        control.configure_decode(
+            driver,
+            DECODE_BUS,
+            "parallel",
+            settings={
+                "bus": "user",
+                "bus_width": user_before["bus_width"],
+                "bit_sources": user_before["bit_sources"],
+            },
+        )
+        control.configure_decode(
+            driver, DECODE_BUS, "parallel", settings={"bus": parallel_before["bus"]}
+        )
 
 
 # -- 10. 信号発生(出力は一切ONにしない)-------------------------------------

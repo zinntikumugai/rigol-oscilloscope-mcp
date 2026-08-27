@@ -133,7 +133,10 @@ def _enum(pairs: tuple[tuple[str, str], ...]) -> tuple[ToScpi, FromScpi]:
         }
         if len(matched) != 1:
             raise _scpi_error(text)
-        return matched.pop()
+        # `pop()` は `from_token` が持つ集合そのものを空にしてしまう(2回目以降の
+        # 読みが前置一致へ落ちる)。短形が長形の前置になっていないトークン
+        # (`CHANnel1` → `CHAN1`)ではそれが即エラーになるため、非破壊で取り出す
+        return next(iter(matched))
 
     return to_scpi, from_scpi
 
@@ -248,6 +251,23 @@ _POSNEG = (("positive", "POSitive"), ("negative", "NEGative"))
 _SLOPE = (("rising", "POSitive"), ("falling", "NEGative"))
 _HIGHLOW = (("high", "HIGH"), ("low", "LOW"))
 
+#: パラレルのデータソース(ガイド3.4.10.1)。`d7_d0` 等はデジタルchのグループで、
+#: **先に書かれた側がMSB**(`d7_d0` = D7がMSB・D0がLSBの8本)。`user` のときだけ
+#: `bus_width` / `bit_sources` が有効になる(3.4.10.4-3.4.10.6 の Remark)。
+_PARALLEL_BUS = (
+    ("d7_d0", "D7D0"),
+    ("d15_d8", "D15D8"),
+    ("d15_d0", "D15D0"),
+    ("d0_d7", "D0D7"),
+    ("d8_d15", "D8D15"),
+    ("d0_d15", "D0D15"),
+    ("ch1", "CHANnel1"),
+    ("ch2", "CHANnel2"),
+    ("ch3", "CHANnel3"),
+    ("ch4", "CHANnel4"),
+    ("user", "USER"),
+)
+
 
 #: プロトコル → 意味的キー → SCPI項目(パスは `:BUS<n>:<プロトコル>` 相対)
 DECODE_ITEMS: dict[str, dict[str, DecodeItem]] = {
@@ -319,16 +339,28 @@ DECODE_ITEMS: dict[str, dict[str, DecodeItem]] = {
         ),
         "threshold_v": _threshold("LIN"),
     },
-    # パラレルは項目が多い(BITX単位の割り当て等)。最小の実用集合のみ扱う
+    # **この並びがそのまま送信順**。`bus`(データソース)は `bus_width` の前提
+    # なので必ず先に置く(ガイド3.4.10.4 の Remark。実機実測 mho98-phase4.md 5章)
     "parallel": {
         "clk_source": _item(":CLK", _source(allow_off=True)),
         "clk_slope": _item(":SLOPe", _enum(_SLOPE)),
+        "bus": _item(":BUS", _enum(_PARALLEL_BUS)),
         # バス幅の上限はD0-D15相当の16。実機での上限は要確認(read-backで検出する)
         "bus_width": _item(":WIDTh", _int_range(1, 16)),
         "endian": _item(":ENDian", _enum(_ENDIAN)),
         "polarity": _item(":POLarity", _enum(_POSNEG)),
     },
 }
+
+#: プロトコル → 「ビット番号 → ソース」項目のキー(現状パラレルのみ)。
+#: `:BITX <i>`(ビット選択)と `:SOURce <src>`(選択中ビットのソース)は**対**で
+#: 1つの状態を成すため、1項目=1コマンドの `DecodeItem` には収まらない。値は
+#: **添字がビット番号のリスト**で表し、ドライバが `bus_width` の後に走査する。
+BIT_SOURCES: dict[str, str] = {"parallel": "bit_sources"}
+
+#: 上記の対のSCPI断片(`:BUS<n>:<プロトコル>` 相対)
+BIT_SELECT_PATH = ":BITX"
+BIT_SOURCE_PATH = ":SOURce"
 
 #: 同時にOFFにできないソースの組(デコード対象が無くなるため機器も受理しない)
 EXCLUSIVE_SOURCES: dict[str, tuple[str, str]] = {

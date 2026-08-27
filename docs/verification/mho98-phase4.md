@@ -103,9 +103,25 @@ Time,Tx/Rx,Data,Error,
 
 **原因はガイド自身の Remark にあった(3.4.10.4):** `:BUS<n>:PARallel:WIDTh` は **データソースが User に設定されているときのみ有効**(`:BUS<n>:PARallel:BUS USER`)。今回の実機はその条件を満たしていなかったため、どの値を送っても実行が拒否されていた。
 
-**実装への含意(未修正・追跡は [roadmap.md](../roadmap.md) 2.1):**
+### 前提の確認(データソースを User にしてからの再試行)
 
-- **`configure_decode` の `settings.parallel` は `bus_width` を公開しているが `:PARallel:BUS` を公開していない。** したがって**機器が既にUSERモードでない限り `bus_width` は本APIから使えない**(送れば必ず `SCPI_ERROR` になる)。公開している引数が特定の前提下でしか働かないという点で、これは仕様の穴である
-- 修正は `:PARallel:BUS` を `settings.parallel` に足すこと。**送るトークンの値域はガイド3.4.10.4 を逐語確認してからプロファイルへ宣言する**(確認できているのは Remark 記載の User のみ。AGENTS.mdルール2)
-- 同じガイド節には `:PARallel:BITX`(対象ビットの選択)+ `:PARallel:SOURce`(そのビットのソース割り当て)の対もあり、**Userモードのパラレルバスはビットごとにソースを割り当てる**構成になっている。`bus_width` を実用にするならこの対も併せて検討する
-- 実機writeテストの復元fixtureがteardownでERRORになる件は、この修正で解消する見込み
+エラーキューを毎回空にしてから1コマンドずつ送った結果:
+
+| 送信 | 結果 |
+|---|---|
+| `:BUS1:PARallel:BUS USER` | 成功(read-back `USER`) |
+| `:BUS1:PARallel:WIDTh 2` / `4` / `1` | **全て成功**(read-back 一致) |
+| `:BUS1:PARallel:BITX 1` | 成功 |
+| `:BUS1:PARallel:SOURce CHANnel2` | 成功(read-back `CHAN2`) |
+| `:BUS1:PARallel:BUS CHANnel1` → `:BUS1:PARallel:WIDTh 2` | `-200,"Command execute failed"`(前提を外すと再び拒否) |
+
+**ガイドの Remark どおりで、条件は `:PARallel:BUS USER` ただ1つ。** 拒否は沈黙を伴わず、エラーキューに積まれるだけである。
+
+### 実装(修正済み・[roadmap.md](../roadmap.md) 2.1)
+
+- **`settings.parallel` に `bus` を追加した。** 値域はガイド3.4.10.1 逐語の11トークン(`d7_d0` / `d15_d8` / `d15_d0` / `d0_d7` / `d8_d15` / `d0_d15` / `ch1`〜`ch4` / `user`。デジタルグループは**先に書かれた側がMSB**)。プロトコル名 → ニモニックの対応と違い、この値域は機種依存の方言ではないので `driver/decode.py` の変換表が持つ(プロファイルの追加宣言は無し)
+- **`configure_decode` の送信順を「表の並び」に固定した**(従来は呼び出し側の `settings` のキー順だった)。表では `bus` が `bus_width` より前にあるので、`{"bus": "user", "bus_width": 4}` が**1回の呼び出しで**通る
+- **`:PARallel:BITX` + `:PARallel:SOURce` の対を `bit_sources` として公開した。** 添字=ビット番号のリストで、ドライバが `bus_width` の後に `:BITX <i>` → `:SOURce <src>` を1ビットずつ送る。**読み取りにも同じ走査が要る**(`:SOURce?` は選択中ビットのぶんしか返さない)。読み取りが書き込みを伴う唯一の経路なので走査はopt-inにし(`get_decode_config(bus, include_bit_sources=True)`)、`changed` の判定に必要な `configure_decode` の前後スナップショットだけが要求する。既定の読み取りは `bit_sources` を返さず `:BITX` を1本も送らない
+- **`bus="user"` との結合はホスト側では検証しない**(機器が `-200` で自己申告する経路に任せる。M1/M2/M3 と同じ方針)
+- FakeScope も **User 以外では `:WIDTh` / `:BITX` / `:SOURce` を `-200` で拒否する**ようにした(沈黙はしない)。この穴を最初に取り逃した回帰網がこれで埋まる
+- 実機writeテストの復元fixtureは `bus_width` / `bit_sources` を「Userへ入れて書き戻す → 本来の `bus` へ戻す」の2段で扱う。**復元対象から外していた `bus_width` が復元できるようになった**

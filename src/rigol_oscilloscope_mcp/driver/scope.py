@@ -14,12 +14,16 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..errors import ErrorCode, ScopeError
 from ..models import ChannelState, IdnInfo, MeasurementResult, TimebaseState, TriggerState
 from ..profiles import Profile
 from .decode import (
+    BIT_SELECT_PATH,
+    BIT_SOURCE_PATH,
+    BIT_SOURCES,
     DECODE_ITEMS,
     DISPLAY_ITEM,
     EVENT_ITEM,
@@ -995,8 +999,12 @@ class ScopeDriver:
 
         **全ての検証を送信前に済ませる**(不正トークン1発で実機のSCPIサーバーが
         沈黙するため)。送信順は `:MODE` → 表示形式 → プロトコル別設定 →
-        `:DISPlay` → `:EVENt` に固定する(イベントテーブルの有効化には
-        バスの表示が先に必要、というガイドの制約に従う)。
+        ビット別ソース → `:DISPlay` → `:EVENt` に固定する(イベントテーブルの
+        有効化にはバスの表示が先に必要、というガイドの制約に従う)。
+
+        プロトコル別設定の順は**呼び出し側のキー順ではなく `DECODE_ITEMS` の
+        並び**に固定する。パラレルの `:WIDTh` は `:BUS USER` が前提(ガイド
+        3.4.10.4)なので、順序が呼び出し側の辞書順に左右されてはならない。
         """
         protocols = self._decode_protocols()
         name = protocol.strip().lower() if isinstance(protocol, str) else protocol
@@ -1015,11 +1023,13 @@ class ScopeDriver:
             raise _invalid(
                 f"settings is not an object: {settings!r}", {"settings": settings}
             )
-        unknown = [key for key in settings if key not in items]
+        bit_key = BIT_SOURCES.get(name)
+        allowed = sorted(items if bit_key is None else [*items, bit_key])
+        unknown = [key for key in settings if key not in allowed]
         if unknown:
             raise _invalid(
                 f"unknown setting for protocol '{name}': {sorted(unknown)}",
-                {"protocol": name, "unknown": sorted(unknown), "allowed": sorted(items)},
+                {"protocol": name, "unknown": sorted(unknown), "allowed": allowed},
             )
         self._reject_all_sources_off(name, items, settings)
 
@@ -1043,15 +1053,26 @@ class ScopeDriver:
                 )
         mnemonic = protocols[name]
         mode_to, mode_from = profile_enum(tuple(protocols.items()))
+        # ビット別ソースは対のコマンドなので、値の検証だけ先に済ませておく
+        bit_tokens = (
+            self._decode_bit_tokens(prefix, mnemonic, items, settings, bit_key)
+            if bit_key is not None and bit_key in settings
+            else []
+        )
 
-        # (返却キー, 設定コマンド, read-back問い合わせ, 応答変換, settings配下か)
-        plan: list[tuple[str, str, str, object, bool]] = [
+        def step(set_cmd: str, query: str, from_scpi: object) -> Callable[[], object]:
+            return lambda: from_scpi(self.session.set_and_verify(set_cmd, query))
+
+        # (返却キー, settings配下か, 実行して適用値を返す関数)
+        plan: list[tuple[str, bool, Callable[[], object]]] = [
             (
                 "protocol",
-                f"{prefix}:MODE {mode_to(name, 'protocol')}",
-                f"{prefix}:MODE?",
-                mode_from,
                 False,
+                step(
+                    f"{prefix}:MODE {mode_to(name, 'protocol')}",
+                    f"{prefix}:MODE?",
+                    mode_from,
+                ),
             )
         ]
         if data_format is not None:
@@ -1059,16 +1080,29 @@ class ScopeDriver:
             plan.append(
                 (
                     "data_format",
-                    f"{prefix}:FORMat {format_to(data_format, 'data_format')}",
-                    f"{prefix}:FORMat?",
-                    format_from,
                     False,
+                    step(
+                        f"{prefix}:FORMat {format_to(data_format, 'data_format')}",
+                        f"{prefix}:FORMat?",
+                        format_from,
+                    ),
                 )
             )
-        for key, value in settings.items():
-            item = items[key]
-            set_cmd, query = self._decode_command(prefix, mnemonic, key, item, value)
-            plan.append((key, set_cmd, query, item.from_scpi, True))
+        for key, item in items.items():  # 表の並び = 送信順
+            if key not in settings:
+                continue
+            set_cmd, query = self._decode_command(
+                prefix, mnemonic, key, item, settings[key]
+            )
+            plan.append((key, True, step(set_cmd, query, item.from_scpi)))
+        if bit_tokens and bit_key is not None:
+            plan.append(
+                (
+                    bit_key,
+                    True,
+                    lambda: self._write_bit_sources(prefix, mnemonic, bit_tokens),
+                )
+            )
         for key, value, item in (
             ("enabled", enabled, DISPLAY_ITEM),
             ("event_table", event_table, EVENT_ITEM),
@@ -1077,23 +1111,111 @@ class ScopeDriver:
                 plan.append(
                     (
                         key,
-                        f"{prefix}{item.path} {item.to_scpi(value, key)}",
-                        f"{prefix}{item.path}?",
-                        item.from_scpi,
                         False,
+                        step(
+                            f"{prefix}{item.path} {item.to_scpi(value, key)}",
+                            f"{prefix}{item.path}?",
+                            item.from_scpi,
+                        ),
                     )
                 )
 
         applied: dict[str, object] = {"bus": number}
         applied_settings: dict[str, object] = {}
-        for key, set_cmd, query, from_scpi, is_setting in plan:
-            value = from_scpi(self.session.set_and_verify(set_cmd, query))
+        for key, is_setting, run in plan:
+            value = run()
             if is_setting:
                 applied_settings[key] = value
             else:
                 applied[key] = value
         applied["settings"] = applied_settings
         return applied
+
+    def _decode_bit_tokens(
+        self,
+        prefix: str,
+        mnemonic: str,
+        items: dict[str, DecodeItem],
+        settings: dict,
+        key: str,
+    ) -> list[str]:
+        """`bit_sources`(添字=ビット番号)を**送信前**に検証し、送信形へ変換する。
+
+        ソースの値域は `:MATH:LSOurce` と同じ(`CH1`-`CH<アナログch数>` /
+        `D0`-`D<デジタルch数-1>`。`off` は値域に無い — ガイド3.4.10.6)。
+
+        バス幅との整合だけはここで見る(同時指定なら要求値、無ければ現在値)。
+        **`bus` が `user` であることは検証しない**: 機器自身が `-200` で拒否して
+        自己申告する経路(M1/M2/M3と同じ方針)に委ねる。
+        """
+        value = settings[key]
+        if not isinstance(value, list) or not value:
+            raise _invalid(
+                f"{key} must be a non-empty list of sources, "
+                "one per data bit starting at bit 0 (e.g. ['CH1', 'D3'])",
+                {"key": key, "value": value},
+            )
+        tokens = [
+            self._math_lsource(source, f"{key}[{bit}]")
+            for bit, source in enumerate(value)
+        ]
+
+        width_item = items["bus_width"]
+        if "bus_width" in settings:
+            width = int(width_item.to_scpi(settings["bus_width"], "bus_width"))
+        else:
+            width = int(
+                width_item.from_scpi(
+                    self.session.query(f"{prefix}:{mnemonic}{width_item.path}?")
+                )
+            )
+        if len(tokens) > width:
+            raise _invalid(
+                f"{key} has {len(tokens)} entries but the bus width is {width} "
+                "(pass bus_width as well to widen the bus)",
+                {"key": key, "entries": len(tokens), "bus_width": width},
+            )
+        return tokens
+
+    def _write_bit_sources(
+        self, prefix: str, mnemonic: str, tokens: list[str]
+    ) -> list[str]:
+        """ビット0から順に `:BITX <i>` → `:SOURce <src>` を送り、read-back値を返す。
+
+        `:SOURce` は**選択中のビット**にだけ効く(ガイド3.4.10.6)ので、1ビット
+        ごとに選び直す以外の手段が無い。
+        """
+        head = f"{prefix}:{mnemonic}"
+        applied: list[str] = []
+        for bit, token in enumerate(tokens):
+            self.session.write_checked(f"{head}{BIT_SELECT_PATH} {bit}")
+            applied.append(
+                _math_source_readback(
+                    self.session.set_and_verify(
+                        f"{head}{BIT_SOURCE_PATH} {token}",
+                        f"{head}{BIT_SOURCE_PATH}?",
+                    )
+                )
+            )
+        return applied
+
+    def _read_bit_sources(self, prefix: str, mnemonic: str, width: int) -> list[str]:
+        """ビット別ソースを読む(`:BITX` を1本ずつ選び直す)。
+
+        機器に一括の問い合わせが無く、`:SOURce?` は選択中ビットのぶんしか返さない
+        ため、**読み取りにも `:BITX` の書き込みが要る**。選択中ビットは編集対象を
+        指すだけのスクラッチ状態だが、読み終わりに元の値へ必ず戻す。
+        """
+        head = f"{prefix}:{mnemonic}"
+        selected = int(parse_nr3(self.session.query(f"{head}{BIT_SELECT_PATH}?")))
+        sources: list[str] = []
+        for bit in range(width):
+            self.session.write_checked(f"{head}{BIT_SELECT_PATH} {bit}")
+            sources.append(
+                _math_source_readback(self.session.query(f"{head}{BIT_SOURCE_PATH}?"))
+            )
+        self.session.write_checked(f"{head}{BIT_SELECT_PATH} {selected}")
+        return sources
 
     @staticmethod
     def _reject_all_sources_off(
@@ -1110,8 +1232,13 @@ class ScopeDriver:
                 {"protocol": protocol, "sources": list(pair)},
             )
 
-    def get_decode_config(self, bus: int) -> dict:
-        """デコードバスの現在設定を意味的なキーで返す。"""
+    def get_decode_config(self, bus: int, *, include_bit_sources: bool = False) -> dict:
+        """デコードバスの現在設定を意味的なキーで返す。**既定では書き込みを行わない**。
+
+        `include_bit_sources=True` のときだけ、パラレルのビット別ソースを
+        `:BITX` を書きながら走査する(`_read_bit_sources` 参照)。読み取りが
+        書き込みを伴う唯一の経路なので、呼び出し側の明示を要求する。
+        """
         protocols = self._decode_protocols()
         number = self._decode_bus(bus)
         prefix = f":BUS{number}"
@@ -1143,6 +1270,13 @@ class ScopeDriver:
             else:
                 response = query(f"{prefix}:{mnemonic}{item.path}?")
             settings[key] = item.from_scpi(response)
+        bit_key = BIT_SOURCES.get(protocol)
+        # ビット別ソースはデータソースが `user` のバスにしか無い(それ以外では
+        # `:BITX` の書き込み自体を機器が `-200` で拒否する)
+        if include_bit_sources and bit_key and settings.get("bus") == "user":
+            settings[bit_key] = self._read_bit_sources(
+                prefix, mnemonic, int(settings["bus_width"])
+            )
         config["settings"] = settings
         return config
 

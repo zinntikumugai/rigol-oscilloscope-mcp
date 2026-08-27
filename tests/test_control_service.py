@@ -1066,6 +1066,43 @@ def test_configure_decode_returns_requested_and_applied(
     }
 
 
+def test_configure_decode_parallel_user_bus(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    """`bus="user"` があれば `bus_width` と `bit_sources` が同一呼び出しで通る。"""
+    result = service.configure_decode(
+        driver,
+        1,
+        "parallel",
+        settings={"bus": "user", "bus_width": 2, "bit_sources": ["CH1", "D3"]},
+    )
+
+    assert result["applied"]["settings"] == {
+        "bus": "user",
+        "bus_width": 2,
+        "bit_sources": ["CH1", "D3"],
+    }
+    assert result["changed"] is True
+
+
+def test_configure_decode_detects_bit_source_only_change(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    """`changed` はビット別ソースだけの変更も拾う(スナップショットが走査する)。"""
+    service.configure_decode(
+        driver,
+        1,
+        "parallel",
+        settings={"bus": "user", "bus_width": 2, "bit_sources": ["CH1", "D3"]},
+    )
+
+    result = service.configure_decode(
+        driver, 1, "parallel", settings={"bit_sources": ["CH2", "D3"]}
+    )
+
+    assert result["changed"] is True
+
+
 def test_configure_decode_reports_changed(
     service: ControlService, driver: ScopeDriver
 ) -> None:
