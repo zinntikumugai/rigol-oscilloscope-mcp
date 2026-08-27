@@ -1015,7 +1015,7 @@ class ScopeDriver:
         ):
             raise _invalid(
                 f"function generator channel {channel!r} does not exist "
-                f"(this model has channel 1-{count})",
+                f"(this model has channels 1-{count})",
                 {"channel": channel, "afg_channels": count},
             )
         presence = self.profile.dialect.get("afg_presence_query")
@@ -1390,7 +1390,7 @@ class ScopeDriver:
         ):
             raise _invalid(
                 f"math channel {channel!r} does not exist "
-                f"(this model has channel 1-{count})",
+                f"(this model has channels 1-{count})",
                 {"channel": channel, "math_channels": count},
             )
         return channel, f":MATH{channel}"
