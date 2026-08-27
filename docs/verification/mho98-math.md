@@ -2,7 +2,7 @@
 
 **対象:** RIGOL MHO98(ファームウェア 00.01.00、LAN SCPI :5555)。IP・シリアルは記録しない
 **実施日:** 2026-08-27
-**状態:** **実施済み**((a)〜(d)・(f) は実測で確定。**(e) 表示OFF中の書き込み無視quirkのみ未実施**)
+**状態:** **完了**((a)〜(f) を全て実測で確定。実機テスト(`-m device` / `-m device_write`)のpytest実行も完了 — 下記「実機テストの実行結果」)
 **規範:** [tools.md](../tools.md) 11章 / [roadmap.md](../roadmap.md) 2.5.1
 **前提:** MHO900-BND適用済み。手順規律は [mho98-afg.md](mho98-afg.md) と同じ(1コマンド → 応答5s timeout → `:SYSTem:ERRor?` → 記録。**沈黙したら空行付き再接続 → `*IDN?` で復旧確認 → エラーキューをドレイン**)
 **安全条件:** write項目は全て「現在値取得 → set → readback → finally で復元」。MATHは表示・解析層のみの操作で出力を伴わない
@@ -107,22 +107,40 @@ SCPIレベルでの往復は上記プローブで確認済み。
 | `:MATH1:FFT:UNIT`(`DB` ⇄ `VRMS`) | 受理 → ピーク表の単位列が追随 | |
 | `:MATH1:FFT:SEARch:EXCursion?` | `1.8` 相当を返す | 単独では正常(desync時のみ失敗した) |
 
-自動テスト `tests/device/test_write.py::test_configure_math_round_trip`(現在値取得 → 算術演算set → FFTset → readback → finally復元)を追加した。**このテスト自体の実機実行は未実施。**
+自動テスト `tests/device/test_write.py::test_configure_math_round_trip`(現在値取得 → 算術演算set → FFTset → readback → finally復元)を追加し、**実機で実行してPASSした**(下記「実機テストの実行結果」)。
 
-### (e) 表示OFF中の書き込み無視quirk ☐ **未実施**
+### (e) 表示OFF中の書き込み無視quirk ☑ **quirkなし(別のquirkを発見)**
 
 **問い:** 表示OFFのMATHトレースへ `:SCALe` 等を書くと、AFGの `MOD:STATe` OFF(→ [mho98-afg.md](mho98-afg.md) 6章)や表示OFFチャンネルの `:SCALe`(→ [mho98-mvp.md](mho98-mvp.md) 3.3)と同じく**エラーなく無視される**か。
 
-現行実装は「表示ONを最初・OFFを最後」に送る順序でこれを緩和しているが、quirkが実在するなら AFG式の**送信前拒否**(パラメータのみ指定 + 表示OFF は `INVALID_PARAMETER`)を足す判断材料になる。
+**答え: 無視されない。** 表示OFF中でも書き込みは受理され read-back も一致する。代わりに**表示を OFF → ON に戻した瞬間、機器が縦軸を再計算して書いた値を捨てる**という別のquirkがあった。
 
-手順: MATH1 表示OFF → `:MATH1:SCALe <値>` → エラーキュー → readback → 表示ON → 同じ値を書いて readback 比較 → 復元。
-
-| 状態 | 書き込み | エラーキュー | readback | 無視されたか |
+| 手順 | 状態 | 書き込み | read-back | 所見 |
 |---|---|---|---|---|
-| 表示OFF | `:MATH1:SCALe` | | | |
-| 表示ON | `:MATH1:SCALe`(同値) | | | |
+| 1 | 表示ON | `scale=2.0` | `2.0` | 適用される |
+| 2 | 表示をOFFにする | — | `2.0` | OFFにしただけでは変わらない |
+| 3 | 表示OFF | `scale=0.5` | `0.5` | **無視されない**(書き込みは通る) |
+| 4 | 表示をONに戻す | — | `0.9446667` | **機器が再計算し、書いた値が失われる** |
 
-判定: ☐ quirkなし(現行の送信順のみで十分)/ ☐ quirkあり(→ 送信前拒否を追加)
+一連の操作を通してエラーキューは `0,"No error"`(拒否もエラーも無い)。
+
+再現性、および再計算値が信号依存(定数ではない)ことの確認:
+
+| 手順 | 書き込み | read-back |
+|---|---|---|
+| 表示ON | `scale=1.5` | `1.5` |
+| 表示 OFF → ON | — | `0.9435111`(1回目の `0.9446667` とは別の値) |
+
+**自然にドリフトはしない。** 表示ONのまま書き込みを挟まず4回読むと `scale` は毎回 `1.080889`、`offset_v` も `0.003233088` で一定だった。したがってこれは**表示 OFF→ON 遷移をトリガとする再計算**であって、連続的なドリフトではない。
+
+判定: ☑ **quirkなし**(表示OFF中の書き込み無視はMATHには存在しない)/ ☐ quirkあり(→ 送信前拒否を追加)
+
+含意:
+
+- **AFG式の送信前拒否は不要**(項目 (e) は「quirkなし・別quirkあり」で閉じる)。「パラメータのみ指定 + 表示OFF」を `INVALID_PARAMETER` で弾く根拠は無い — 書き込み自体は成立する
+- **現行の送信順(表示ONが先頭・OFFが末尾)は、この再計算quirkに対しても正しい。** `configure_math(display=True, scale=X)` は表示ONを先に送るため、**自動再計算が `X` の書き込みより前に起きて `X` が生き残る**。逆順(`scale` → 表示ON)にすると書いた値が再計算で消える。**この順序を後から「単純化」してはならない**(実装: `driver/scope.py` の `configure_math` が `display=True` を `plan.insert(0, ...)`、`display=False` を `plan.append(...)` で置いている)
+- **呼び出し側への注意:** MATH表示がOFFの状態で書いた `scale` / `offset_v` は、表示をONに戻した時点で破棄される。**`display=True` と同じ呼び出しで指定する**のが確実なパターンである
+- **`changed` 判定への影響は無い。** 連続ドリフトが無いため、MATHの `scale` / `offset_v` を比較対象から外す必要はない(除外しているのは `peaks` / `peak_warnings` の動的値のみ)。カーソルのtrackモードYは実際にドリフトするため除外しているが([mho98-m2.md](mho98-m2.md) 3章)、MATHは事情が違う
 
 ### (f) FFT + ピーク表 + `capture_waveform("MATH1")` のE2E ☑
 
@@ -137,8 +155,30 @@ SCPIレベルでの往復は上記プローブで確認済み。
 | `:WAVeform:STARt` / `:STOP` | MATHソースでも有効 | ☑ `STOP 16` → points 16 |
 | 非FFT MATH の `capture_waveform` | 時間軸・`x_unit` なし | ☑ 既定の `ADD` で従来どおり |
 
+## 実機テストの実行結果(pytest経由・2026-08-27)
+
+手動プローブとは別に、`tests/device/` に追加したMATHケースを**pytestで実機実行**した。
+
+| スイート | 結果 |
+|---|---|
+| `-m device`(read-only) | **17 passed, 22 skipped** |
+| `-m device_write`(`RIGOL_TEST_ALLOW_WRITE=1`) | **16 passed, 1 failed, 1 error, 4 skipped** |
+
+**M1のケースは全てPASS**(復元も確認済み)。実測ログ:
+
+```
+[math] add applied={'operator':'add','source1':'CH1','source2':'CH2'} changed=True
+[math] fft readback={... 'freq_end_hz':100000.0, 'search_enabled':True ...} peaks=[]
+[math] capture points=1000 step=100 Hz start=0 Hz
+```
+
+`points=1000` × `step=100 Hz` = 100000 Hz = `freq_end_hz` で、(c-1) の「点数 × 刻み = 表示終端周波数」が pytest 経由でも一致した。`peaks=[]`(空リスト)はこの時点で探索がピークを見つけていないことを示す — ピーク表の書式そのものは (c-2) / (f) で実測済み。
+
+read-onlyスイートでskipしたMATH関連ケースは1件で、**正常なskip**である: `tests/device/test_readonly.py:527` が「FFT演算のMATHトレースがありません(前面パネルで設定が必要)」でskipする。FFT設定のMATHチャンネルが無い状態を正しく検出しているだけで、失敗ではない。
+
+writeスイートの failed 1件 / error 1件は**M1・M2と無関係な既知の事象**である(原因は [mho98-m2.md](mho98-m2.md) 7章に記録)。
+
 ## 未実施・今後の予定
 
-- **(e) 表示OFF中の書き込み無視quirk** — 唯一の残件。結果次第で送信前拒否を追加する
-- `tests/device/test_write.py::test_configure_math_round_trip` の実機実行(テストは追加済み・未実行)
+- **なし**(検証項目 (a)〜(f) は全て実測で確定。実機テストのpytest実行も完了)
 - DHO800/900系の `:MATH<n>` 宣言はM1スコープ外(別ガイドの逐語解読が未了。[device-profiles.md](../device-profiles.md) 6.2)

@@ -23,6 +23,7 @@ MVP(Phase 1 + 2 = Read Only + Basic Control)完了後に対応する機能と、
 
 - **イベントテーブルの列構成は観測しながら固めていく**: `:BUS<n>:DATA?` の列はプロトコル依存でガイドに記載が無く、実装はヘッダ行をそのまま採用する(スキーマを持たない)。実機で観測できた列構成は [verification/mho98-phase4.md](verification/mho98-phase4.md) に追記していく(RS232の `Time,Tx/Rx,Data,Error,` は実測済み)
 - **バス無効時の `:DATA?` 挙動は未確認**: 現状は送信前に早期returnしているため実害はないが、観測できたら記録する
+- **パラレルの `:BUS<n>:PARallel:WIDTh 1` が実機で拒否される**: 実機writeテストの復元fixtureがスナップショットを書き戻す際に `-200,"Command execute failed"` を受け、`test_configure_decode_uart_set_and_readback` がteardownでERRORになる(2026-08-27の実機実行で観測。M1/M2とは無関係 → [verification/mho98-m2.md](verification/mho98-m2.md) 7.1)。`WIDTh` の値域・他パラメータとの結合制約(現在のパラレル設定でこの幅が許されるか)を実機で切り分ける
 - **オプション必須プロトコルは延期**: I2S、FlexRay、MIL-STD-1553、CAN-FD。検証機はMHO900-BND適用済み(2026-08-26、[verification/mho98-phase4.md](verification/mho98-phase4.md) 3章)のため実機検証の障害はなくなった。実ニーズが出たら着手する
 - **将来ゲートは送信前に不要**: オプション必須ニモニックは沈黙せず値を返すと実測済み(ライセンス適用前後とも)のため、既存の「set → エラーキュー確認 → read-back」で機器自身のエラーを検出できる(実測根拠: [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 4章)。ただし未ライセンス時のエラーキュー挙動には揺らぎがある(`-222` が積まれる場合と積まれない場合を観測)ため、未ライセンス判定は `:SYSTem:OPTion:STATus?` で行うこと
 - `:BUS` コアはDHO/MHO共通と見られる(ガイド比較)。DHO実機を検証できたらファミリプロファイルへ引き上げる([device-profiles.md](device-profiles.md) 2.2)
@@ -78,11 +79,11 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 
 (:LA は 2.2 に既載のため本表から除外)
 
-### 2.5.1 M1: MATH演算(実装完了・実機検証は (e) を除き完了)
+### 2.5.1 M1: MATH演算(実装完了・実機検証完了)
 
 **`configure_math`(SAFE_WRITE)と `get_math_state`(READ_ONLY)を実装済み**([tools.md](tools.md) 11章)。ホスト側FFT(`analyze_waveform`)との棲み分けは当初の想定どおり — 機上FFTは「画面に出る(人間が確認できる)」「ピーク表がテキストで取れる(波形転送ゼロ)」点で別価値がある。
 
-- **`configure_math`**: 演算子21種(加減乗除・論理4種・FFT・微積分系・デジタルフィルタ4種・AXB)、算術ソース(`source1` / `source2`)と論理ソース(`lsource1` / `lsource2`)、垂直(`scale` / `offset_v` / `invert`)、`fft` サブ辞書(入力ch・窓・単位・モード・平均回数・縦軸・表示周波数範囲・ピーク探索6項目)、`filter` サブ辞書(種別・W1・W2)。**送信順は表示ONが先頭・OFFが末尾**に固定(表示OFF中の書き込み無視quirk対策)。検証は全て送信前で、不正が1つでもあれば1コマンドも送らない
+- **`configure_math`**: 演算子21種(加減乗除・論理4種・FFT・微積分系・デジタルフィルタ4種・AXB)、算術ソース(`source1` / `source2`)と論理ソース(`lsource1` / `lsource2`)、垂直(`scale` / `offset_v` / `invert`)、`fft` サブ辞書(入力ch・窓・単位・モード・平均回数・縦軸・表示周波数範囲・ピーク探索6項目)、`filter` サブ辞書(種別・W1・W2)。**送信順は表示ONが先頭・OFFが末尾**に固定(表示 OFF→ON 遷移で機器が縦軸を再計算するquirk対策。実測根拠は下記「実機検証」)。検証は全て送信前で、不正が1つでもあれば1コマンドも送らない
 - **`get_math_state`**: 演算子に応じた条件付き読み取り(未検証サブツリーを突かない)。`:MATH<n>:FFT:SEARch:RES?` のピーク表は当初方針どおり**Toolを増やさず**返却の `peaks` に含める(解釈できない行は `raw` + `peak_warnings` で fail-open)
 - **波形取得**: 当初の「`source` 引数拡張」ではなく**既存の `channel` 引数を拡張**する形で実現した(引数を増やさない)。`capture_waveform` / `analyze_waveform` が `"MATH1"`〜`"MATH4"` を受理し、`read_samples` 経路をそのまま流用する。FFT演算のトレースは `x_unit: "Hz"` / `frequency_step_hz` / `frequency_start_hz` を返して時間軸前提のキーを省き、`analyze_waveform` では**取得前に `INVALID_PARAMETER` で拒否**する(横軸が周波数のトレースに時間軸統計・ホスト側FFTは意味を持たないため)
 - **プロファイル宣言**: capabilities に `math_channels` / `ref_channels`、dialect に `math_operators` / `math_fft_windows` / `math_fft_units` / `math_fft_modes` / `math_fft_search_orders` / `math_filter_types`(`mho98.yaml` のみ。[device-profiles.md](device-profiles.md) 2.1 / 2.2)。`:MATH<n>` はファミリ分岐の実例が無いため `math_prefix` 方言は作らず、`math_channels` の宣言の不在をそのままゲートにしている
@@ -103,10 +104,16 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 
 併せて確定した事項: **MATH表示OFFでもクエリは沈黙しない**(4チャンネルで確認。`:DISPlay?` 先読みの短絡は不要)/ `:MATH1:OPERator?` のデフォルトは短形 `ADD`(写像は正しい)/ `:WAVeform:STARt` / `:STOP` はMATHソースでも有効(`max_points` が効く)。
 
-**残件:**
+**残件: なし**(検証項目 (a)〜(f) を全て実測で確定。実機テストのpytest実行も完了)
 
-1. **表示OFF中の書き込み無視quirkの有無**(検証項目 (e)。未実施の唯一の項目)— 結果次第でAFG式の送信前拒否を追加する
-2. 追加した実機テスト(`tests/device/test_readonly.py` のMATH状態読み取り、`tests/device/test_write.py::test_configure_math_round_trip`)の実機実行
+最後まで残っていた検証項目 (e)「表示OFF中の書き込み無視quirk」は **quirkなしで決着**した。**MATHには表示OFF中の書き込み無視は存在しない**(表示OFFでも書き込みは受理され read-back も一致する)ため、**AFG式の送信前拒否は追加しない**。代わりに別のquirkが見つかった: **表示を OFF → ON に戻した瞬間、機器が縦軸を再計算して書いた値を捨てる**(`scale=0.5` を表示OFFで書く → read-back `0.5` → 表示ON → `0.9446667`。エラーキューは `0,"No error"`)。再現性あり・再計算値は信号依存で、表示ONのまま放置しても値は動かない(4回読んで毎回同値)ため**遷移をトリガとする再計算**である。
+
+含意は2つ:
+
+- **現行の送信順(表示ONが先頭・OFFが末尾)はこの挙動に対しても正しい。** `configure_math(display=True, scale=X)` は表示ONを先に送るので、再計算が `X` の書き込みより**前**に起き `X` が生き残る。**この順序を後から「単純化」してはならない**
+- **呼び出し側への注意:** MATH表示OFFの状態で書いた `scale` / `offset_v` は表示をONに戻した時点で破棄される。`display=True` と**同じ呼び出しで指定する**のが確実。`changed` 判定への影響は無い(連続ドリフトが無いため除外不要 — trackカーソルのYとは事情が違う)
+
+追加した実機テストのpytest実行も完了した(`-m device`: 17 passed / 22 skipped、`-m device_write`: 16 passed / 1 failed / 1 error / 4 skipped。**M1ケースは全てPASS**。failed / error の2件はM1/M2と無関係な既知の事象 → 2.5.2 の残件2)。
 
 ### 2.5.2 M2: カーソル・周波数カウンタ・電圧計・ヒストグラム(実装完了・実機検証済み)
 
@@ -140,11 +147,13 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 
 併せて確定した事項: trackモードでは**設定側の `CAY` / `CBY` も波形に追従して動く**(0.8秒間隔の4回読みで毎回変化)ため、`configure_cursor` の `changed` 判定はtrackモードのYを比較対象から外している / manualモードの `CAY` は動かない / 設定側の `:CAY?` と読み値の `:AYValue?` は**サンプル時点が違うため桁数も値も一致しない**。
 
+**実機テストのpytest実行も完了**(`-m device`: 17 passed / 22 skipped、`-m device_write`: 16 passed / 1 failed / 1 error / 4 skipped。**M2ケースは全てPASS**・復元確認済み)。カーソルの往復は算術的にも整合した(`ax=-0.0002 s` / `bx=0.0002 s` → `xdelta_s=0.0004` / `ixdelta_hz=2500.0` で 1/ΔX が厳密一致)。ヒストグラム統計の**13ラベルとその並びは2回の独立した測定で同一**であり、`[Label:Value, …]` 1行という書式判定が再現した。
+
 **残件(未解決):**
 
-1. **`:COUNter:CURRent?` が有効化しても `0` を返す** — 生信号の載ったチャンネルでカウンタを有効化し2秒待っても `0` のままだった。ゲート時間・トリガ要件・ソース条件のいずれかが未特定。次に試すこと: ゲート時間関連の設定の有無をガイドで再確認 / トリガがかかっている状態での再測定 / 別ソース(D0-D15含む)での比較
-2. **カウンタ無効時の `:COUNter:TOTalize:ENABle OFF` が `-200,"Command execute failed"`** — 現在値と同じ値を書いても拒否される。送信順は `enabled` が先頭なので通常の `configure_meter(enabled=True, totalize_enabled=…)` では踏まないが、**無効なカウンタへ `totalize_enabled` だけを送る呼び出し**は失敗する。実機テストの復元fixtureもこれを踏むため、復元では例外を握り潰す扱いにしてある(理由はテスト内の日本語コメント)
-3. 追加した実機テスト(`tests/device/test_readonly.py` のM2読み取り、`tests/device/test_write.py` のM2往復)の**pytest経由での実機実行**(SCPIレベルおよび実装コードのE2Eは手動プローブで実施済み)
+1. **有効化したカウンタの現在値が読めない(応答が run 間で一定しない)** — 生信号の載ったチャンネルでカウンタを有効化し2秒待っても `:COUNter:CURRent?` は `0` のままだった。**pytest実行時の追試では同条件で `value: None`**(空応答または番兵値 ±9.9E37)が返り、生ソケットでの `'0'` と食い違った。ゲート時間・整定時間・トリガ要件・ソース条件のいずれかが未特定。**実装側の対処は不要**(`0` も `None` もそのまま返すだけで、非ゼロを仮定した分岐はコードのどこにも無い)。次に試すこと: 整定時間を延ばす / ゲート時間設定の有無をガイドで再確認 / トリガがかかっている状態での再測定 / 別ソース(D0-D15含む)での比較
+2. **実機テストの既知の失敗2件(M1/M2とは無関係・再診断不要)** — (a) `test_configure_decode_uart_set_and_readback` は復元fixtureが `:BUS1:PARallel:WIDTh 1` を送って `-200,"Command execute failed"` になりteardownでERROR(デコード経路はM1/M2で未変更 → 2.1の残件で追跡)、(b) `test_audit_log_records_every_write` は監査ログに `configure_afg` を要求するが AFG writeテストが安全ガード「AFG出力がONです」で自らskipするためFAILED(**機器のAFG出力がONである間だけ**再現する環境依存の失敗)
+3. **カウンタ無効時の `:COUNter:TOTalize:ENABle OFF` が `-200,"Command execute failed"`** — 現在値と同じ値を書いても拒否される。送信順は `enabled` が先頭なので通常の `configure_meter(enabled=True, totalize_enabled=…)` では踏まないが、**無効なカウンタへ `totalize_enabled` だけを送る呼び出し**は失敗する。実機テストの復元fixtureもこれを踏むため、復元では例外を握り潰す扱いにしてある(理由はテスト内の日本語コメント)
 
 ## 3. プラグイン化(完了・要件へ昇格)
 
