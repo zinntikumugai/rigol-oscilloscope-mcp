@@ -26,13 +26,18 @@ MVP(Phase 1 + 2 = Read Only + Basic Control)完了後に対応する機能と、
 - ~~**パラレルの `:BUS<n>:PARallel:WIDTh` が実機で拒否される問題**~~ → **解消(2026-08-28)**: 原因は「データソースが User のときのみ有効」というガイド3.4.10.4 の Remark([verification/mho98-phase4.md](verification/mho98-phase4.md) 5章)。`settings.parallel` に `bus`(ガイド3.4.10.1 逐語の11トークン)を追加し、**送信順を「表の並び」に固定**して `bus` が `bus_width` より先に届くようにした。あわせて `:PARallel:BITX` + `:PARallel:SOURce` の対を `bit_sources`(添字=ビット番号のリスト)として公開している([tools.md](tools.md) 6章)。`bus="user"` との結合はホスト側では検証せず機器の自己申告に任せる(既定方針)。実機writeテストの復元fixtureは `bus_width` / `bit_sources` を「Userへ入れて書き戻す → 本来の `bus` へ戻す」の2段で扱い、**復元が完全になった**([verification/mho98-m2.md](verification/mho98-m2.md) 7.1 の残件も解消)
 - **オプション必須プロトコルは延期**: I2S、FlexRay、MIL-STD-1553、CAN-FD。検証機はMHO900-BND適用済み(2026-08-26、[verification/mho98-phase4.md](verification/mho98-phase4.md) 3章)のため実機検証の障害はなくなった。実ニーズが出たら着手する
 - **将来ゲートは送信前に不要**: オプション必須ニモニックは沈黙せず値を返すと実測済み(ライセンス適用前後とも)のため、既存の「set → エラーキュー確認 → read-back」で機器自身のエラーを検出できる(実測根拠: [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 4章)。ただし未ライセンス時のエラーキュー挙動には揺らぎがある(`-222` が積まれる場合と積まれない場合を観測)ため、未ライセンス判定は `:SYSTem:OPTion:STATus?` で行うこと
-- `:BUS` コアはDHO/MHO共通と見られる(ガイド比較)。DHO実機を検証できたらファミリプロファイルへ引き上げる([device-profiles.md](device-profiles.md) 2.2)
+- `:BUS` コアはDHO/MHO共通と見られる(ガイド比較)。DHO実機を検証できたらファミリプロファイルへ引き上げる([device-profiles.md](device-profiles.md) 2.2)。**ただし I2C のアドレス指定(`:IIC:ADDBits` ↔ `:IIC:ADDRess`、意味も違う)と LIN の `:BAUD`(DHOには無い)は方言差がある** — [2.6.6](#266-機種横断で判明した方言差プロファイル拡充の材料)
 
-### 2.2 Logic Analyzer(優先度を下げた。2026-08-28)
+### 2.2 Logic Analyzer
 
 - D0〜D15のON/OFF、Threshold設定、Logic Capture、プロトコルデコード連携
 - ロジックプローブの物理接続はMCPから確認できないため、`requires_physical_confirmation` の対象とする
-- **2026-08-28の再評価で優先度「低」へ格下げ**([2.6.3](#263-低優先で固定するもの))。**D0〜D15の波形を吸い出すクエリがガイド3.13に無い** — `:WAVeform:SOURce` の値域はガイド3.28.1に `{CHANnel1-4|MATH1-4}` と逐語で書かれており D0-D15 を含まず、`:LA` 配下にも `DATA?` 相当のコマンドが無い。**有効化としきい値設定はできるが結果が読めない**ため、実装しても画面キャプチャ頼みになる。この判断は [2.6.5](#265-実機検証で先に潰す不明項目) の **V-2**(デジタル波形を数値で吸い出す手段があるか)で確定させる
+**2026-08-28の再評価: 読めないのは「生サンプル列」だけで、機能そのものは孤立していない。**
+
+- **デジタル波形の点列転送は不可** — `:WAVeform:SOURce` の値域はガイド3.28.1に `{CHANnel1-4|MATH1-4}` と逐語で書かれており D0-D15 を含まない。`:LA` 配下(3.13)も `ENABle` / `ACTive` / `AUTosort` / `DIGital:ENABle` / `DIGital:LABel` / `POD<n>:DISPlay` / `POD<n>:THReshold` / `SIZE` の8コマンドのみで `DATA?` 相当が無い
+- **一方、D0〜D15 を「ソース」として受理するコマンドは既存実装の各所にある。** `:MEASure:ITEM`(3.17.2)の Remarks は逐語で *"After the logic probe is connected, the available sources also include digital channels (D0-D15)."* と書いており、`configure_decode`(`:BUS<n>:PARallel:SOURce` / `:RS232:TX`・`RX` / `:IIC:SCLK`・`SDA` / `:SPI` 各ソース / `:CAN:SOURce` / `:LIN:SOURce`)・`measure`・`configure_meter`(`:COUNter:SOURce`)・`configure_math`(`:MATH<n>:LSOurce1/2`)・`configure_reference` が該当する。**結果はデコード表・測定値としてテキスト/数値で読める**
+- **とくに `bus_width > 4` のパラレルデコードはアナログ4chでは成立せず、`:LA` の有効化が事実上の前提になっている。** 2.1 で露出済みの `bus_width`(`driver/decode.py` は 1〜16 を受理、プリセットに `d15_d0`)を実際に使うには `:LA:ENABle` / `:LA:DIGital:ENABle` / `:LA:POD<n>:THReshold` が要る
+- したがって**格下げの根拠は無い**。残る不確定はロジックプローブの物理接続確認のみで、`:SYSTem:MODules?` で判定できる可能性がある([2.6.5](#265-実機検証で先に潰す不明項目) の V-2)
 - 機種差: DHO900系は `Digital Channel Commands` として搭載するが、**DHO800系とDHO1000/4000系は非搭載**
 
 ### 2.3 Function / Arbitrary Waveform Generator (AFG)(完了)
@@ -209,7 +214,7 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 | 実装済みに見えるサブシステム | 実態 |
 |---|---|
 | **`:TRIGger`** | トリガ種別**20種中EDGEの1種のみ**。PULSe / TIMeout / DURation / RUNT / SHOLd / PATTern / DELay / NEDGe / WINDows / SLOPe / VIDeo と、シリアルバストリガ8種(RS232/IIC/SPI/CAN/LIN/FLEXray/IIS/M1553)が全て未実装 |
-| **`:MEASure`** | `:ITEM` の**41トークン中10のみ**プロファイル宣言。加えて `:MEASure:STATistic:ITEM?`(最大/最小/平均/標準偏差/回数)と `:MEASure:AREA`(測定区間の限定)が丸ごと未実装 |
+| **`:MEASure`** | `:ITEM` の**41トークン中10のみ**プロファイル宣言。加えて `:MEASure:STATistic`(統計)、`:MEASure:AREA`(測定区間の限定)、**`:MEASure:COUNter`(3.17.25-27)と `:MEASure:HISTogram`(3.17.31-32)が丸ごと未実装**。後2者は実装済みの `:COUNter`(3.7)/ `:HISTogram`(3.11)とは**別サブシステム**なので取り違えないこと([2.5.2](#252-m2-カーソル周波数カウンタ電圧計ヒストグラム実装完了実機検証済み) の訂正記録) |
 | **`:ACQuire`** | `:SRATe?` / `:MDEPth` の**読みのみ**。取得モード(Normal / Peak Detect / Average / High Resolution)・平均回数・ADC分解能の設定が未実装 |
 | **`:SYSTem`** | `:ERRor?` / `:OPTion:STATus?` のみ。**`:DATE` / `:TIME` が未実装(issue #10)** |
 
@@ -221,10 +226,14 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 
 | 機能 | 代表SCPI | AIにとって何が嬉しいか | 実装コスト |
 |---|---|---|---|
-| **測定項目の全面拡張(41項目中10 → 全項目)** | `:MEASure:ITEM` の未宣言31トークン | 立上り/立下り時間・オーバーシュート・プリシュート・面積・スルーレート・位相/遅延が**測れない**ため、今は波形を全点転送してホスト側で計算するしかない。プロファイル宣言を増やすだけで転送ゼロの数値測定になる。<br>**内訳: 時間系 5/10・振幅系 5/15・面積スルーレート系 0/4・位相遅延系 0/8・カウント系 0/4。後ろの3群は丸ごと未実装**なので、そこから足すのが最も効率がよい | **小**(`measurement_items` への宣言追加 + `measure` の値域拡大) |
-| **測定統計の取得** | `:MEASure:STATistic:ITEM?` | 最大/最小/平均/**標準偏差**/回数が1クエリで返る。「たまに出る異常」の存在証明が波形転送ゼロで済み、目視のレンジ確認をジッタ・電圧変動の数値判定に置き換えられる | **小〜中**(`measure` への引数追加で収まる見込み) |
+| **測定項目の全面拡張(41項目中10 → 全項目)** | `:MEASure:ITEM` の未宣言31トークン | オーバーシュート(`OVERshoot`)・プリシュート(`PREShoot`)・面積(`MARea` / `MPARea`)・スルーレート(`PSLewrate` / `NSLewrate`)・位相/遅延の8項目・パルス幅(`PWIDth` / `NWIDth`)が**測れない**ため(立上り/立下り時間 `RTIMe` / `FTIMe` は宣言済み)、今は波形を全点転送してホスト側で計算するしかない。プロファイル宣言を増やすだけで転送ゼロの数値測定になる。<br>**内訳: 時間系 5/10・振幅系 5/15・面積スルーレート系 0/4・位相遅延系 0/8・カウント系 0/4。後ろの3群は丸ごと未実装**なので、そこから足すのが最も効率がよい | **小**(`measurement_items` への宣言追加 + `measure` の値域拡大) |
+| **測定統計の取得** | `:MEASure:STATistic:ITEM`(有効化)/ `:MEASure:STATistic:ITEM? <type>,<item>` | 最大/最小/現在値/平均/**標準偏差**(`DEViation`)/回数(`CNT`)が取れる。「たまに出る異常」の存在証明が波形転送ゼロで済み、目視のレンジ確認をジッタ・電圧変動の数値判定に置き換えられる。**`<type>` は1つずつ指定する形式で、5種欲しければ5クエリ**(いずれも科学表記の単一値でパースは容易) | **中**。下記の注意を参照 |
+
+> **`measure` への引数追加では済まない。** 統計を読む前に **set 形 `:MEASure:STATistic:ITEM <item>` で統計機能を有効化する必要があり、これは書き込み**である。`measure` は `TOOL_CLASSES` で **READ_ONLY** なので、READ_ONLY Toolに書き込みを混ぜることになり AGENTS.mdルール5 に反する。**有効化(SAFE_WRITE)と読み取り(READ_ONLY)を別Toolに分ける**前提で見積もること。
 | **測定区間の限定** | `:MEASure:AREA`(MAIN/ZOOM/CURSor)+ `:MEASure:CREGion:*` | 「この区間だけ測る」がSCPIだけで指定でき、関心外のノイズを測定値から除外できる | **中**(新Tool 1本 または `measure` の引数追加) |
 
+> **`:MEASure:AREA ZOOM` は遅延掃引の有効化が前提**(ガイド3.17.19 Remarks: *"only when you enable the delayed sweep function first, can Zoom be enabled"*)。遅延掃引(`:TIMebase:DELay:*`)は下記「低」に置いているので、**ZOOM を使うなら先にそちらが要る**。`CURSor` は実装済みの `configure_cursor` と連動する。
+>
 > **「関心区間だけを扱う」手段が3つあるので混同しないこと。** ①**`:MEASure:AREA`** = **測定値**を区間で絞る(本行。優先度「高」)。②**`:WAVeform:STARt` / `:STOP`** = **転送する波形点**を絞る(**実装済み**。`max_points` として露出)。③**遅延掃引(`:TIMebase:DELay:*`)** = **画面表示**を拡大する(優先度「低」。①②で足りるため)。AIが数値を得たいなら①、波形データを絞りたいなら②で、③は人間が画面を見るための機能。
 | **測定しきい値・振幅算出方式の設定** | `:MEASure:SETup:MAX/MID/MIN`、`:MEASure:THReshold:*` | 立上り時間やパルス幅の測定値が**なぜその値なのか**をAIが制御できる。層1の他項目の精度前提 | **中** |
 | **取得モードの制御** | `:ACQuire:TYPE` / `:AVERages` / `:BITS` | ノイズが乗った信号にAverage、見逃したくない過渡にPeak Detect、分解能が要るならHigh Resolution を**AIが自分で選べる**。今は選べない | **小**(`configure_timebase` か新規 `configure_acquisition`) |
@@ -292,7 +301,7 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 
 実装案(第一候補): **新Toolを作らず `capture_screenshot` の返却に `device_time` と `time_skew_s` を足す**。issue #10 の「実行前に簡単に時刻同期チェックをしておきたい」に直接答える形になる。
 
-**機種差に注意:** MHO900 と DHO1000/4000 には在るが、**DHO800/900 にはコマンド自体が無い**(コマンドリファレンスに存在しない)。方言キーで宣言し、不在ならゲートすること。返却書式はガイド内で `2017,10,17` と `16:10:17` に揺れており**実機確認が必要**(2.6.5 の V-3)。
+**機種差に注意:** MHO900 と DHO1000/4000 には在るが、**DHO800/900 にはコマンド自体が無い**(コマンドリファレンスに存在しない)。方言キーで宣言し、不在ならゲートすること。返却書式は **`:SYSTem:DATE?` はカンマ区切りと Return Format に明記**(例 `2017,10,17`)。**揺れているのは `:SYSTem:TIME` だけ** — set はカンマ区切り(`:SYSTem:TIME 16,10,17`)なのに query の例はコロン区切り(`16:10:17`)で、Return Format 本文に区切り文字の記載が無い。**実機確認が必要**(2.6.5 の V-3)。
 
 #### 2.6.2 優先度「中」
 
@@ -303,7 +312,8 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 | 測定の前提設定(2ソース指定・Vtop/Vbase算出方式・振幅アルゴリズム) | `:MEASure:SOURce`、`:MEASure:SETup:*` | 層1の位相/遅延・振幅系測定の精度を決める。「高」の項目を入れてから |
 | メモリ深さの設定(現在は読みのみ) | `:ACQuire:MDEPth` | 取得点数を目的に合わせられる |
 | トリガホールドオフ / トリガ位置取得 | `:TRIGger:HOLDoff` / `:TRIGger:POSition?` | 繰り返し波形の安定捕捉、波形内のトリガ点の数値特定 |
-| 残りのトリガ種別(スロープ / ウィンドウ / Nthエッジ) | `:TRIGger:SLOPe` / `:WINDows` / `:NEDGe` | 用途が層2の8種より狭い |
+| 残りの標準トリガ種別(スロープ / ウィンドウ / Nthエッジ) | `:TRIGger:SLOPe` / `:WINDows` / `:NEDGe` | 用途が層2の8種より狭い |
+| オプション必須のシリアルトリガ(FlexRay / I2S) | `:TRIGger:FLEXray` / `:TRIGger:IIS` | ライセンス必須のため採点軸4で1段下げ。デコード側(2.1のオプション4種)と対で着手するのが自然 |
 | 強制トリガ | `:TFORce` | トリガ待ちで固まったときAIが自力で打開できる |
 | オートセットの事前確認・挙動制御 | `:AUToset:LOCK` / `:ENAble` / `:OPENch` / `:KEEPcoup` | 実行前に許可を確認でき、意図しないch無効化を防げる。**autoset は実機実行禁止(AGENTS.mdルール4)のため、実機検証は読み取りに限る** |
 | 設定の一括保存・復元 | `:SYSTem:SETup` | 「変更前の状態を保存して後で戻す」= 実機writeテストの安全弁になり得る |
@@ -317,10 +327,11 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 
 | 機能 | 下げる理由 |
 |---|---|
-| **`:LA`(ロジックアナライザ)** | **D0〜D15の波形を吸い出すクエリがガイドに無い。** `:WAVeform:SOURce` の値域は `CHANnel1-4\|MATH1-4` のみで D0-D15 を含まず、`:LA` 配下にも `DATA?` 相当が無い。有効化としきい値設定はできるが**結果が読めない**(§2.2 を更新済み)。ロジックプローブの物理接続が要る点も検証の障害 |
+| ~~`:LA`(ロジックアナライザ)~~ | **この行は撤回した。** 当初「結果が読めない」として下げたが、読めないのは**生サンプル列だけ**で、D0-D15 は `:MEASure:ITEM` / `:BUS<n>` 各ソース / `:COUNter:SOURce` / `:MATH<n>:LSOurce` のソースとして受理され、結果はデコード表・測定値として読める。さらに 2.1 で露出済みの `bus_width > 4` のパラレルデコードは `:LA` の有効化が前提。詳細は [2.2](#22-logic-analyzer) |
 | **`:BODeplot`** | ゲイン/位相カーブを数値で読むクエリが見当たらない(`GAINcurve:ENABle` / `PHASEcurve:ENABle` は画面表示のon/offフラグ)。オプション必須でもある |
 | **`:NAVigate`** | 移動系コマンド(NEXT/BACK/STARt/END/PLAY)が**全て Return Format N/A**。移動先の時刻もイベント番号も返らないためAIには使えない。イベント間移動は `:SEARch:EVENt`(移動 + 現在位置のクエリが1コマンドで完結)で代替できる |
-| `:DISPlay` の装飾系 / `:QUICk` / `:LAN` / `:SAVE` / `:HISTogram:SAVE:CSV` | 画面装飾・本体UIのボタン割当・ネットワーク設定・**機器ストレージへのファイル保存**。証拠はホスト側に置く方が扱いやすく、保存先規約(実行ディレクトリ基準の許可ルート)の外でもある |
+| ビデオトリガ(`:TRIGger:VIDeo`)/ MIL-STD-1553トリガ(`:TRIGger:M1553`) | 前者は映像信号に用途が限定的、後者は航空機バス向けでライセンス必須。**対象ユーザが極端に狭い** |
+| `:DISPlay` の装飾系 / `:QUICk` / `:LAN` / `:SAVE` | 画面装飾・本体UIのボタン割当・ネットワーク設定・**機器ストレージへのファイル保存**。証拠はホスト側に置く方が扱いやすく、保存先規約(実行ディレクトリ基準の許可ルート)の外でもある |
 | 時刻の**設定** | **この行だけ物差しが違う。** 他は「AIが読める結果が返らないから低」だが、これは結果が返るかどうかではなく **AIが機器のグローバル状態を勝手に書き換えるのは越権**という判断で低い。ずれの検出(取得)は「高」に置いてある。人間が明示的に求めたときだけ実装すればよい |
 
 #### 2.6.4 対象外(MHO98実機で検証できないもの)
@@ -329,13 +340,13 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 
 | 機能 | 機種 | 備考 |
 |---|---|---|
-| **`:POWer`(電源解析、DHO1000/4000ガイド 3.19)** | **DHO4000のみ**(DHO1000は非対応)。オプションライセンス必須 | `:POWer:QUALity:STATistics:RESult?` が実効電圧・実効電流・有効/皮相/無効電力・力率・位相角・インピーダンス・クレストファクタの**11指標を統計付きの表で1クエリ返す**。`:POWer:RIPPle:STATistics:RESult?` はDC出力リプルの6統計。**通常なら人間の手計算か外部パワーメータが要るものが数値で取れる**ため、DHO4000の実機が入手できた場合の価値は高い |
+| **`:POWer`(電源解析、DHO1000/4000ガイド 3.19)** | **DHO4000のみ**(DHO1000は非対応)。オプションライセンス必須 | `:POWer:QUALity:STATistics:RESult?` が**基準周波数・実効電圧・実効電流・有効電力・皮相電力・無効電力・力率・位相角・インピーダンス・電圧クレストファクタ・電流クレストファクタの11指標**を、各々 Current / Average / Maximum / Minimum / Deviation / Count の統計付きの表で**1クエリ返す**(返り値は `"88.273mV"` のような**単位付き文字列**でSI接頭辞の換算が要る)。`:POWer:RIPPle:STATistics:RESult?` はDC出力リプルの6統計。**通常なら人間の手計算か外部パワーメータが要るものが数値で取れる**ため、DHO4000の実機が入手できた場合の価値は高い |
 | `VARiance`(分散)の測定 | 両DHOのみ(MHO98の `:MEASure:ITEM` に無い) | DHOは42トークン、MHO98は41トークン |
 | `:TIMebase:XY:Z`(輝度変調入力) | DHO系 | XYモード自体が未実装のため実害なし |
 
 #### 2.6.5 実機検証で先に潰す「不明」項目
 
-ガイドに記載が無く、**その1本で上の優先度が書き換わる**もの。順序は「優先度表への影響 ÷ 検証コスト」。**V-2〜V-5 は read-only スイート(`-m device`)で確認できるが、V-1 は録画の実行を伴うため read-only ではない**(復元手順を先に用意すること)。
+ガイドに記載が無く、**その1本で上の優先度が書き換わる**もの。順序は「優先度表への影響 ÷ 検証コスト」。**read-only(`-m device`)で確認できるのは V-3 と、V-2 の `:SYSTem:MODules?` 部分のみ。** V-1 / V-4 / V-5 / V-6 は**前提設定の書き込みが要る**(V-1=録画の実行、V-4=`:SEARch:STATe ON` とマークテーブルの生成、V-5=統計機能の有効化、V-6=遅延掃引の有効化)。これらは `-m device_write`(`RIGOL_TEST_ALLOW_WRITE=1`)側で、**現在値取得 → set → readback → finallyで復元** のパターンで実施すること(AGENTS.mdルール4)。
 
 **ただし V-1 / V-2 は未送信のニモニックを含むため、`docs/profile-authoring.md` §4 の「1コマンド送信 → 応答 → `:SYSTem:ERRor?` → 記録」を1つずつ守ること**(AGENTS.mdルール2)。
 
@@ -343,7 +354,7 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 |---|---|---|
 | **V-1** | **録画した特定フレームを `:WAVeform:DATA?` で吸い出せるか**(ガイド3.19・3.28とも記載なし) | YESなら `:RECord` は「高」へ跳ね上がる(**長時間の間欠不具合を後から数値解析できる**)。NOなら見送り確定。フレーム数・現在フレーム・タイムスタンプは読めることが確定済みなので、残る不確定はこの1点だけ。**確認には録画の実行(`:RECord:WRECord:ENABle` → 録画 → 再生位置指定)が要るため read-only ではない。録画停止・状態復元の手順を先に用意すること** |
 | **V-2** | **デジタル波形(D0〜D15)を数値で吸い出す手段があるか**。併せて `:SYSTem:MODules?` でプローブ搭載を判定できるか | `:LA` 全体の評価がこれで決まる。無ければ 2.6.3 の格下げが確定 |
-| **V-3** | `:SYSTem:DATE?` / `:TIME?` の**返却書式** | issue #10 のパーサ設計に直結。最も安い(read-onlyのクエリ2本) |
+| **V-3** | **`:SYSTem:TIME?` の区切り文字**(カンマかコロンか。`:DATE?` はカンマ区切りとガイドに明記があるため対象外) | issue #10 のパーサ設計に直結。**唯一の純 read-only 項目**でクエリ1本 |
 | **V-4** | `:SEARch:VALue?` の応答形式とイベント番号の対応 | 層3「イベント検索」の実装可否の前提。全イベント時刻の一括収集ループが成立するか |
 | **V-5** | `:MEASure:STATistic:ITEM?` の応答形式(複数値の区切り) | 層1「測定統計」のパーサ設計。ガイドに区切り文字の記載が無い |
 | **V-6** | 遅延掃引(ズーム)中に `:WAVeform:DATA?` が何を返すか | 拡大区間を返すなら「怪しい箇所だけ再取得」が成立。返さないなら既存の `:STARt`/`:STOP` で足りる |
@@ -354,20 +365,23 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 
 DHOプロファイル(`confidence: guide`)を実機検証で昇格させる際に必要になるもの。**現時点では実機が無いため宣言しない**(キーの不在がそのままゲートになる)。
 
+> **機種対応の正は [compatibility.md](compatibility.md) と `profiles/data/*.yaml`。** 本表は**今回のガイド解読で新たに判明した分の作業メモ**であり、恒久記録ではない。両者が食い違ったら compatibility.md 側が正しいものとして扱い、本表を直すこと(二重管理を避けるため、実機検証で確定した内容は compatibility.md へ移すこと)。
+
 | 項目 | MHO900 | DHO800/900 | DHO1000/4000 |
 |---|---|---|---|
 | **I2Cアドレス指定** | `:BUS<n>:IIC:ADDBits {7\|8\|10}`(ビット幅) | `:BUS<n>:IIC:ADDRess {NORMal\|RW}`(R/Wビットを数えるか) | 同左 |
 | **`:SYSTem:DATE` / `:TIME`** | あり | **無し** | あり |
-| **`:SYSTem:OPTion:*`** | あり | **丸ごと無し**(`get_capabilities` が機能しない) | **無し** |
+| **`:SYSTem:OPTion:*`** | あり | **丸ごと無し**(`get_capabilities` が機能しない) | **あり**(3.26.9〜3.26.11。`:OPTion:VALid?` のみ無い) |
+| **測定区間の限定** | `:MEASure:AREA` は3機種共通。**`:MEASure:CREGion:*` は MHO900 のみ** | `:CREGion` 無し | `:CREGion` 無し |
 | **ADC分解能** | `:ACQuire:BITS` | **無し**(`:ACQuire:HRESolution` が別綴りで在る) | `:ACQuire:BITS` あり |
-| **`:CHANnel<n>:IMPedance`** | あり(50Ω/1MΩ) | **無し**(1MΩ固定) | **無し**(1MΩ固定) |
+| **`:CHANnel<n>:IMPedance`** | あり(50Ω/1MΩ) | **無し**(ガイド全文に該当なし) | **コマンドは在る**(3.9.8)。機器側は DHO1000 が1MΩのみ、DHO4000 が `{OMEG\|FIFTy}` 対応([compatibility.md](compatibility.md)) |
 | **AFG(`:SOURce`)** | `:SOURce<n>`(2ch) | 番号なし `:SOURce`。`PERiod` / `PHASe:SYNChronize` / `VOLTage:HIGH/LOW` / `IMPedance` / `LOAD:ARBitrary` が無い | **AFG自体が無い** |
 | **`:LA` / デジタルch** | `:LA` | `Digital Channel Commands`(**DHO900系のみ。DHO800系は非搭載**) | **無し** |
-| スクリーンショット | 引数なしでPNG | `PNG` 引数必須(既定BMP) | `:DISPlay:DATA? [<type>]`(`PNG\|BMP24\|BMP8\|JPEG\|TIFF`) |
+| スクリーンショット | ガイドは `:DISPlay:DATA? [<type>]`、`<type>`=`{BMP\|PNG\|JPG}`・**既定BMP**。ただし**MHO98実機は引数なしでPNGを返す**(ガイドと実機の食い違い。実測: [verification/mho98-phase0.md](verification/mho98-phase0.md)) | **ガイド上は同一**(既定BMPのため PNG が欲しければ明示する) | **ガイド上は同一** |
 | 測定クリア | `:MEASure:DELete` | `:MEASure:CLEar` | `:MEASure:CLEar` |
 | トリガ種別数 | 20 | 17(FLEXray / IIS / M1553 が無い) | 20(綴りも一致) |
 
-**LINデコードの `:BAUD`** は DHO1000/4000 に無いことが確定している(DHO800/900 は未確認)。**未確認のまま送ると未定義ヘッダで沈黙する既知の事故モードに直撃する**ため、DHO対応を進めるときはここを先に潰すこと。
+**LINデコードの `:BAUD`(`:BUS<n>:LIN:BAUD`)は両DHO系列とも存在しない** — MHO900 の 3.4.15.4 のみ。DHO の `:BUS<n>:LIN` 配下は `PARity` / `SOURce` / `STANdard` の3つ(`:TRIGger:LIN:BAUD` は**別サブシステム**なので混同しないこと)。`driver/decode.py` は LIN の `baud_bps` で `:BAUD` を送るため、**DHOプロファイルでは `baud_bps` 項目自体を無効化する必要がある**。未定義ヘッダで沈黙する既知の事故モードに直撃する箇所。
 
 #### 2.6.7 本節全体にかかる安全注記
 
@@ -402,7 +416,7 @@ DHOプロファイル(`confidence: guide`)を実機検証で昇格させる際�
 - MHO98で未検証の項目の実機確認([device-profiles.md](device-profiles.md) 3.1、[verification/mho98-mvp.md](verification/mho98-mvp.md) 4章): 50Ωニモニック、autoset書き込み(ニモニック :AUToset はサブツリーの読み取りプローブで確認済み — mho98-autoset.md。実行自体が未検証)、RAWモード波形、limits境界値(RUN/STOP/SINGleはMVPで実機確認済み)
 - **USB(USBTMC)接続の実機検証** — ユニットテスト(`tests/test_usb_transport.py`、PyVISAのフェイク)は通っているが実機未検証。VISAリソース文字列の推奨形式もここで確定させる
 - **表示OFFチャンネルへの書き込みが無視される件への対策検討**([verification/mho98-mvp.md](verification/mho98-mvp.md) 3.3): 表示OFFのCHへ `:SCALe` / `:OFFSet` を送るとエラーなく無視される。`configure_channel` で自動的に `enabled=True` にするか、requested/applied の不一致を警告として返すに留めるか、要検討(暗黙に表示をONにするのは利用者の画面を勝手に変える副作用でもある)
-- MHO98以外の対応機種の追加: **DHO800/900系をガイドベースプロファイルとして追加済み**(`dho800.yaml` / `dho900.yaml`、信頼度 `guide` = 公式プログラミングガイドの逐語解読のみで実機未検証。[device-profiles.md](device-profiles.md) 6章)。実機が用意でき次第、(1) quirk・limitsを実測して `verified` へ昇格、(2) 現在スコープ外のデコード / AFG / LA / オプション照会の宣言を追加する(issue #19)。**ガイド解読で判明している方言差の一覧は [2.6.6](#266-機種横断で判明した方言差プロファイル拡充の材料)**(I2Cアドレス指定の意味差、`:SYSTem:DATE`/`:TIME` と `:SYSTem:OPTion:*` の不在、AFG系統の違い、DHO800系のLA非搭載など)。他機種(DS/MSO系など)は引き続き実機が用意でき次第
+- MHO98以外の対応機種の追加: **DHO800/900/1000/4000系をガイドベースプロファイルとして追加済み**(`dho800.yaml` / `dho900.yaml` / `dho1000.yaml` / `dho4000.yaml`、信頼度 `guide` = 公式プログラミングガイドの逐語解読のみで実機未検証。[device-profiles.md](device-profiles.md) 6章)。実機が用意でき次第、(1) quirk・limitsを実測して `verified` へ昇格、(2) 現在スコープ外のデコード / AFG / LA / オプション照会の宣言を追加する(issue #19)。**ガイド解読で判明している方言差の一覧は [2.6.6](#266-機種横断で判明した方言差プロファイル拡充の材料)**(I2Cアドレス指定の意味差、`:SYSTem:DATE`/`:TIME` と `:SYSTem:OPTion:*` の不在、AFG系統の違い、DHO800系のLA非搭載など)。他機種(DS/MSO系など)は引き続き実機が用意でき次第
 - ファミリプロファイルの括り出し(同系2機種以上の検証が揃った段階で)
 - **issue #24(2chモデルが `analog_channels: 4` として解決される問題)の解法候補: `:SYSTem:RAMount?`(ガイド3.24.8)。** 機器自身が実アナログch数を申告するため、**プロファイルへ機種内分岐を足さずに実行時解決できる**(宣言値より実測値を優先する)。DHO実機が無くても設計を決められる点が利点。ただし**外部トリガ(EXT)入力が DHO802 / DHO812 専用**である点は `:RAMount?` では分からず、別途プロファイル宣言が要る。併せて `:SYSTem:MODules?`(3.24.15)でLA搭載の有無を実行時判定できる可能性がある([2.6.5](#265-実機検証で先に潰す不明項目) の V-2 で確認する)。**いずれも実機未検証**
 - **DHO800/900 を `verified` へ昇格させる際の障害: `get_capabilities` が依存する `:SYSTem:OPTion:STATus?` が DHO800/900 のコマンドリファレンスに存在しない**(代替手段もガイド上見つからない)。オプション照会をゲートするか、機種によっては返せないことを許容する設計判断が要る([2.6.6](#266-機種横断で判明した方言差プロファイル拡充の材料))
