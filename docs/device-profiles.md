@@ -54,6 +54,10 @@
 | `measurements` | 対応測定項目リスト | measure の項目検証 |
 | `impedance_control` | true | `:CHANnel<n>:IMPedance` の可否(問い合わせ含む) |
 | `impedance_50ohm` | true | 50Ω設定の可否 |
+| `cursor` | true | カーソル測定(`:CURSor`)の可否。`configure_cursor` / `get_cursor_measurement` が使う。**未宣言ならカーソル操作自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) |
+| `frequency_counter` | true | 周波数カウンタ(`:COUNter`)の可否。`configure_meter(kind="counter")` / `get_meter_value(kind="counter")` が使う。**未宣言ならカウンタ操作自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) |
+| `dvm` | true | 電圧計(`:DVM`)の可否。`configure_meter(kind="dvm")` / `get_meter_value(kind="dvm")` が使う。**未宣言なら電圧計操作自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) |
+| `histogram` | true | 波形ヒストグラム(`:HISTogram`)の可否。`configure_histogram` / `get_histogram_result` が使う。**未宣言ならヒストグラム操作自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) |
 
 未対応機能のToolが呼ばれた場合、実機へコマンドを送らず `UNSUPPORTED_FEATURE` を返す(理由は4.2参照)。
 
@@ -88,6 +92,11 @@
 | `math_fft_modes` | FFTの演算モードの対応表(`:MATH<n>:FFT:MODE`)。**未宣言なら `fft.mode` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `normal: NORMal` / `average: AVERage` / `maxhold: MAXHold`(ガイド3.16.17) |
 | `math_fft_search_orders` | FFTピーク探索の並び順の対応表(`:MATH<n>:FFT:SEARch:ORDer`)。**未宣言なら `fft.search_order` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `amplitude: AMPorder` / `frequency: FREQorder`(ガイド3.16.29) |
 | `math_filter_types` | デジタルフィルタ種別の対応表(`:MATH<n>:FILTer:TYPE`)。**未宣言なら `filter.type` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `lowpass: LPASs` / `highpass: HPASs` / `bandpass: BPASs` / `bandstop: BSTop`(ガイド3.16.31) |
+| `cursor_modes` | カーソルのモードの対応表(`:CURSor:MODE`)。**未宣言なら `mode` 引数自体を扱わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) | `off: OFF` / `manual: MANual` / `track: TRACk` / `xy: XY`(ガイド3.8.1)。`xy` は水平時間軸がXYのときのみ有効で、**`:CURSor:XY:*` サブツリー自体はM2スコープ外**(YAML 1.1 では裸の `off` が真偽値になるため引用符が必須) |
+| `cursor_types` | manualカーソルの種別の対応表(`:CURSor:MANual:TYPE`)。**未宣言なら `type` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `time: TIME` / `amplitude: AMPLitude`(ガイド3.8.2)。`TUNit` / `VUNit` は**宣言しない**(`VUNit` はガイド本文がページ欠落で値域不明、`TUNit` は値が `{SECond}` の1つのみ) |
+| `counter_modes` | 周波数カウンタの測定モードの対応表(`:COUNter:MODE`)。**未宣言なら `mode` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `frequency: FREQuency` / `period: PERiod` / `totalize: TOTalize`(ガイド3.7.4) |
+| `dvm_modes` | 電圧計の測定モードの対応表(`:DVM:MODE`)。**未宣言なら `mode` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `ac_rms: ACRMs`(DC成分を除いた実効値)/ `dc: DC`(平均)/ `dc_rms: DCRMs`(実効値)(ガイド3.10.4) |
+| `histogram_types` | ヒストグラム種別の対応表(`:HISTogram:TYPE`)。**未宣言なら `type` を送らず `UNSUPPORTED_FEATURE`**(送信ゼロ) | `horizontal: HORizontal` / `vertical: VERTical`(ガイド3.11.3) |
 
 `:SYSTem:OPTion:*` は**MHO900専用**でDHO800/900のガイドには存在しない。したがって `option_query` / `option_types` は `mho98.yaml` にのみ宣言し、`rigol-generic.yaml` には置かない — **キーの不在がそのままゲート**である(4.2の原則の適用例)。`*OPT?` はRigolオシロ全シリーズで未定義ヘッダのため使わない。`<type>` リスト外のトークン(実測: `AUTOA`)でもSCPIサーバーが沈黙するので、`option_types` に載っていないトークンを送ってはならない。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md)(未ライセンス状態でも `AFG50` / `RLU-05` は `1` を返す)。
 
@@ -232,6 +241,7 @@ quirk系(`invalid_query_behavior` / `error_queue_stale_on_connect` / `snaps_to_1
 - **シリアルデコード**(`protocol_decode: false`、`decode_protocols` / `decode_formats` / `decode_buses` 未宣言)
 - **AFG**(`afg_channels: 0`、`afg_prefix` ほか未宣言)。DHO914S/924S は1chのジェネレータを内蔵するが、DHO系は**番号なしの `:SOURce`** でMHO900の `:SOURce<n>` とは別方言
 - **MATH演算**(`math_channels` / `ref_channels` / `math_*` の方言6キーとも未宣言)。DHO系ガイドの `:MATH<n>` 章はまだ逐語解読していないため、演算子トークンの集合が同一である保証が無い
+- **カーソル・周波数カウンタ・電圧計・ヒストグラム**(`cursor` / `frequency_counter` / `dvm` / `histogram` と `cursor_modes` / `cursor_types` / `counter_modes` / `dvm_modes` / `histogram_types` の方言5キーとも未宣言)。M1と同じ理由でDHO系ガイドの該当章(3.7 / 3.8 / 3.10 / 3.11 相当)が未解読
 - **ロジックアナライザ**(`digital_channels` は情報として持つがLA操作Tool自体が未実装)
 - **オプション照会**(`:SYSTem:OPTion:*` はMHO900専用でDHOのガイドに存在しない)
 - **50Ω入力**(`impedance_control: false`。DHO800/900の入力は1MΩ固定)

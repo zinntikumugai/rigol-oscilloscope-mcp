@@ -45,6 +45,7 @@ from rigol_oscilloscope_mcp.service import (
     capture_waveform,
     get_acquisition_dict,
     get_channel_dict,
+    get_meter_value,
     get_timebase_dict,
     get_trigger_dict,
 )
@@ -118,6 +119,23 @@ requires_afg_loopback = pytest.mark.skipif(
 MATH_CHANNEL = 1
 MATH_FFT_START_HZ = 0.0
 MATH_FFT_END_HZ = 100000.0
+
+#: カーソル・計測器・ヒストグラムの検証値(いずれも表示・統計層のみに効く)
+CURSOR_AX_S = -2e-4
+CURSOR_BX_S = 2e-4
+CURSOR_AY_V = -0.5
+CURSOR_BY_V = 0.5
+#: TRACkモードのY位置は波形に追従して機器側で動く(mho98-m2.md 3章)。
+#: 復元漏れの判定から外す(service/control.py の `changed` 判定と同じ理由)
+CURSOR_TRACKED_KEYS = ("ay", "by")
+
+METER_CHANNEL = "CH2"
+COUNTER_DIGITS = 5
+HISTOGRAM_HEIGHT = 2
+HISTOGRAM_LEFT_S = -3e-4
+HISTOGRAM_RIGHT_S = 3e-4
+HISTOGRAM_BOTTOM_V = -1.0
+HISTOGRAM_TOP_V = 1.0
 
 #: `:SINGle` 直後に許容するトリガ状態(実測: WAIT。すぐトリガすると TD を経て STOP)
 SINGLE_STATUSES = ("WAIT", "TD")
@@ -1210,6 +1228,322 @@ def test_configure_math_round_trip(
     assert capture["points"] * capture["frequency_step_hz"] == pytest.approx(
         config["fft"]["freq_end_hz"], rel=1e-3
     )
+
+
+# -- 11c. カーソル・計測器・ヒストグラム(表示・統計層のみ)-------------------
+
+
+def _cursor_settings(state: dict) -> dict:
+    """TRACkモードのY位置を除いた設定だけを取り出す(復元漏れ判定用)。
+
+    実測(mho98-m2.md 3章)では、TRACkモードの `CAY` / `CBY` は**設定側の値も
+    波形に追従して機器が動かす**。復元しても読むたびに変わるため、そのまま
+    diff を取ると必ず「復元漏れ」に見えてしまう。
+    """
+    if state.get("mode") != "track":
+        return state
+    return {k: v for k, v in state.items() if k not in CURSOR_TRACKED_KEYS}
+
+
+@pytest.fixture
+def cursor_before(request: pytest.FixtureRequest, driver: ScopeDriver) -> Iterator[dict]:
+    """カーソルの現在設定を控え、teardownで必ず書き戻す。
+
+    `off` / `xy` は位置サブツリーを持たないため `mode` しか返らない。その場合は
+    モードだけを戻す(存在しないサブツリーへは1コマンドも送らない)。
+    """
+    before = driver.get_cursor_config()
+    tag = request.node.name
+    _report(f"[before:{tag}] cursor={before}")
+    try:
+        yield before
+    finally:
+        # モードを先に戻す(位置・ソースの書き込み先がモードで決まるため)
+        restore = {k: v for k, v in before.items() if k != "mode"}
+        failure: Exception | None = None
+        try:
+            driver.configure_cursor(mode=before["mode"], **restore)
+        except Exception as exc:  # 復元は最後まで試みる
+            failure = exc
+
+        after = driver.get_cursor_config()
+        drift = _diff(_cursor_settings(before), _cursor_settings(after))
+        _report(f"[restore:{tag}] cursor 復元後={after}")
+        if drift:
+            _report(f"[restore:{tag}] **復元漏れ**: {drift}")
+        if failure is not None:
+            _report(f"[restore:{tag}] **復元コマンド失敗**: {failure!r}")
+        assert failure is None, f"カーソルの復元に失敗: {failure!r}"
+        assert not drift, f"カーソルが復元されていません: {drift}"
+
+
+def test_configure_cursor_round_trip(
+    control: ControlService, driver: ScopeDriver, cursor_before: dict
+) -> None:
+    """manualカーソルを置いて read-back し、読み値のΔXが位置差と一致すること。"""
+    result = control.configure_cursor(
+        driver,
+        mode="manual",
+        type="time",
+        source=METER_CHANNEL,
+        ax=CURSOR_AX_S,
+        ay=CURSOR_AY_V,
+        bx=CURSOR_BX_S,
+        by=CURSOR_BY_V,
+    )
+    applied = result["applied"]
+    _report(f"[cursor] applied={applied} changed={result['changed']}")
+
+    assert result["mode"] == "manual"
+    assert applied["mode"] == "manual"
+    assert applied["type"] == "time"
+    assert applied["source"] == METER_CHANNEL
+    for key, expected in (
+        ("ax", CURSOR_AX_S),
+        ("ay", CURSOR_AY_V),
+        ("bx", CURSOR_BX_S),
+        ("by", CURSOR_BY_V),
+    ):
+        assert applied[key] == pytest.approx(expected, rel=1e-3, abs=1e-9), key
+
+    measurement = driver.get_cursor_measurement()
+    _report(f"[cursor] measurement={measurement}")
+    assert measurement["mode"] == "manual"
+    # ΔX = B − A(読み値の有効数字は4桁程度なので相対誤差で見る)
+    assert measurement["xdelta_s"] == pytest.approx(
+        CURSOR_BX_S - CURSOR_AX_S, rel=1e-3
+    )
+    # 1/ΔX。ΔX が 0 でなければ数値が返る
+    assert measurement["ixdelta_hz"] == pytest.approx(
+        1.0 / (CURSOR_BX_S - CURSOR_AX_S), rel=1e-2
+    )
+
+
+@pytest.fixture
+def counter_before(request: pytest.FixtureRequest, driver: ScopeDriver) -> Iterator[dict]:
+    """周波数カウンタの現在設定を控え、teardownで必ず書き戻す。
+
+    **復元の順序に実機都合がある。** `:COUNter:TOTalize:ENABle` は
+    **カウンタが無効のとき、現在値と同じ値を書いても `-200,"Command execute
+    failed"` で拒否される**(mho98-m2.md 5章。プローブ用スクリプトが実際に
+    ここで失敗した)。そのため復元は次の2段階に分ける:
+
+    1. `enabled` 以外を先に書く(カウンタがまだ有効なうちに書けば通る)
+    2. 最後に `enabled` を元へ戻す
+
+    それでも「復元開始時点でカウンタが無効」なら `totalize_enabled` は
+    書けないので、そのときは**復元対象から外す**(その状態では機器が値を
+    保持したまま書き込みを受け付けないため、そもそも変えられていない)。
+    """
+    before = driver.get_meter_config("counter")
+    tag = request.node.name
+    _report(f"[before:{tag}] counter={before}")
+    try:
+        yield before
+    finally:
+        restore = {
+            key: value
+            for key, value in before.items()
+            if key not in ("kind", "enabled")
+        }
+        if not driver.get_meter_config("counter")["enabled"]:
+            restore.pop("totalize_enabled", None)
+
+        failure: Exception | None = None
+        try:
+            if restore:
+                driver.configure_meter("counter", **restore)
+            driver.configure_meter("counter", enabled=before["enabled"])
+        except Exception as exc:  # 復元は最後まで試みる
+            failure = exc
+
+        after = driver.get_meter_config("counter")
+        drift = _diff(before, after)
+        _report(f"[restore:{tag}] counter 復元後={after}")
+        if drift:
+            _report(f"[restore:{tag}] **復元漏れ**: {drift}")
+        if failure is not None:
+            _report(f"[restore:{tag}] **復元コマンド失敗**: {failure!r}")
+        assert failure is None, f"カウンタの復元に失敗: {failure!r}"
+        assert not drift, f"カウンタが復元されていません: {drift}"
+
+
+def test_configure_meter_counter_round_trip(
+    control: ControlService, driver: ScopeDriver, counter_before: dict
+) -> None:
+    """周波数カウンタを有効化して read-back し、現在値を単位つきで読む。
+
+    **モード依存の項目は同じ呼び出しで指定する**(`digits` は Totalize モード
+    では機器が拒否する。tools.md 12章)。
+    """
+    result = control.configure_meter(
+        driver,
+        "counter",
+        enabled=True,
+        source=METER_CHANNEL,
+        mode="frequency",
+        digits=COUNTER_DIGITS,
+    )
+    applied = result["applied"]
+    _report(f"[meter:counter] applied={applied} changed={result['changed']}")
+
+    assert result["kind"] == "counter"
+    assert applied["enabled"] is True
+    assert applied["source"] == METER_CHANNEL
+    assert applied["mode"] == "frequency"
+    assert applied["digits"] == COUNTER_DIGITS
+
+    value = get_meter_value(driver, "counter")
+    _report(f"[meter:counter] value={value}")
+    assert value["unit"] == "Hz"
+    # 実測ではカウンタ有効でも 0 が返ることがある(mho98-m2.md 6.1、未解決)
+    assert value["value"] is None or isinstance(value["value"], float)
+
+
+@pytest.fixture
+def dvm_before(request: pytest.FixtureRequest, driver: ScopeDriver) -> Iterator[dict]:
+    """電圧計の現在設定を控え、teardownで必ず書き戻す。
+
+    電圧計にはカウンタのような無効時の書き込み拒否は無いが、順序は揃えて
+    `enabled` を最後に戻す(無効にしてから他の項目を書かない)。
+    """
+    before = driver.get_meter_config("dvm")
+    tag = request.node.name
+    _report(f"[before:{tag}] dvm={before}")
+    try:
+        yield before
+    finally:
+        restore = {
+            key: value
+            for key, value in before.items()
+            if key not in ("kind", "enabled")
+        }
+        failure: Exception | None = None
+        try:
+            driver.configure_meter("dvm", **restore)
+            driver.configure_meter("dvm", enabled=before["enabled"])
+        except Exception as exc:  # 復元は最後まで試みる
+            failure = exc
+
+        after = driver.get_meter_config("dvm")
+        drift = _diff(before, after)
+        _report(f"[restore:{tag}] dvm 復元後={after}")
+        if drift:
+            _report(f"[restore:{tag}] **復元漏れ**: {drift}")
+        if failure is not None:
+            _report(f"[restore:{tag}] **復元コマンド失敗**: {failure!r}")
+        assert failure is None, f"電圧計の復元に失敗: {failure!r}"
+        assert not drift, f"電圧計が復元されていません: {drift}"
+
+
+def test_configure_meter_dvm_round_trip(
+    control: ControlService, driver: ScopeDriver, dvm_before: dict
+) -> None:
+    """電圧計を有効化して read-back し、現在値がVで読めること。
+
+    無効時の `:DVM:CURRent?` は空応答(mho98-m2.md 1章)。**有効化した後は
+    数値が返る**ことがこのテストの主眼。
+    """
+    result = control.configure_meter(
+        driver,
+        "dvm",
+        enabled=True,
+        source=METER_CHANNEL,
+        mode="dc",
+    )
+    applied = result["applied"]
+    _report(f"[meter:dvm] applied={applied} changed={result['changed']}")
+
+    assert result["kind"] == "dvm"
+    assert applied["enabled"] is True
+    assert applied["source"] == METER_CHANNEL
+    assert applied["mode"] == "dc"
+
+    value = get_meter_value(driver, "dvm")
+    _report(f"[meter:dvm] value={value}")
+    assert value["unit"] == "V"
+    assert isinstance(value["value"], float), "有効な電圧計は数値を返す"
+
+
+@pytest.fixture
+def histogram_before(
+    request: pytest.FixtureRequest, driver: ScopeDriver
+) -> Iterator[dict]:
+    """ヒストグラムの現在設定を控え、teardownで必ず書き戻す。
+
+    範囲は**両端を同時に**書き戻す(片側だけを動かして現在の反対側を追い越すと
+    機器が拒否する。tools.md 12章)。`configure_histogram` は項目表の順に
+    LEFT → RIGHt → BOTTom → TOP を1回の呼び出しで送るため、1往復で足りる。
+    """
+    before = driver.get_histogram_config()
+    tag = request.node.name
+    _report(f"[before:{tag}] histogram={before}")
+    try:
+        yield before
+    finally:
+        failure: Exception | None = None
+        try:
+            driver.configure_histogram(**before)
+        except Exception as exc:  # 復元は最後まで試みる
+            failure = exc
+
+        after = driver.get_histogram_config()
+        drift = _diff(before, after)
+        _report(f"[restore:{tag}] histogram 復元後={after}")
+        if drift:
+            _report(f"[restore:{tag}] **復元漏れ**: {drift}")
+        if failure is not None:
+            _report(f"[restore:{tag}] **復元コマンド失敗**: {failure!r}")
+        assert failure is None, f"ヒストグラムの復元に失敗: {failure!r}"
+        assert not drift, f"ヒストグラムが復元されていません: {drift}"
+
+
+def test_configure_histogram_round_trip(
+    control: ControlService, driver: ScopeDriver, histogram_before: dict
+) -> None:
+    """ヒストグラムを有効化して read-back し、統計を読む。
+
+    統計応答は**単一行・終端の空行なし**で、機器自身がラベルを持つ
+    (mho98-m2.md 2章)。`raw` は常に返り、`stats` はSI換算済みの数値。
+    """
+    result = control.configure_histogram(
+        driver,
+        enabled=True,
+        type="vertical",
+        source=METER_CHANNEL,
+        height=HISTOGRAM_HEIGHT,
+        left_s=HISTOGRAM_LEFT_S,
+        right_s=HISTOGRAM_RIGHT_S,
+        bottom_v=HISTOGRAM_BOTTOM_V,
+        top_v=HISTOGRAM_TOP_V,
+        reset=True,
+    )
+    applied = result["applied"]
+    _report(f"[histogram] applied={applied} changed={result['changed']}")
+
+    assert applied["enabled"] is True
+    assert applied["type"] == "vertical"
+    assert applied["source"] == METER_CHANNEL
+    assert applied["height"] == HISTOGRAM_HEIGHT
+    assert applied["reset"] is True
+    for key, expected in (
+        ("left_s", HISTOGRAM_LEFT_S),
+        ("right_s", HISTOGRAM_RIGHT_S),
+        ("bottom_v", HISTOGRAM_BOTTOM_V),
+        ("top_v", HISTOGRAM_TOP_V),
+    ):
+        assert applied[key] == pytest.approx(expected, rel=1e-3, abs=1e-9), key
+
+    outcome = driver.get_histogram_result()
+    _report(f"[histogram] result={outcome}")
+    assert outcome["raw"].startswith("[")
+    assert "warnings" not in outcome, "統計の解釈に失敗した項目がある"
+    stats = outcome["stats"]
+    # SI接頭辞は換算済み(`30.37khits` → 30370.0 / `sum_unit="hits"`)。
+    # reset直後はヒット数が少なく接頭辞が付かないこともあるため、単位は
+    # 「付いていれば hits」で見る
+    assert isinstance(stats["sum"], float)
+    assert stats.get("sum_unit", "hits") == "hits"
 
 
 # -- 12. 監査ログ(最後に実行し、それまでの全操作を検証)--------------------

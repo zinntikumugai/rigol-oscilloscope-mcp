@@ -60,10 +60,10 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 | Phase | 機能 | ガイド節 | 方針 |
 |---|---|---|---|
 | M1 | **:MATH<n>** 演算(加減乗除・FFT・微積分・フィルタ・論理) | 3.16 | **実装済み**(下記 2.5.1) |
-| M2 | **:CURSor** カーソル測定 | 3.8 | manual/track/XY。設定+ΔX/ΔY等の読み取り |
-| M2 | **:COUNter** 周波数カウンタ | 3.7 | enable/source/mode + `:VALue` 読み。実装コスト極小 |
-| M2 | **:DVM** 電圧計 | 3.10 | 同上(4コマンドのみ) |
-| M2 | **:HISTogram** ヒストグラム | 3.11 | `:STATistics:RESult` で統計テキスト取得 |
+| M2 | **:CURSor** カーソル測定 | 3.8 | **実装済み**(下記 2.5.2。manual/track。XYはモードのみ受理) |
+| M2 | **:COUNter** 周波数カウンタ | 3.7 | **実装済み**(enable/source/mode + `:COUNter:CURRent?` 読み) |
+| M2 | **:DVM** 電圧計 | 3.10 | **実装済み**(同上。`:DVM:CURRent?`) |
+| M2 | **:HISTogram** ヒストグラム | 3.11 | **実装済み**(`:STATistics:RESult?` は `[Label:Value, …]` の1行) |
 | M3 | **:REFerence** リファレンス波形 | 3.20 | 保存→比較ワークフロー。REF波形の読み出し可否は要確認 |
 
 **見送り(再検討の条件つき):**
@@ -107,6 +107,44 @@ MHO900 Programming Guide 3章の全28サブシステムを棚卸しし、未実�
 
 1. **表示OFF中の書き込み無視quirkの有無**(検証項目 (e)。未実施の唯一の項目)— 結果次第でAFG式の送信前拒否を追加する
 2. 追加した実機テスト(`tests/device/test_readonly.py` のMATH状態読み取り、`tests/device/test_write.py::test_configure_math_round_trip`)の実機実行
+
+### 2.5.2 M2: カーソル・周波数カウンタ・電圧計・ヒストグラム(実装完了・実機検証済み)
+
+**Tool 6本を実装済み**([tools.md](tools.md) 12章): `configure_cursor` / `get_cursor_measurement` / `configure_meter` / `get_meter_value` / `configure_histogram` / `get_histogram_result`(いずれも SAFE_WRITE + READ_ONLY の対)。登録Tool数は30 → **36**。
+
+- **`configure_cursor` / `get_cursor_measurement`**: モード(`off` / `manual` / `track` / `xy`)、manual専用の `type` / `source`、track専用の `source1` / `source2`、位置4点(`ax` / `ay` は秒・V)。**位置とソースは「今のモードのサブツリー」に属する**ため、`mode` 省略時は `:CURSor:MODE?` を1本読んで書き込み先を決め、サブツリー違いの指定は送信前に拒否する。読み値(A/B位置・ΔX・ΔY・1/ΔX)は別Toolで、`off` / `xy` では `mode` だけを返す(非活性のサブツリーを突かない)
+- **`configure_meter` / `get_meter_value`**: カウンタと電圧計は「有効化 + ソース + モード + 現在値1本」で**同形**のため、Toolを2対に分けず `kind` 引数1つで切り替えた(当初の「実装コスト極小」の見立てどおり)。現在値は単位がモード依存なので、`value` に `unit`(`Hz` / `s` / `counts` / `V`)と設定一式を必ず添えて返す
+- **`configure_histogram` / `get_histogram_result`**: 有効化・種別・ソース・表示高さ・集計ウィンドウ4値 + `reset`。統計は `raw`(生応答)を常に返し、`stats` に**機器自身のラベル**を正規化したキー → SI換算済みの数値(+ `<キー>_unit`)を載せる
+- **プロファイル宣言**: capabilities に `cursor` / `frequency_counter` / `dvm` / `histogram`、dialect に `cursor_modes` / `cursor_types` / `counter_modes` / `dvm_modes` / `histogram_types`(`mho98.yaml` のみ。[device-profiles.md](device-profiles.md) 2.1 / 2.2)。M1と同じく**キーの不在がそのままゲート**
+
+**当初の表の記述に対する訂正(実装時に判明):**
+
+1. **カウンタの現在値は `:VALue` ではない。** `:COUNter` サブシステムに `:VALue` というニモニックは**存在しない**(実在するのは `:COUNter:CURRent?`。`:MEASure:COUNter:VALue?` は3.17の**別サブシステム**で、混同したもの)。**未定義ヘッダはクエリ1発でMHO98のSCPIサーバー全体を沈黙させる**(AGENTS.mdルール2)ため、この取り違えを実装まで持ち込んでいたら実機を止めていた。電圧計も同じく `:DVM:CURRent?`
+2. **ヒストグラム統計は「統計テキスト」ではない。** 当初表が想定していたガイド引用の `[["92","1",…]]`(引用符付き入れ子リスト)は `:MEASure:HISTogram:STATistics:RESult?`(3.17.32)の書式で、`:HISTogram:STATistics:RESult?`(3.11.9)の実応答は**機器自身がラベルを持つ1行** `[Sum:30.37khits, Peaks:234hits, Max:1.562V, …, meanPlus3Sigma:1.000000]` だった(実測223バイト・改行1個・**終端の空行なし**)。したがってパーサはラベル駆動で、`query_lines()` ではなく `query()` で読む
+
+**意図的にスキップ(ガイド3.7 / 3.8 / 3.10 / 3.11 にあるが実装しない):**
+
+- `:CURSor:MANual:VUNit` — **ガイド本文がページ欠落で値域が不明**。確認できていないトークンを実機に送らない(AGENTS.mdルール2)
+- `:CURSor:MANual:TUNit` — 値が `{SECond}` の**1つしかなく**、設定させる意味が無い
+- `:CURSor:XY:*` — XY水平時間軸の対応が前提。`mode="xy"` は機器が持つ正当なモードなので受理するが、位置サブツリーは公開しない
+- `:CURSor:MEASure:INDicator` — 画面のインジケータ表示のみで、測定値には影響しない
+- `:HISTogram:SAVE:CSV` — **機器のストレージへファイルを書く**操作。本サーバーの保存先規約(実行ディレクトリ基準の許可ルート)の外にあり、操作クラスも別建てになる
+
+**実機検証(2026-08-27、MHO98 / fw 00.01.00。記録: [verification/mho98-m2.md](verification/mho98-m2.md)):**
+
+実測で**実装バグ3件**が判明し、いずれも修正済み(テスト付き。詳細は検証記録):
+
+1. **無効な電圧計の `:DVM:CURRent?` は空応答**を返す。そのままパースすると `SCPI_ERROR`(機器故障に見える)になっていた → `:ENABle?` を先読みして短絡し `value: null` を返す
+2. **ヒストグラム無効時の `:HISTogram:STATistics:RESult?` は `[]` を返しつつエラーキューに `-200` を積む**(沈黙はしない)。共有状態が汚れ、**次の無関係な書き込みのエラーキュー確認に化けて出て**いた → `:ENABle?` 先読みで統計クエリ自体を送らない
+3. **統計応答に終端の空行が無い**。FFTピーク表と同じ `query_lines()` で読むと実機ではタイムアウトまで固まる → `query()` で1行読む
+
+併せて確定した事項: trackモードでは**設定側の `CAY` / `CBY` も波形に追従して動く**(0.8秒間隔の4回読みで毎回変化)ため、`configure_cursor` の `changed` 判定はtrackモードのYを比較対象から外している / manualモードの `CAY` は動かない / 設定側の `:CAY?` と読み値の `:AYValue?` は**サンプル時点が違うため桁数も値も一致しない**。
+
+**残件(未解決):**
+
+1. **`:COUNter:CURRent?` が有効化しても `0` を返す** — 生信号の載ったチャンネルでカウンタを有効化し2秒待っても `0` のままだった。ゲート時間・トリガ要件・ソース条件のいずれかが未特定。次に試すこと: ゲート時間関連の設定の有無をガイドで再確認 / トリガがかかっている状態での再測定 / 別ソース(D0-D15含む)での比較
+2. **カウンタ無効時の `:COUNter:TOTalize:ENABle OFF` が `-200,"Command execute failed"`** — 現在値と同じ値を書いても拒否される。送信順は `enabled` が先頭なので通常の `configure_meter(enabled=True, totalize_enabled=…)` では踏まないが、**無効なカウンタへ `totalize_enabled` だけを送る呼び出し**は失敗する。実機テストの復元fixtureもこれを踏むため、復元では例外を握り潰す扱いにしてある(理由はテスト内の日本語コメント)
+3. 追加した実機テスト(`tests/device/test_readonly.py` のM2読み取り、`tests/device/test_write.py` のM2往復)の**pytest経由での実機実行**(SCPIレベルおよび実装コードのE2Eは手動プローブで実施済み)
 
 ## 3. プラグイン化(完了・要件へ昇格)
 
