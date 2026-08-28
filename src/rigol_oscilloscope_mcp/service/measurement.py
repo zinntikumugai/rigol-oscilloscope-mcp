@@ -29,8 +29,16 @@ def _warning(name: str) -> str:
     return f"{name} measurement is invalid (possibly no signal or not yet settled)"
 
 
-def measure(driver: ScopeDriver, channel: str, measurements: list[str]) -> dict:
-    """指定チャンネルの測定値を読む。"""
+def measure(
+    driver: ScopeDriver,
+    channel: str,
+    measurements: list[str],
+    channel_b: str | None = None,
+) -> dict:
+    """指定チャンネルの測定値を読む。
+
+    `channel_b` は遅延・位相測定の第2ソース。使ったときだけ返却に含める。
+    """
     # 重複除去(順序は維持)。同一項目を2度問い合わせない。
     names = list(dict.fromkeys(measurements))
     if not names:
@@ -41,8 +49,8 @@ def measure(driver: ScopeDriver, channel: str, measurements: list[str]) -> dict:
         )
 
     # 先にドライバへ委ねる(チャンネル名・測定項目の検証はドライバの責務)
-    results = driver.measure(channel, names)
-    return {
+    results = driver.measure(channel, names, channel_b)
+    payload = {
         # 返却は正規化名で揃える(`chan1` / `1` でも "CH1")。
         # 検証済みの入力に対する表記ゆれ吸収のみで、判定はドライバが済ませている。
         "channel": normalize_channel(channel),
@@ -50,6 +58,9 @@ def measure(driver: ScopeDriver, channel: str, measurements: list[str]) -> dict:
         "quality": {r.name: r.quality for r in results},
         "warnings": [_warning(r.name) for r in results if r.quality != VALID_QUALITY],
     }
+    if channel_b is not None:
+        payload["channel_b"] = normalize_channel(channel_b)
+    return payload
 
 
 def get_meter_value(driver: ScopeDriver, kind: str) -> dict:

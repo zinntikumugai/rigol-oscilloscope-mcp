@@ -169,6 +169,39 @@ _MEASUREMENTS: tuple[tuple[str, str], ...] = (
     ("PDUTy", "5.002E-01"),  # 単位は比率
     ("RTIMe", "1.0E-06"),
     ("FTIMe", "1.0E-06"),
+    # M4 で公開した残り31項目(ガイド3.17.2 の <item> 全41トークン)。
+    # 値は同じ 1kHz / 3.268Vpp 補償信号から算術的に矛盾しない範囲で置いた。
+    ("NWIDth", "4.998E-04"),
+    ("PWIDth", "5.002E-04"),
+    ("NDUTy", "4.998E-01"),
+    ("TVMAX", "2.500E-04"),
+    ("TVMIN", "7.500E-04"),
+    ("VTOP", "3.100E+00"),
+    ("VBASe", "-2.000E-02"),
+    ("VAMP", "3.120E+00"),
+    ("VUPPer", "2.788E+00"),
+    ("VMID", "1.540E+00"),
+    ("VLOWer", "2.920E-01"),
+    ("PVRMs", "1.840E+00"),
+    ("ACRMs", "1.556E+00"),
+    ("OVERshoot", "1.282E-02"),
+    ("PREShoot", "0.000E+00"),
+    ("MARea", "8.170E-04"),
+    ("MPARea", "8.171E-07"),
+    ("PSLewrate", "3.120E+06"),
+    ("NSLewrate", "-3.120E+06"),
+    ("PPULses", "1.000E+01"),
+    ("NPULses", "1.000E+01"),
+    ("PEDGes", "1.000E+01"),
+    ("NEDGes", "1.000E+01"),
+    ("RRDelay", "1.000E-05"),
+    ("RFDelay", "2.000E-05"),
+    ("FRDelay", "-1.000E-05"),
+    ("FFDelay", "1.000E-05"),
+    ("RRPHase", "3.600E+00"),
+    ("RFPHase", "7.200E+00"),
+    ("FRPHase", "-3.600E+00"),
+    ("FFPHase", "3.600E+00"),
 )
 
 _MEASURE_VALUES: dict[str, str] = {}
@@ -874,7 +907,8 @@ class FakeScope:
             (rf":?{_mn('AUToset')}", lambda m: self._set_acquisition("RUN")),
             # 測定
             (
-                rf":?{_mn('MEASure')}:{_mn('ITEM')}\?\s+(\w+)\s*,\s*{_VALUE}",
+                rf":?{_mn('MEASure')}:{_mn('ITEM')}\?\s+(\w+)\s*,\s*([^\s,]+)"
+                rf"(?:\s*,\s*([^\s,]+))?",
                 self._measure_item,
             ),
             # 実機仕様: 有効化済みの全測定項目をResultビューから消す(引数なし)。
@@ -1741,6 +1775,9 @@ class FakeScope:
     def _measure_item(self, match: re.Match[str]) -> bytes:
         item = match.group(1).strip().upper()
         self._channel_token(match.group(2))
+        # 遅延・位相は第2ソースを取る(ガイド3.17.2 の <item>[,<src>[,<src>]])
+        if match.group(3) is not None:
+            self._channel_token(match.group(3))
         value = _MEASURE_VALUES.get(item)
         if value is None:
             # phase0実測: VAVerage は受理されず -222 が積まれる

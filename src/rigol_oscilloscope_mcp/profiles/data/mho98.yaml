@@ -21,8 +21,14 @@ capabilities:
   frequency_counter: true # ガイド3.7(:COUNter)
   dvm: true # ガイド3.10(:DVM)
   histogram: true # ガイド3.11(:HISTogram。SAVE:CSVを除く)
-  measurements:
-    [frequency, period, vpp, vmax, vmin, vavg, rms, duty, rise_time, fall_time]
+  measurements: [
+     frequency, period, rise_time, fall_time, pulse_width_pos, pulse_width_neg, duty,
+    duty_neg, time_at_vmax, time_at_vmin, vpp, vmax, vmin, vtop, vbase, vamp, vupper,
+    vmid, vlower, vavg, rms, period_rms, ac_rms, overshoot, preshoot, area, period_area,
+    slew_rate_pos, slew_rate_neg, pulses_pos, pulses_neg, edges_pos, edges_neg,
+    delay_rise_rise, delay_rise_fall, delay_fall_rise, delay_fall_fall, phase_rise_rise,
+    phase_rise_fall, phase_fall_rise, phase_fall_fall
+  ]
 
 dialect:
   screenshot_command: ":DISPlay:DATA?"
@@ -40,14 +46,45 @@ dialect:
   measurement_items:
     frequency: FREQuency
     period: PERiod
+    rise_time: RTIMe
+    fall_time: FTIMe
+    pulse_width_pos: PWIDth
+    pulse_width_neg: NWIDth
+    duty: PDUTy # 返却単位は比率(0.5002 = 50.02%)
+    duty_neg: NDUTy # 比率
+    time_at_vmax: TVMAX
+    time_at_vmin: TVMIN
     vpp: VPP
     vmax: VMAX
     vmin: VMIN
+    vtop: VTOP
+    vbase: VBASe
+    vamp: VAMP
+    vupper: VUPPer
+    vmid: VMID
+    vlower: VLOWer
     vavg: VAVG # VAVerage は不可(実測)
     rms: VRMS
-    duty: PDUTy # 返却単位は比率(0.5002 = 50.02%)
-    rise_time: RTIMe
-    fall_time: FTIMe
+    period_rms: PVRMs
+    ac_rms: ACRMs
+    overshoot: OVERshoot # 比率
+    preshoot: PREShoot # 比率
+    area: MARea # 単位 V*s(ガイド Other Parameters)
+    period_area: MPARea # 単位 V*s
+    slew_rate_pos: PSLewrate # 単位 V/s
+    slew_rate_neg: NSLewrate # 単位 V/s
+    pulses_pos: PPULses # 整数カウント
+    pulses_neg: NPULses
+    edges_pos: PEDGes
+    edges_neg: NEDGes
+    delay_rise_rise: RRDelay # ここから8項目は**2ソース必須**(ガイド3.17.2)
+    delay_rise_fall: RFDelay
+    delay_fall_rise: FRDelay
+    delay_fall_fall: FFDelay
+    phase_rise_rise: RRPHase
+    phase_rise_fall: RFPHase
+    phase_fall_rise: FRPHase
+    phase_fall_fall: FFPHase
   # シリアルデコード(:BUS<n>:MODE の値)。標準搭載6種のみ。
   # i2s(IIS)/ flexray / m1553(AERO)/ CAN-FD はライセンスオプション必須の
   # ため意図的に不在 — **不在がそのままゲート**(4.2の原則)。

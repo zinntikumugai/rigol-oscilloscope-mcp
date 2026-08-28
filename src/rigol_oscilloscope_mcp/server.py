@@ -322,14 +322,29 @@ def create_server(
     # -- 測定・データ取得 -------------------------------------------------
 
     @_register
-    def measure(channel: str, measurements: list[str]) -> dict:
-        """Measure the given channel.
-
-        Choose measurements from frequency / period / vpp / vmax / vmin / vavg /
-        rms / duty / rise_time / fall_time. Returned values use SI-suffixed keys
+    def measure(
+        channel: str, measurements: list[str], channel_b: str | None = None
+    ) -> dict:
+        """Measure the given channel. Returned values use SI-suffixed keys
         (frequency_hz, vpp_v, ...); do not trust a value whose quality is not valid.
+
+        Timing: frequency, period, rise_time, fall_time, pulse_width_pos,
+        pulse_width_neg, duty, duty_neg, time_at_vmax, time_at_vmin.
+        Amplitude: vpp, vmax, vmin, vtop, vbase, vamp, vupper, vmid, vlower,
+        vavg, rms, period_rms, ac_rms, overshoot, preshoot.
+        Area and slew rate: area, period_area, slew_rate_pos, slew_rate_neg.
+        Counts: pulses_pos, pulses_neg, edges_pos, edges_neg.
+        Two-source: delay_rise_rise, delay_rise_fall, delay_fall_rise,
+        delay_fall_fall, phase_rise_rise, phase_rise_fall, phase_fall_rise,
+        phase_fall_fall.
+
+        The two-source items compare channel against channel_b, so pass
+        channel_b for them and leave it out otherwise. Availability is
+        model-dependent (get_capabilities measurements).
         """
-        return service.measure(manager.require_scope(), channel, measurements)
+        return service.measure(
+            manager.require_scope(), channel, measurements, channel_b
+        )
 
     @_register
     def clear_measurements() -> dict:

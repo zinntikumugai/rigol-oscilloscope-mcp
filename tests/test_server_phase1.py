@@ -359,3 +359,37 @@ def test_unexpected_exception_becomes_internal_error(
     assert data["error"] is True
     assert data["code"] == "INTERNAL_ERROR"
     assert data["detail"]["type"] == "RuntimeError"
+
+
+def test_measure_accepts_two_source_items(server) -> None:
+    """遅延・位相は channel_b を取る(tools.md 5章 / ガイド3.17.2)。"""
+    connected(server)
+
+    data = payload(
+        call(
+            server,
+            "measure",
+            {
+                "channel": "CH1",
+                "measurements": ["delay_rise_rise"],
+                "channel_b": "CH2",
+            },
+        )
+    )
+
+    assert data["channel_b"] == "CH2"
+    assert "delay_rise_rise_s" in data["values"]
+
+
+def test_measure_description_lists_every_item(server) -> None:
+    """LLMが項目名を知る唯一の経路なので、41項目すべてを載せる。"""
+    from rigol_oscilloscope_mcp.driver.scope import MEASUREMENT_KEYS
+
+    async def main() -> dict[str, str]:
+        async with create_connected_server_and_client_session(server) as client:
+            return {t.name: t.description or "" for t in (await client.list_tools()).tools}
+
+    description = anyio.run(main)["measure"]
+    missing = [n for n in MEASUREMENT_KEYS if n not in description]
+
+    assert not missing, f"measure の description に無い測定項目: {missing}"

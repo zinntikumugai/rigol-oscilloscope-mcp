@@ -182,11 +182,24 @@ Auto Setupは利用者の設定を大きく上書きするため、confirmトー
 
 | 名前 | 型 | 説明 |
 |---|---|---|
-| `channel` | string | 必須 |
-| `measurements` | string[] | 必須。`frequency`, `period`, `vpp`, `vmax`, `vmin`, `vavg`, `rms`, `duty`, `rise_time`, `fall_time` |
+| `channel` | string | 必須。単一ソース項目のソース、2ソース項目のソースA |
+| `measurements` | string[] | 必須。下表の意味的名(MHO98は**全41項目**) |
+| `channel_b` | string | 2ソース項目(遅延・位相)のソースB。**それらを指定したときは必須**、それ以外では指定不可 |
 
-- 意味的測定名 → SCPIニモニックの変換はプロファイルの対応表で行う。プロファイルに無い項目は送信せず `UNSUPPORTED_FEATURE`(不正ニモニックはタイムアウト+キュー汚染のコストがあるため。[device-profiles.md](device-profiles.md) 4.2)
-- 返却キーはSI単位付き: `frequency_hz`, `vpp_v`, `rise_time_s`, `duty_ratio`(dutyは比率。MHO98実測 0.5002)
+測定項目(ガイド3.17.2 の `<item>` 41トークンに1対1で対応):
+
+| 分類 | 項目 |
+|---|---|
+| 時間・周期 | `frequency` / `period` / `rise_time` / `fall_time` / `pulse_width_pos` / `pulse_width_neg` / `duty` / `duty_neg` / `time_at_vmax` / `time_at_vmin` |
+| 振幅・電圧 | `vpp` / `vmax` / `vmin` / `vtop` / `vbase` / `vamp` / `vupper` / `vmid` / `vlower` / `vavg` / `rms` / `period_rms` / `ac_rms` / `overshoot` / `preshoot` |
+| 面積・スルーレート | `area` / `period_area` / `slew_rate_pos` / `slew_rate_neg` |
+| カウント | `pulses_pos` / `pulses_neg` / `edges_pos` / `edges_neg` |
+| **位相・遅延(2ソース)** | `delay_rise_rise` / `delay_rise_fall` / `delay_fall_rise` / `delay_fall_fall` / `phase_rise_rise` / `phase_rise_fall` / `phase_fall_rise` / `phase_fall_fall` |
+
+- 意味的測定名 → SCPIニモニックの変換はプロファイルの対応表で行う。プロファイルに無い項目は送信せず `UNSUPPORTED_FEATURE`(不正ニモニックはタイムアウト+キュー汚染のコストがあるため。[device-profiles.md](device-profiles.md) 4.2)。**41項目を宣言しているのは `mho98`(verified)のみ。DHO系は実機未検証のためガイド解読済みの10項目に留める**
+- 返却キーはSI単位付き: `frequency_hz`, `vpp_v`, `rise_time_s`, `duty_ratio`(dutyは比率。MHO98実測 0.5002)、`area_vs`, `slew_rate_pos_v_per_s`, `pulses_pos_count`, `phase_rise_rise_deg` など
+- **2ソース項目で `channel_b` を省略することは許さない。** ガイド3.17.2 の Remark によれば機器は省略時に「最後に選んだソース」(`:MEASure:SOURce` / `:SETup:PSA` / `:SETup:DSA`)を使うため、呼び出し側から結果が予測できなくなる。送信前に `INVALID_PARAMETER` で拒否する。逆に2ソース項目を1つも指定していないのに `channel_b` を渡した場合も拒否する(取り違えの検出)
+- `channel_b` を使ったときだけ返却に `channel_b` が入る
 - 可能な範囲で測定品質(`valid` / `overflow` / `no_signal` / `unstable` / `unknown`)を付与し、無効値を正常値としてLLMに解釈させない
 
 ### `clear_measurements` — SAFE_WRITE / Phase 4

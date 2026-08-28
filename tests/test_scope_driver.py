@@ -3624,3 +3624,87 @@ def test_reference_actions_unsupported_profile_send_nothing(
 
         assert exc.value.code == ErrorCode.UNSUPPORTED_FEATURE
         assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# 測定項目の全面拡張(M4)
+# --------------------------------------------------------------------------
+
+
+def test_measurement_keys_cover_all_41_guide_items() -> None:
+    """ガイド3.17.2 の <item> は41トークン。全てに意味的名を与える。"""
+    from rigol_oscilloscope_mcp.driver.scope import MEASUREMENT_KEYS
+
+    assert len(MEASUREMENT_KEYS) == 41
+    # SI単位付きキーは重複しない(返却dictのキーになるため)
+    assert len(set(MEASUREMENT_KEYS.values())) == 41
+
+
+def test_mho98_declares_every_measurement_item(driver: ScopeDriver) -> None:
+    from rigol_oscilloscope_mcp.driver.scope import MEASUREMENT_KEYS
+
+    items = driver.profile.dialect["measurement_items"]
+    assert sorted(items) == sorted(MEASUREMENT_KEYS)
+
+
+@pytest.mark.parametrize(
+    ("name", "mnemonic", "key"),
+    [
+        ("vtop", "VTOP", "vtop_v"),
+        ("overshoot", "OVERshoot", "overshoot_ratio"),
+        ("area", "MARea", "area_vs"),
+        ("pulse_width_pos", "PWIDth", "pulse_width_pos_s"),
+        ("slew_rate_pos", "PSLewrate", "slew_rate_pos_v_per_s"),
+        ("pulses_pos", "PPULses", "pulses_pos_count"),
+        ("ac_rms", "ACRMs", "ac_rms_v"),
+    ],
+)
+def test_measure_new_items_send_guide_mnemonics(
+    driver: ScopeDriver, scope: FakeScope, name: str, mnemonic: str, key: str
+) -> None:
+    results = driver.measure("CH1", [name])
+
+    assert results[0].key == key
+    assert sent(scope, ":MEAS") == [f":MEASure:ITEM? {mnemonic},CHANnel1"]
+
+
+def test_measure_dual_source_item_sends_both_sources(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """遅延・位相はソース2つ(ガイド3.17.2 の <src>[,<src>])。"""
+    driver.measure("CH1", ["delay_rise_rise"], channel_b="CH2")
+
+    assert sent(scope, ":MEAS") == [":MEASure:ITEM? RRDelay,CHANnel1,CHANnel2"]
+
+
+def test_measure_dual_source_item_requires_channel_b(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """第2ソース省略時は機器の「最後に選んだソース」に依存するため拒否する。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.measure("CH1", ["phase_rise_rise"])
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_measure_rejects_channel_b_without_dual_source_item(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.measure("CH1", ["vpp"], channel_b="CH2")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_measure_single_source_items_ignore_second_source(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """単一ソース項目には第2ソースを付けない(混在指定でも)。"""
+    driver.measure("CH1", ["vpp", "delay_fall_fall"], channel_b="CH3")
+
+    assert sent(scope, ":MEAS") == [
+        ":MEASure:ITEM? VPP,CHANnel1",
+        ":MEASure:ITEM? FFDelay,CHANnel1,CHANnel3",
+    ]

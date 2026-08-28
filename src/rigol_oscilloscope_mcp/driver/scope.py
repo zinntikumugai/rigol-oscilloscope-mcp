@@ -48,19 +48,66 @@ from .parsers import (
 )
 from .session import ScpiSession
 
-# 測定の意味的名 → SI単位付きキー(Requirements.md 7.5)
+# 測定の意味的名 → SI単位付きキー(Requirements.md 7.5)。
+# ガイド3.17.2 の <item> 41トークンに1対1で対応する。SCPIニモニックは
+# 機種プロファイルの `dialect.measurement_items` が持つ(綴りは機種差がある)。
 MEASUREMENT_KEYS: dict[str, str] = {
+    # 時間・周期系(ガイド "Horizontal Parameters")
     "frequency": "frequency_hz",
     "period": "period_s",
+    "rise_time": "rise_time_s",
+    "fall_time": "fall_time_s",
+    "pulse_width_pos": "pulse_width_pos_s",
+    "pulse_width_neg": "pulse_width_neg_s",
+    "duty": "duty_ratio",
+    "duty_neg": "duty_neg_ratio",
+    "time_at_vmax": "time_at_vmax_s",
+    "time_at_vmin": "time_at_vmin_s",
+    # 振幅・電圧系(ガイド "Vertical Parameters")
     "vpp": "vpp_v",
     "vmax": "vmax_v",
     "vmin": "vmin_v",
+    "vtop": "vtop_v",
+    "vbase": "vbase_v",
+    "vamp": "vamp_v",
+    "vupper": "vupper_v",
+    "vmid": "vmid_v",
+    "vlower": "vlower_v",
     "vavg": "vavg_v",
     "rms": "rms_v",
-    "duty": "duty_ratio",
-    "rise_time": "rise_time_s",
-    "fall_time": "fall_time_s",
+    "period_rms": "period_rms_v",
+    "ac_rms": "ac_rms_v",
+    "overshoot": "overshoot_ratio",
+    "preshoot": "preshoot_ratio",
+    # 面積・スルーレート系(ガイド "Other Parameters")
+    "area": "area_vs",
+    "period_area": "period_area_vs",
+    "slew_rate_pos": "slew_rate_pos_v_per_s",
+    "slew_rate_neg": "slew_rate_neg_v_per_s",
+    # カウント系
+    "pulses_pos": "pulses_pos_count",
+    "pulses_neg": "pulses_neg_count",
+    "edges_pos": "edges_pos_count",
+    "edges_neg": "edges_neg_count",
+    # 位相・遅延系(**2ソース必須**。DUAL_SOURCE_MEASUREMENTS を参照)
+    "delay_rise_rise": "delay_rise_rise_s",
+    "delay_rise_fall": "delay_rise_fall_s",
+    "delay_fall_rise": "delay_fall_rise_s",
+    "delay_fall_fall": "delay_fall_fall_s",
+    "phase_rise_rise": "phase_rise_rise_deg",
+    "phase_rise_fall": "phase_rise_fall_deg",
+    "phase_fall_rise": "phase_fall_rise_deg",
+    "phase_fall_fall": "phase_fall_fall_deg",
 }
+
+#: ソースを2つ取る測定項目(ガイド3.17.2 の `<item>[,<src>[,<src>]]`)。
+#: 第2ソースを省略すると機器は「最後に選んだソース」を使う(ガイドのRemark)。
+#: 呼び出し側から見て結果が予測できないため、**省略は送信前に拒否する**。
+DUAL_SOURCE_MEASUREMENTS: frozenset[str] = frozenset(
+    name
+    for name in MEASUREMENT_KEYS
+    if name.startswith(("delay_", "phase_"))
+)
 
 # 機器が「測定不能」を示すために返す番兵値(±9.9E37 前後)
 INVALID_MEASUREMENT = 9.0e37
@@ -709,9 +756,31 @@ class ScopeDriver:
 
     # -- 測定 -------------------------------------------------------------
 
-    def measure(self, channel: str, names: list[str]) -> list[MeasurementResult]:
-        """指定の測定項目を読む。未確認ニモニックは実機へ送らない。"""
+    def measure(
+        self,
+        channel: str,
+        names: list[str],
+        channel_b: str | None = None,
+    ) -> list[MeasurementResult]:
+        """指定の測定項目を読む。未確認ニモニックは実機へ送らない。
+
+        `channel_b` は遅延・位相(`DUAL_SOURCE_MEASUREMENTS`)専用の第2ソース。
+        単一ソース項目には付けない(機器が余分な引数を拒否しうるため)。
+        """
         number = self._channel_number(channel)
+        dual = [name for name in names if name in DUAL_SOURCE_MEASUREMENTS]
+        if dual and channel_b is None:
+            raise _invalid(
+                "channel_b is required for delay/phase measurements "
+                "(the device would otherwise reuse its last selected source)",
+                {"measurements": dual},
+            )
+        if channel_b is not None and not dual:
+            raise _invalid(
+                "channel_b is only used by delay/phase measurements",
+                {"measurements": list(names)},
+            )
+        number_b = self._channel_number(channel_b) if channel_b is not None else None
 
         # 1件でも未対応なら送信前に失敗する(部分的な送信でキューを汚さない)
         plan: list[tuple[str, str, str]] = []
@@ -727,9 +796,10 @@ class ScopeDriver:
 
         results: list[MeasurementResult] = []
         for name, key, mnemonic in plan:
-            response = self.session.query(
-                f":MEASure:ITEM? {mnemonic},CHANnel{number}"
-            )
+            source = f"CHANnel{number}"
+            if name in DUAL_SOURCE_MEASUREMENTS:
+                source = f"{source},CHANnel{number_b}"
+            response = self.session.query(f":MEASure:ITEM? {mnemonic},{source}")
             value = parse_nr3(response)
             if abs(value) >= INVALID_MEASUREMENT:
                 results.append(MeasurementResult(name, key, None, "unknown"))

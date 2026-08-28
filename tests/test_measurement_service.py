@@ -268,3 +268,18 @@ def test_measure_exported_from_service_package() -> None:
 
     assert service.measure is measure
     assert service.get_meter_value is get_meter_value
+
+
+def test_measure_passes_second_source_for_delay(driver: ScopeDriver) -> None:
+    """遅延・位相は第2ソースが要る(ガイド3.17.2 の <item>[,<src>[,<src>]])。"""
+    result = measure(driver, "CH1", ["delay_rise_rise"], channel_b="CH2")
+
+    assert result["channel"] == "CH1"
+    assert result["channel_b"] == "CH2"
+    assert "delay_rise_rise_s" in result["values"]
+
+
+def test_measure_omits_channel_b_key_when_unused(driver: ScopeDriver) -> None:
+    result = measure(driver, "CH1", ["vpp"])
+
+    assert "channel_b" not in result
