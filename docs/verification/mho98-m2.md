@@ -3,7 +3,7 @@
 **対象:** RIGOL MHO98(ファームウェア 00.01.00、LAN SCPI :5555)。IP・シリアルは記録しない
 **実施日:** 2026-08-27
 **状態:** **実施済み**(SCPIレベルのプローブ・実装コードのE2E・実機テストのpytest実行を全て実施。**唯一残っていた未解決事項(カウンタ現在値)は2026-08-28に決着 → 6章**。実機テストの実行結果と既知の失敗2件は7章)
-**規範:** [tools.md](../tools.md) 12章 / [roadmap.md](../roadmap.md) 2.5.2
+**規範:** [tools.md](../tools.md) 12章(M2の完了記録は [roadmap.md](../roadmap.md) 末尾のコメント 2.5.2。未解決の残件は同 6章)
 **前提:** MHO900-BND適用済み。手順規律は [mho98-math.md](mho98-math.md) と同じ(1コマンド → 応答5s timeout → `:SYSTem:ERRor?` → 記録。**沈黙したら空行付き再接続 → `*IDN?` で復旧確認 → エラーキューをドレイン**)
 **安全条件:** write項目は全て「現在値取得 → set → readback → finally で復元」。カーソル・カウンタ・電圧計・ヒストグラムは**表示・統計層のみ**の操作で、取り込み条件にも出力にも触れない
 
@@ -22,7 +22,7 @@ RIGOL_TEST_ADDRESS=<実機IP> RIGOL_TEST_ALLOW_WRITE=1 uv run pytest -m device_w
 2. **ヒストグラム無効時の `:HISTogram:STATistics:RESult?` は `[]` を返しつつエラーキューに `-200,"Command execute failed"` を積む**(沈黙はしない)。**共有状態であるエラーキューが汚れ、次の無関係な書き込みの set → エラーキュー確認に化けて出て**いた → `:HISTogram:ENABle?` を先読みして統計クエリ自体を送らず、`raw: ""` + `warnings` を返す
 3. **統計応答には終端の空行が無い**(1行・改行1個で終わる)。FFTピーク表([mho98-math.md](mho98-math.md) c-2)と同じ `query_lines()`(空行まで読む)で読むと**実機ではタイムアウトまで固まる** → この応答は `query()` で1行だけ読む
 
-**ロードマップ訂正**([roadmap.md](../roadmap.md) 2.5 の表を修正済み):
+**ロードマップ訂正**([roadmap.md](../roadmap.md) 末尾コメントの 2.5 の表を修正済み):
 
 - **カウンタの現在値は `:VALue` ではない。** `:COUNter` サブシステムに `:VALue` は**存在しない**(実在するのは `:COUNter:CURRent?`)。`:MEASure:COUNter:VALue?` はガイド3.17の**別サブシステム**であり、取り違えたまま実装していれば**未定義ヘッダのクエリ1発でSCPIサーバー全体が沈黙**していた(AGENTS.mdルール2)
 - **ヒストグラム統計は「統計テキスト」(`[["92","1",…]]` 形式)ではない。** その書式は `:MEASure:HISTogram:STATistics:RESult?`(3.17.32)のもので、`:HISTogram:STATistics:RESult?`(3.11.9)の実応答は**機器自身がラベルを持つ1行**である(下記2章)
@@ -221,7 +221,7 @@ writeスイートの failed 1件 / error 1件は**M1・M2の変更とは無関�
 
 | ケース | 症状 | 原因 |
 |---|---|---|
-| `test_configure_decode_uart_set_and_readback` | **teardownでERROR** | 復元fixture(`decode_before`)がスナップショットの全キーを書き戻す際に `:BUS1:PARallel:WIDTh 1` を送り、機器が `-200,"Command execute failed"` を返す。デコード経路はM1/M2で一切触っていない。**2026-08-28に原因判明・解消済み**: `:WIDTh` はデータソースがUserのときだけ有効。`configure_decode` に `bus` を公開し、復元fixtureも「Userへ入れて幅を戻す → 本来の `bus` へ戻す」の2段にした(→ [mho98-phase4.md](mho98-phase4.md) 5章、[roadmap.md](../roadmap.md) 2.1) |
+| `test_configure_decode_uart_set_and_readback` | **teardownでERROR** | 復元fixture(`decode_before`)がスナップショットの全キーを書き戻す際に `:BUS1:PARallel:WIDTh 1` を送り、機器が `-200,"Command execute failed"` を返す。デコード経路はM1/M2で一切触っていない。**2026-08-28に原因判明・解消済み**: `:WIDTh` はデータソースがUserのときだけ有効。`configure_decode` に `bus` を公開し、復元fixtureも「Userへ入れて幅を戻す → 本来の `bus` へ戻す」の2段にした(→ [mho98-phase4.md](mho98-phase4.md) 5章、[roadmap.md](../roadmap.md) 6章) |
 | `test_audit_log_records_every_write` | **FAILED** | アサーションが監査ログに `configure_afg` を要求するが、AFGのwriteテストが `afg_before` fixture の安全ガード「AFG出力がONです(出力ON状態では検証しない)」で自らskipするため、その記録が残らない。**機器のAFG出力がON**である限り再現する環境依存の失敗で、回帰ではない |
 
 どちらも「実機の現在の状態」に依存する失敗であり、M1/M2ケースのPASS判定には影響しない。

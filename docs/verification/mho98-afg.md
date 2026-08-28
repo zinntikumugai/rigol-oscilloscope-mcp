@@ -148,4 +148,4 @@ G1→CH2 / G2→CH3(sine 1 kHz)。停止後の同一レコードから両chの�
 ## 7. 未実施・今後の予定
 
 - **ARBファイル選択(`arb_file` / `:LOAD:ARBitrary`)のみ実機未検証**(機器内に既知のARBファイルが無いため書き込みを見送り。実機にファイルを用意できたら `tests/device/test_write.py` へ追加する)。変調・位相同期は6章のとおり実機検証済み(AMサイドバンド実測・位相整列の定量確認)
-- `:PERiod` / `:VOLTage:HIGH`・`:LOW` は roadmap 2.3 のとおり恒久スキップ(`frequency_hz` / `amplitude_vpp`+`offset_v` で表現可能なため)
+- `:PERiod` / `:VOLTage:HIGH`・`:LOW` は [roadmap.md](../roadmap.md) 3章「実装しないと決めたもの」のとおり恒久スキップ(`frequency_hz` / `amplitude_vpp`+`offset_v` で表現可能なため)

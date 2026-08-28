@@ -1,4 +1,4 @@
-"""Claude / Codex プラグイン同梱物の整合テスト(Requirements.md 10.3 / roadmap Phase 3)。
+"""Claude / Codex プラグイン同梱物の整合テスト(Requirements.md 10.3 / roadmap.md 6章)。
 
 サーバーコードには触れない静的検証のみ: 各プラグインマニフェストが有効で、
 両マニフェストが同じ実体(name / version / MCP起動列 / skills)を指しており、

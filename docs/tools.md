@@ -845,7 +845,7 @@ MATH演算の現在設定を読む。**書き込みは一切行わず**、表示
   ```
 
   `:MATH<n>:SOURce` は `REF1`〜`REF10` を受理する(ガイド3.16.3)ため、この経路なら差分そのものを転送できる。目視だけで足りるなら `capture_screenshot` でも良い
-- **意図的にスキップ**: `:REFerence:CURRent`(→ [roadmap.md](roadmap.md) 2.5.3)
+- **意図的にスキップ**: `:REFerence:CURRent`(→ [roadmap.md](roadmap.md) 3章「実装しないと決めたもの」)
 
 ### `get_reference_state` — READ_ONLY / Phase M3
 

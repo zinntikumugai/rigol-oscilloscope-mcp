@@ -404,7 +404,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 
 スキルは実行時にLLMホストへ渡る文字列のため**英語**で記述する(実行時に外部へ出る文字列は英語、という言語方針に従う)。旧v0.1の操作例・`max_iterations` はサーバー要件ではなくこのスキルへ吸収した。整合は `tests/test_plugin.py` が検証する(各マニフェストの妥当性、両マニフェストとpyprojectのname/version/起動列の一致、スキルが実在Tool名を参照していること)。
 
-**Codex側の未検証事項**(公式ドキュメント準拠で作成したが実CLIでの動作確認は未実施): (1) `mcpServers` にプラグインルート直下以外の相対パス(`./.codex-plugin/mcp.json`)を指定できること、(2) マーケットプレイスのsource `path: "./"` でプラグインルート=リポジトリルートを表現できること。Codex CLIでの実確認は [roadmap.md](roadmap.md) 3章へ。
+**Codex側の未検証事項**(公式ドキュメント準拠で作成したが実CLIでの動作確認は未実施): (1) `mcpServers` にプラグインルート直下以外の相対パス(`./.codex-plugin/mcp.json`)を指定できること、(2) マーケットプレイスのsource `path: "./"` でプラグインルート=リポジトリルートを表現できること。Codex CLIでの実確認は [roadmap.md](roadmap.md) 6章(既知の残件)へ。
 
 ## 11. 開発フェーズと受入基準
 
@@ -426,7 +426,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 **接続・識別**
 
 - [x] 会話で指定したIPアドレスへ `connect` で接続できる(tests/device/test_readonly.py::test_identify、LAN実機PASS)
-- [ ] USBはVISAリソースで接続できる — **実機未検証**。VISAリソース文字列からのUSB推定・USBTMCの送受信は tests/test_usb_transport.py / tests/test_connection.py::test_visa_resource_address_infers_usb でユニット検証済み(PyVISAのフェイク)。実機確認は [roadmap.md](roadmap.md) 4章へ
+- [ ] USBはVISAリソースで接続できる — **実機未検証**。VISAリソース文字列からのUSB推定・USBTMCの送受信は tests/test_usb_transport.py / tests/test_connection.py::test_visa_resource_address_infers_usb でユニット検証済み(PyVISAのフェイク)。実機確認は [roadmap.md](roadmap.md) 5章(機種プロファイルの拡充)へ
 - [x] 接続先未指定かつデフォルト設定なしのとき、ユーザーへの確認を促すエラーが返る(tests/test_server_phase1.py::test_connect_without_address_asks_the_user, tests/test_connection.py, FakeScope)
 - [x] `scope_identify` がモデル・プロファイル名・信頼度を返す(tests/device/test_readonly.py::test_identify で `mho98`/`verified` を実機PASS、tests/test_server_phase1.py でTool返却を検証)
 - [x] 未知のRigol機種で generic プロファイルにフォールバックし、その旨が明示される(tests/test_profiles.py::test_resolve_unknown_rigol_model_falls_back_to_generic ほか、FakeScope。非Rigolベンダーの警告も同ファイル)
@@ -461,7 +461,7 @@ RIGOL_MCP_SCREENSHOT_DIR = "~/scope-captures"
 消化状況(2026-08-25)。Phase 3はサーバーコードに触れないため実機検証は不要(機器通信ゼロ)。
 
 - [x] プラグインマニフェスト(`.claude-plugin/plugin.json`)が有効なJSONで、10.1の標準形によるMCPサーバー起動定義を含む(tests/test_plugin.py::test_plugin_manifest_is_valid)
-- [x] Codexプラグイン(`.codex-plugin/` + `.agents/plugins/marketplace.json`)がClaude側とname/version/MCP起動列で一致し、同じ `skills/` を共有する(tests/test_plugin.py::test_codex_manifest_is_valid / ::test_manifests_agree / ::test_codex_marketplace_references_the_plugin)— **Codex CLIでの実動作確認は未実施**(10.3の未検証事項、[roadmap.md](roadmap.md) 3章)
+- [x] Codexプラグイン(`.codex-plugin/` + `.agents/plugins/marketplace.json`)がClaude側とname/version/MCP起動列で一致し、同じ `skills/` を共有する(tests/test_plugin.py::test_codex_manifest_is_valid / ::test_manifests_agree / ::test_codex_marketplace_references_the_plugin)— **Codex CLIでの実動作確認は未実施**(10.3の未検証事項、[roadmap.md](roadmap.md) 6章)
 - [x] 同梱スキルに信号種別→推奨設定の対応表、UART・未知信号ワークフロー、安全プロンプト(物理確認・AC mains拒否)、反復上限ガイダンスを記載(tests/test_plugin.py::test_skill_frontmatter)
 - [x] スキルが参照するTool名がすべて実在する(tests/test_plugin.py::test_skill_references_real_tools、Tool改名時の乖離ガード)
 

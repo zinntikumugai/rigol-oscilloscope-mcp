@@ -3,7 +3,7 @@
 **対象:** RIGOL MHO98(ファームウェア 00.01.00、LAN SCPI :5555)。IP・シリアルは記録しない
 **実施日:** 2026-08-28
 **状態:** **実施済み**(SCPIレベルのプローブ・実装コードのE2E・実機テストのpytest実行を全て実施。**未解決の観測事実2件は6章**)
-**規範:** [tools.md](../tools.md) 13章 / [roadmap.md](../roadmap.md) 2.5.3
+**規範:** [tools.md](../tools.md) 13章(M3の完了記録は [roadmap.md](../roadmap.md) 末尾のコメント 2.5.3。未解決の残件は同 6章)
 **前提:** MHO900-BND適用済み。手順規律は [mho98-math.md](mho98-math.md) / [mho98-m2.md](mho98-m2.md) と同じ(1コマンド → 応答5s timeout → `:SYSTem:ERRor?` → 記録。**沈黙したら空行付き再接続 → `*IDN?` で復旧確認 → エラーキューをドレイン**)
 **安全条件:** write項目は全て「現在値取得 → set → readback → finally で復元」。リファレンス波形は**表示・比較層のみ**の操作で、取り込み条件にも出力にも触れない。**ただし `:REFerence:SAVE` だけは不可逆**(枠の内容が失われる)ため、保存を伴うテストは追加の環境変数 `RIGOL_TEST_ALLOW_REF_SAVE=1` でゲートし、**未使用と分かっている枠(REF10)**へのみ実行した
 
@@ -152,6 +152,6 @@ SCPI規格上、機器は**短形式以上・長形式以下の任意の略形**
 ## 未実施・今後の予定
 
 - **6.1 の `:RESet`** — 保存の有無が条件かどうかの切り分け(枠を1つ潰す覚悟がいるため保留)
-- **`:REFerence:CURRent` は意図的にスキップ**(前面パネルの選択状態。他の全コマンドが枠番号を明示的な引数で取るため、依存するものが無い → [roadmap.md](../roadmap.md) 2.5.3)
+- **`:REFerence:CURRent` は意図的にスキップ**(前面パネルの選択状態。他の全コマンドが枠番号を明示的な引数で取るため、依存するものが無い → [roadmap.md](../roadmap.md) 3章「実装しないと決めたもの」)
 - **REF波形のデータ取得は不可**と確定済み(`:WAVeform:SOURce` の値域はガイド3.28.1に `{CHANnel1-4|MATH1-4}`)。ホスト側で数値比較したい場合は **MATHの減算経由**(`configure_math(operator="subtract", source1="CH1", source2="REF1")` → `capture_waveform("MATH1")`)を使う。この経路の実機での往復確認は未実施
 - DHO800/900系の `:REFerence` 宣言はM3スコープ外(別ガイドの逐語解読が未了。[device-profiles.md](../device-profiles.md) 6.2)

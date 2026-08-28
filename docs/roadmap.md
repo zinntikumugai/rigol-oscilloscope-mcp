@@ -292,7 +292,7 @@
 - ~~**パラレルの `:BUS<n>:PARallel:WIDTh` が実機で拒否される問題**~~ → **解消(2026-08-28)**: 原因は「データソースが User のときのみ有効」というガイド3.4.10.4 の Remark([verification/mho98-phase4.md](verification/mho98-phase4.md) 5章)。`settings.parallel` に `bus`(ガイド3.4.10.1 逐語の11トークン)を追加し、**送信順を「表の並び」に固定**して `bus` が `bus_width` より先に届くようにした。あわせて `:PARallel:BITX` + `:PARallel:SOURce` の対を `bit_sources`(添字=ビット番号のリスト)として公開している([tools.md](tools.md) 6章)。`bus="user"` との結合はホスト側では検証せず機器の自己申告に任せる(既定方針)。実機writeテストの復元fixtureは `bus_width` / `bit_sources` を「Userへ入れて書き戻す → 本来の `bus` へ戻す」の2段で扱い、**復元が完全になった**([verification/mho98-m2.md](verification/mho98-m2.md) 7.1 の残件も解消)
 - **オプション必須プロトコルは延期**: I2S、FlexRay、MIL-STD-1553、CAN-FD。検証機はMHO900-BND適用済み(2026-08-26、[verification/mho98-phase4.md](verification/mho98-phase4.md) 3章)のため実機検証の障害はなくなった。実ニーズが出たら着手する
 - **将来ゲートは送信前に不要**: オプション必須ニモニックは沈黙せず値を返すと実測済み(ライセンス適用前後とも)のため、既存の「set → エラーキュー確認 → read-back」で機器自身のエラーを検出できる(実測根拠: [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 4章)。ただし未ライセンス時のエラーキュー挙動には揺らぎがある(`-222` が積まれる場合と積まれない場合を観測)ため、未ライセンス判定は `:SYSTem:OPTion:STATus?` で行うこと
-- `:BUS` コアはDHO/MHO共通と見られる(ガイド比較)。DHO実機を検証できたらファミリプロファイルへ引き上げる([device-profiles.md](device-profiles.md) 2.2)。**ただし I2C のアドレス指定(`:IIC:ADDBits` ↔ `:IIC:ADDRess`、意味も違う)と LIN の `:BAUD`(DHOには無い)は方言差がある** — [2.6.6](#266-機種横断で判明した方言差プロファイル拡充の材料)
+- `:BUS` コアはDHO/MHO共通と見られる(ガイド比較)。DHO実機を検証できたらファミリプロファイルへ引き上げる([device-profiles.md](device-profiles.md) 2.2)。**ただし I2C のアドレス指定(`:IIC:ADDBits` ↔ `:IIC:ADDRess`、意味も違う)と LIN の `:BAUD`(DHOには無い)は方言差がある** — 本文 5.1「ガイド解読で判明している方言差」
 
 ### 2.3 Function / Arbitrary Waveform Generator (AFG)(完了)
 

@@ -1,6 +1,6 @@
 """ホスト側の波形解析。
 
-規範: tools.md 5章 `analyze_waveform` / roadmap.md 2.4。
+規範: tools.md 5章 `analyze_waveform`。未実装の解析候補(THD / Jitter 等)は roadmap.md 2章。
 
 統計・FFTの計算自体はホスト側の純関数(`waveform_stats` / `waveform_fft`)で、
 機器へは何も送らない。Toolの入口 `analyze_waveform` だけは `read_samples` で
