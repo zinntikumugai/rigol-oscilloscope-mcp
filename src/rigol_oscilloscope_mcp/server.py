@@ -506,6 +506,103 @@ def create_server(
             sweep_mode=sweep_mode,
         )
 
+    # -- 測定の前提設定と統計(tools.md 14章 / Phase M4)---------------------
+
+    @_register
+    def configure_measurement(
+        source: str | None = None,
+        threshold_source: str | None = None,
+        threshold_type: str | None = None,
+        threshold_max: float | None = None,
+        threshold_mid: float | None = None,
+        threshold_min: float | None = None,
+        threshold_default: bool | None = None,
+        area: str | None = None,
+        region_ax_s: float | None = None,
+        region_bx_s: float | None = None,
+        region_linked: bool | None = None,
+        amp_type: str | None = None,
+        amp_top: str | None = None,
+        amp_base: str | None = None,
+        statistics_enabled: bool | None = None,
+        statistics_count: int | None = None,
+        statistics_reset: bool | None = None,
+        statistics_items: list[str] | None = None,
+    ) -> dict:
+        """Set how measurements are interpreted. Omitted items are left unchanged.
+
+        This does not change acquisition (vertical, horizontal, trigger) or any
+        output: it only changes how measure computes its numbers.
+
+        Threshold: threshold_type is percent / absolute; threshold_max, _mid and
+        _min are the reference levels (percent, or volts when the type is
+        absolute). threshold_default=true restores the device defaults and is
+        sent first, so it never overwrites levels given in the same call.
+        threshold_source is "CH1"-"CH4".
+
+        Measurement range: area is main / zoom / cursor. **zoom needs the
+        delayed sweep enabled first, otherwise the device rejects it.** With
+        cursor, region_ax_s and region_bx_s place the two cursors in seconds and
+        region_linked moves them together.
+
+        Amplitude method: amp_type is auto / manual; amp_top and amp_base are
+        histogram / maxmin and only apply to the manual method.
+
+        Statistics: statistics_enabled turns the statistics display on,
+        statistics_count is the sample count (2-100000), and statistics_items
+        enables statistics per measurement item — pass source in the same call,
+        it is required. statistics_reset clears the history and is sent last.
+        Read the results with get_measurement_statistics.
+
+        source is "CH1"-"CH4" or "D0"-"D15" and selects what measure reads by
+        default.
+        """
+        return control.configure_measurement(
+            manager.require_scope(),
+            source=source,
+            threshold_source=threshold_source,
+            threshold_type=threshold_type,
+            threshold_max=threshold_max,
+            threshold_mid=threshold_mid,
+            threshold_min=threshold_min,
+            threshold_default=threshold_default,
+            area=area,
+            region_ax_s=region_ax_s,
+            region_bx_s=region_bx_s,
+            region_linked=region_linked,
+            amp_type=amp_type,
+            amp_top=amp_top,
+            amp_base=amp_base,
+            statistics_enabled=statistics_enabled,
+            statistics_count=statistics_count,
+            statistics_reset=statistics_reset,
+            statistics_items=statistics_items,
+        )
+
+    @_register
+    def get_measurement_statistics(
+        channel: str,
+        measurements: list[str],
+        types: list[str] | None = None,
+        channel_b: str | None = None,
+    ) -> dict:
+        """Read statistics for measurement items: how much a value varies.
+
+        Use this instead of capturing waveforms when you want to prove that a
+        parameter drifts or occasionally goes out of range: deviation and the
+        min/max spread answer that without transferring any waveform.
+
+        types defaults to all of maximum / minimum / current / average /
+        deviation / count. measurements uses the same item names as measure, and
+        channel_b is required for the delay and phase items.
+
+        **Enable the items first** with configure_measurement statistics_items,
+        otherwise the device has nothing to report.
+        """
+        return service.get_measurement_statistics(
+            manager.require_scope(), channel, measurements, types, channel_b
+        )
+
     # -- シリアルデコード(tools.md 6章)-------------------------------------
 
     @_register

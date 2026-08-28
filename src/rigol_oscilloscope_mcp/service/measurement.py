@@ -63,6 +63,41 @@ def measure(
     return payload
 
 
+def get_measurement_statistics(
+    driver: ScopeDriver,
+    channel: str,
+    measurements: list[str],
+    types: list[str] | None = None,
+    channel_b: str | None = None,
+) -> dict:
+    """測定項目ごとの統計値を読む(tools.md 14章)。
+
+    統計は `configure_measurement` の `statistics_items` で先に有効化しておく。
+    """
+    names = list(dict.fromkeys(measurements))
+    if not names:
+        raise ScopeError(
+            ErrorCode.INVALID_PARAMETER,
+            "measurements is empty (specify at least one measurement item)",
+            {"measurements": measurements},
+        )
+
+    stats = driver.get_measurement_statistics(channel, names, types, channel_b)
+    payload = {
+        "channel": normalize_channel(channel),
+        # 意味的名 → {統計種別: 値}。値がNoneなら機器が番兵値を返した
+        "statistics": stats,
+        "warnings": [
+            _warning(name)
+            for name, values in stats.items()
+            if all(value is None for value in values.values())
+        ],
+    }
+    if channel_b is not None:
+        payload["channel_b"] = normalize_channel(channel_b)
+    return payload
+
+
 def get_meter_value(driver: ScopeDriver, kind: str) -> dict:
     """周波数カウンタ / 電圧計の現在値を、モードと単位を添えて返す。
 

@@ -85,6 +85,29 @@ dialect:
     phase_rise_fall: RFPHase
     phase_fall_rise: FRPHase
     phase_fall_fall: FFPHase
+  # 測定の前提設定と統計(ガイド3.17.6/3.17.8/3.17.17/3.17.19/3.17.28-30)。
+  # 未宣言なら configure_measurement / get_measurement_statistics は送信ゼロで
+  # UNSUPPORTED_FEATURE。DHO系は実機未検証のため意図的に不在。
+  measure_areas: # ガイド3.17.19
+    main: MAIN
+    zoom: ZOOM # 遅延掃引を先に有効化しないと機器が拒否する(同節Remark)
+    cursor: CURSor
+  measure_threshold_types: # ガイド3.17.17
+    percent: PERCent
+    absolute: ABSolute
+  measure_amp_types: # ガイド3.17.28
+    auto: AUTO
+    manual: MANual
+  measure_amp_methods: # ガイド3.17.29/3.17.30(TOP / BASE 共通の値域)
+    histogram: HISTogram
+    maxmin: MAXMin
+  measure_statistic_types: # ガイド3.17.8 の <type>
+    maximum: MAXimum
+    minimum: MINimum
+    current: CURRent
+    average: AVERages
+    deviation: DEViation
+    count: CNT
   # シリアルデコード(:BUS<n>:MODE の値)。標準搭載6種のみ。
   # i2s(IIS)/ flexray / m1553(AERO)/ CAN-FD はライセンスオプション必須の
   # ため意図的に不在 — **不在がそのままゲート**(4.2の原則)。

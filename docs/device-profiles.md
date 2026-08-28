@@ -67,6 +67,11 @@
 |---|---|---|
 | `measurement_items` | 意味的測定名 → SCPIニモニック対応表 | `vavg` → `VAVG`(`VAVerage` は**不可**、無応答+`-222`) |
 | `measurement_clear` | Resultビューの全測定項目を消すコマンド(未宣言 = 送信ゼロで `UNSUPPORTED_FEATURE`) | mho98: `":MEASure:DELete"`。**DHO800/900系はガイド上 `":MEASure:CLEar"`**(ニモニックがファミリで分岐。MHO98実機は両方受理 → [verification/mho98-measure-clear.md](verification/mho98-measure-clear.md)) |
+| `measure_areas` | `:MEASure:AREA` の値(`main` / `zoom` / `cursor`)。未宣言 = `configure_measurement` が送信ゼロで `UNSUPPORTED_FEATURE` | mho98: 3種(ガイド3.17.19)。**DHO系は実機未検証のため意図的に不在** |
+| `measure_threshold_types` | `:MEASure:THReshold:TYPE` の値 | mho98: `percent` → `PERCent` / `absolute` → `ABSolute`(3.17.17) |
+| `measure_amp_types` | `:MEASure:AMP:TYPE` の値 | mho98: `auto` → `AUTO` / `manual` → `MANual`(3.17.28) |
+| `measure_amp_methods` | `:MEASure:AMP:MANual:TOP`・`BASE` の値(両者で共通) | mho98: `histogram` → `HISTogram` / `maxmin` → `MAXMin`(3.17.29/30) |
+| `measure_statistic_types` | `:MEASure:STATistic:ITEM?` の `<type>`。未宣言 = `get_measurement_statistics` が送信ゼロ | mho98: 6種(3.17.8)。省略時はこの全種別を読む |
 | `autoset_command` | オートセットアップの実行コマンド(未宣言 = 送信ゼロで `UNSUPPORTED_FEATURE`) | mho98: `":AUToset"`(DHO系も同じ。旧世代DS1000Z等は `:AUToscale`)。`:AUToscale` はMHO900では `:SYSTem:AUToscale`(AUTOキー有効化)しか存在しない → [verification/mho98-autoset.md](verification/mho98-autoset.md) |
 | `screenshot_command` | スクリーンショット取得コマンドと引数形式 | `:DISPlay:DATA?`(引数なし、PNG返却) |
 | `screenshot_timeout_s` | 画像転送に与えるタイムアウト猶予(秒)。未宣言ならコード既定 30 | 30(通常問い合わせの5秒では約97KBの転送が間に合わない) |

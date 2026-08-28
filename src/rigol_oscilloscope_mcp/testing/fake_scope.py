@@ -553,6 +553,43 @@ _DVM_PROPS: tuple[tuple[str, str, object, object], ...] = (
 _DVM_VALUES = {"ACRM": 0.35, "DC": 1.0, "DCRM": 1.06}
 
 _HISTOGRAM_TYPES = ("HORizontal", "VERTical")
+#: 測定の前提設定(ガイド3.17)。既定値はガイドの Default 欄に従う。
+_MEASURE_SOURCES = tuple(f"CHANnel{n}" for n in range(1, 5)) + tuple(
+    f"D{n}" for n in range(16)
+)
+_MEASURE_SETUP_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("source", "SOURce", _MEASURE_SOURCES, "CHAN1"),
+    (
+        "threshold_source",
+        "THReshold:SOURce",
+        tuple(f"CHANnel{n}" for n in range(1, 5)),
+        "CHAN1",
+    ),
+    ("threshold_type", "THReshold:TYPE", ("PERCent", "ABSolute"), "PERC"),
+    ("threshold_max", "SETup:MAX", "nr3", 90.0),
+    ("threshold_mid", "SETup:MID", "nr3", 50.0),
+    ("threshold_min", "SETup:MIN", "nr3", 10.0),
+    ("area", "AREA", ("MAIN", "ZOOM", "CURSor"), "MAIN"),
+    ("region_ax", "CREGion:CAX", "nr3", -2.0e-4),
+    ("region_bx", "CREGion:CBX", "nr3", 2.0e-4),
+    ("region_linked", "CREGion:CABX", "bool", False),
+    ("amp_type", "AMP:TYPE", ("AUTO", "MANual"), "MAN"),
+    ("amp_top", "AMP:MANual:TOP", ("HISTogram", "MAXMin"), "HIST"),
+    ("amp_base", "AMP:MANual:BASE", ("HISTogram", "MAXMin"), "HIST"),
+    ("statistics_enabled", "STATistic:DISPlay", "bool", False),
+    ("statistics_count", "STATistic:COUNt", ("int", 2, 100_000), 1000),
+)
+#: `:MEASure:STATistic:ITEM? <type>,<item>` の応答。実機は科学表記の単一値を返す
+#: (ガイド3.17.8 の Example)。種別ごとに固定の係数を掛けて区別できるようにする。
+_STATISTIC_TYPE_FACTORS: dict[str, float] = {
+    "MAXIMUM": 1.02,
+    "MINIMUM": 0.98,
+    "CURRENT": 1.0,
+    "AVERAGES": 1.0,
+    "DEVIATION": 0.001,
+    "CNT": 1.0,
+}
+
 _HISTOGRAM_PROPS: tuple[tuple[str, str, object, object], ...] = (
     ("enable", "ENABle", "bool", False),
     ("type", "TYPE", _HISTOGRAM_TYPES, "HOR"),
@@ -719,6 +756,11 @@ class FakeScope:
         self.counter: dict = {key: default for key, _, _, default in _COUNTER_PROPS}
         self.counter["total"] = _COUNTER_TOTAL
         self.dvm: dict = {key: default for key, _, _, default in _DVM_PROPS}
+        self.measure_setup: dict = {
+            key: default for key, _, _, default in _MEASURE_SETUP_PROPS
+        }
+        #: 統計を有効化した測定項目(`:MEASure:STATistic:ITEM <item>` で追加)
+        self.statistic_items: list[str] = []
         self.histogram: dict = {key: default for key, _, _, default in _HISTOGRAM_PROPS}
         self.histogram["hits"], self.histogram["peak_hits"] = _HISTOGRAM_HITS
         # リファレンス波形(10枠、3.20)。`saved` は `:REFerence:SAVE` の観測点で、
@@ -984,6 +1026,7 @@ class FakeScope:
         entries += self._math_entries()
         entries += self._cursor_entries()
         entries += self._meter_entries()
+        entries += self._measure_setup_entries()
         entries += self._histogram_entries()
         entries += self._reference_entries()
         return tuple(
@@ -1294,6 +1337,60 @@ class FakeScope:
             (rf"{dvm}:{_mn('CURRent')}\?", lambda m: self._dvm_current()),
         ]
         return entries
+
+    def _measure_setup_entries(self) -> list[tuple[str, Callable]]:
+        """測定の前提設定と統計のディスパッチ表(ガイド3.17)。
+
+        `:MEASure:TYPE` / `:CATegory` / `:AMSource` / `:INDicator` は画面の分類・
+        表示のみでスコープ外のため未実装 = 沈黙(実機の未定義ヘッダと同じ扱い)。
+        """
+        measure = rf":?{_mn('MEASure')}"
+        entries = self._prop_entries(measure, _MEASURE_SETUP_PROPS, self.measure_setup)
+        stat = rf"{measure}:{_mn('STATistic')}"
+        entries += [
+            (
+                rf"{measure}:{_mn('THReshold')}:{_mn('DEFault')}",
+                lambda m: self._measure_threshold_default(),
+            ),
+            (rf"{stat}:{_mn('RESet')}", lambda m: self.statistic_items.clear()),
+            (
+                rf"{stat}:{_mn('ITEM')}\?\s+(\w+)\s*,\s*(\w+)"
+                rf"(?:\s*,\s*[^\s,]+)?(?:\s*,\s*[^\s,]+)?",
+                self._statistic_item_query,
+            ),
+            (
+                rf"{stat}:{_mn('ITEM')}\s+(\w+)"
+                rf"(?:\s*,\s*[^\s,]+)?(?:\s*,\s*[^\s,]+)?",
+                self._statistic_item_enable,
+            ),
+        ]
+        return entries
+
+    def _measure_threshold_default(self) -> None:
+        """ガイド3.17.18: しきい値を既定へ戻す(パーセント既定 90/50/10)。"""
+        self.measure_setup["threshold_max"] = 90.0
+        self.measure_setup["threshold_mid"] = 50.0
+        self.measure_setup["threshold_min"] = 10.0
+
+    def _statistic_item_enable(self, match: re.Match[str]) -> None:
+        item = match.group(1).strip().upper()
+        if item not in _MEASURE_VALUES:
+            raise self._silent(OUT_OF_RANGE)
+        if item not in self.statistic_items:
+            self.statistic_items.append(item)
+
+    def _statistic_item_query(self, match: re.Match[str]) -> bytes:
+        kind = match.group(1).strip().upper()
+        item = match.group(2).strip().upper()
+        factor = None
+        for name, value in _STATISTIC_TYPE_FACTORS.items():
+            if len(kind) >= 3 and name.startswith(kind):
+                factor = value
+                break
+        base = _MEASURE_VALUES.get(item)
+        if factor is None or base is None:
+            raise self._silent(OUT_OF_RANGE)
+        return _nr3(float(base) * factor).encode("ascii")
 
     def _histogram_entries(self) -> list[tuple[str, Callable]]:
         """ヒストグラムのディスパッチ表(`:HISTogram:SAVE:CSV` はスコープ外)。"""

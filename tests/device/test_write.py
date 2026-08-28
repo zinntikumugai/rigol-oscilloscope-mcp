@@ -1836,3 +1836,99 @@ def test_audit_log_records_every_write(audit_path: Path) -> None:
     for tool in CONDITIONAL_TOOLS:
         if tool in tools:
             assert tools[tool] >= 1
+
+
+# --------------------------------------------------------------------------
+# 測定の前提設定(Phase M4)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def measurement_before(
+    request: pytest.FixtureRequest, driver: ScopeDriver
+) -> Iterator[dict]:
+    """測定の前提設定を控え、teardownで必ず書き戻す。
+
+    しきい値は上限 > 中央 > 下限 の順序制約があり、片側だけを動かすと機器が
+    拒否しうる。`configure_measurement` は項目表の順に MAX → MID → MIN を
+    1回の呼び出しで送るため1往復で足りる。
+    """
+    before = driver.get_measurement_config()
+    tag = request.node.name
+    _report(f"[before:{tag}] measurement={before}")
+    try:
+        yield before
+    finally:
+        failure: Exception | None = None
+        try:
+            driver.configure_measurement(**before)
+        except Exception as exc:  # 復元は最後まで試みる
+            failure = exc
+
+        after = driver.get_measurement_config()
+        drift = _diff(before, after)
+        _report(f"[restore:{tag}] measurement 復元後={after}")
+        if drift:
+            _report(f"[restore:{tag}] **復元漏れ**: {drift}")
+        if failure is not None:
+            _report(f"[restore:{tag}] **復元コマンド失敗**: {failure!r}")
+        assert failure is None, f"測定の前提設定の復元に失敗: {failure!r}"
+        assert not drift, f"測定の前提設定が復元されていません: {drift}"
+
+
+def test_configure_measurement_set_and_readback(
+    control: ControlService, driver: ScopeDriver, measurement_before: dict
+) -> None:
+    """しきい値と振幅算出方式の往復。**area は触らない**。
+
+    `area="zoom"` は遅延掃引の有効化が前提で機器が拒否しうる(ガイド3.17.19)。
+    `area="cursor"` は画面にカーソルを出すため、復元漏れの影響が見えやすい。
+    どちらも本テストの目的(往復の確認)には不要なので `main` のまま動かさない。
+    """
+    result = control.configure_measurement(
+        driver,
+        threshold_type="percent",
+        threshold_max=88.0,
+        threshold_mid=48.0,
+        threshold_min=12.0,
+        amp_type="manual",
+        amp_top="maxmin",
+    )
+    _report(f"[measurement] applied={result['applied']}")
+
+    applied = result["applied"]
+    assert applied["threshold_type"] == "percent"
+    assert applied["amp_top"] == "maxmin"
+    # しきい値は機器がスナップしうるので requested との一致は求めない
+    assert isinstance(applied["threshold_max"], float)
+
+
+def test_measurement_statistics_round_trip(
+    control: ControlService, driver: ScopeDriver, measurement_before: dict
+) -> None:
+    """統計の有効化 → 読み出し。**V-5(応答形式)の実測を兼ねる**。
+
+    ガイド3.17.8 の Return Format は「科学表記の統計結果」で、Example は単一値
+    (`9.120000E-1`)。実機がその通りかをここで確かめる。
+    """
+    control.configure_measurement(
+        driver,
+        source="CH2",
+        statistics_enabled=True,
+        statistics_items=["vpp", "frequency"],
+        statistics_reset=True,
+    )
+    stats = driver.get_measurement_statistics("CH2", ["vpp", "frequency"])
+
+    for name, values in stats.items():
+        _report(f"[statistics] {name}: {values}")
+        assert set(values) == {
+            "maximum",
+            "minimum",
+            "current",
+            "average",
+            "deviation",
+            "count",
+        }
+        for kind, value in values.items():
+            assert value is None or isinstance(value, float), (name, kind, value)

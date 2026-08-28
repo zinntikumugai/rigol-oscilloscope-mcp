@@ -109,6 +109,36 @@ DUAL_SOURCE_MEASUREMENTS: frozenset[str] = frozenset(
     if name.startswith(("delay_", "phase_"))
 )
 
+#: 測定の前提設定(ガイド3.17)。**この並びがそのまま送信順**。
+#: - `threshold_default`(既定へ戻す)を先頭に置くのは、同じ呼び出しで指定された
+#:   しきい値を後から潰さないため(M3の `:REFerence:RESet` と同じ原則)
+#: - `threshold_type` は `SETup:MAX/MID/MIN` より前(値域が type に依存する)
+#: - `area` は `CREGion:*` より前(区間の指定先を決める)
+#: - `amp_type` は `AMP:MANual:TOP/BASE` より前
+#: - `statistics_reset`(履歴クリア)は末尾。設定を変えてから取り直す
+_MEASURE_SETUP_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "lsource"),
+    ("threshold_source", ":THReshold:SOURce", "achannel"),
+    ("threshold_type", ":THReshold:TYPE", ("enum", "measure_threshold_types", "the measurement threshold type")),
+    ("threshold_max", ":SETup:MAX", "number"),
+    ("threshold_mid", ":SETup:MID", "number"),
+    ("threshold_min", ":SETup:MIN", "number"),
+    ("area", ":AREA", ("enum", "measure_areas", "the measurement range")),
+    ("region_ax_s", ":CREGion:CAX", "number"),
+    ("region_bx_s", ":CREGion:CBX", "number"),
+    ("region_linked", ":CREGion:CABX", "bool"),
+    ("amp_type", ":AMP:TYPE", ("enum", "measure_amp_types", "the amplitude method")),
+    ("amp_top", ":AMP:MANual:TOP", ("enum", "measure_amp_methods", "the manual amplitude top method")),
+    ("amp_base", ":AMP:MANual:BASE", ("enum", "measure_amp_methods", "the manual amplitude base method")),
+    ("statistics_enabled", ":STATistic:DISPlay", "bool"),
+    ("statistics_count", ":STATistic:COUNt", ("int", 2, 100_000)),
+)
+_MEASURE_PREFIX = ":MEASure"
+#: read-back を持たない一発動作(ガイド3.17.18 / 3.17.7)
+_MEASURE_THRESHOLD_DEFAULT = ":MEASure:THReshold:DEFault"
+_MEASURE_STATISTIC_RESET = ":MEASure:STATistic:RESet"
+_MEASURE_STATISTIC_ITEM = ":MEASure:STATistic:ITEM"
+
 # 機器が「測定不能」を示すために返す番兵値(±9.9E37 前後)
 INVALID_MEASUREMENT = 9.0e37
 
@@ -805,6 +835,158 @@ class ScopeDriver:
                 results.append(MeasurementResult(name, key, None, "unknown"))
             else:
                 results.append(MeasurementResult(name, key, value, "valid"))
+        return results
+
+    def configure_measurement(
+        self,
+        *,
+        source: str | None = None,
+        threshold_source: str | None = None,
+        threshold_type: str | None = None,
+        threshold_max: float | None = None,
+        threshold_mid: float | None = None,
+        threshold_min: float | None = None,
+        threshold_default: bool | None = None,
+        area: str | None = None,
+        region_ax_s: float | None = None,
+        region_bx_s: float | None = None,
+        region_linked: bool | None = None,
+        amp_type: str | None = None,
+        amp_top: str | None = None,
+        amp_base: str | None = None,
+        statistics_enabled: bool | None = None,
+        statistics_count: int | None = None,
+        statistics_reset: bool | None = None,
+        statistics_items: list[str] | None = None,
+    ) -> dict:
+        """測定の前提設定(tools.md 14章)。None の項目は変更しない。
+
+        検証は全て送信前に済ませる。1つでも不正なら1コマンドも送らない。
+        """
+        values = {
+            "source": source,
+            "threshold_source": threshold_source,
+            "threshold_type": threshold_type,
+            "threshold_max": threshold_max,
+            "threshold_mid": threshold_mid,
+            "threshold_min": threshold_min,
+            "area": area,
+            "region_ax_s": region_ax_s,
+            "region_bx_s": region_bx_s,
+            "region_linked": region_linked,
+            "amp_type": amp_type,
+            "amp_top": amp_top,
+            "amp_base": amp_base,
+            "statistics_enabled": statistics_enabled,
+            "statistics_count": statistics_count,
+        }
+        # 統計の項目別有効化はソースを明示させる。省略すると機器は「最後に選んだ
+        # ソース」を使い、呼び出し側から結果が予測できなくなる(ガイド3.17.8)
+        if statistics_items and source is None:
+            raise _invalid(
+                "source is required when enabling statistics_items "
+                "(the device would otherwise reuse its last selected source)",
+                {"statistics_items": list(statistics_items)},
+            )
+
+        plan = self._command_plan(_MEASURE_PREFIX, 0, _MEASURE_SETUP_ITEMS, values)
+        stat_commands = self._statistic_enable_commands(statistics_items, source)
+
+        if not plan and not stat_commands and not threshold_default and not statistics_reset:
+            return {}
+
+        applied: dict[str, object] = {}
+        if threshold_default:
+            self.session.write_checked(_MEASURE_THRESHOLD_DEFAULT)
+            applied["threshold_default"] = True
+        for key, set_cmd, query, from_scpi in plan:
+            applied[key] = from_scpi(self.session.set_and_verify(set_cmd, query))
+        if stat_commands:
+            for command in stat_commands:
+                self.session.write_checked(command)
+            applied["statistics_items"] = list(statistics_items or [])
+        if statistics_reset:
+            self.session.write_checked(_MEASURE_STATISTIC_RESET)
+            applied["statistics_reset"] = True
+        return applied
+
+    def _statistic_enable_commands(
+        self, items: list[str] | None, source: str | None
+    ) -> list[str]:
+        """`:MEASure:STATistic:ITEM <item>,<src>` の送信計画(検証もここで)。"""
+        if not items:
+            return []
+        token = self._math_lsource(source, "source")
+        commands = []
+        for name in items:
+            mnemonic = self._measurement_mnemonic(name)
+            commands.append(f"{_MEASURE_STATISTIC_ITEM} {mnemonic},{token}")
+        return commands
+
+    def _measurement_mnemonic(self, name: str) -> str:
+        """測定項目名 → SCPIニモニック。未宣言なら送信前に失敗する。"""
+        mnemonic = self.profile.measurement_mnemonic(name)
+        if mnemonic is None or name not in MEASUREMENT_KEYS:
+            raise _unsupported(
+                f"measurement item '{name}' is unverified in this model's profile",
+                {"measurement": name, "profile": self.profile.name},
+            )
+        return mnemonic
+
+    def get_measurement_config(self) -> dict:
+        """測定の前提設定を読む(一発動作は状態を持たないので含めない)。"""
+        self._afg_enum("measure_areas", "the measurement range")
+        config: dict[str, object] = {}
+        for key, path, kind in _MEASURE_SETUP_ITEMS:
+            _, from_scpi = self._converter(kind, 0)
+            config[key] = from_scpi(self.session.query(f"{_MEASURE_PREFIX}{path}?"))
+        return config
+
+    def get_measurement_statistics(
+        self,
+        channel: str,
+        names: list[str],
+        types: list[str] | None = None,
+        channel_b: str | None = None,
+    ) -> dict:
+        """測定項目ごとの統計値を読む(ガイド3.17.8 のクエリ形)。
+
+        `<type>` は1つずつ指定する形式なので、項目×種別の回数だけクエリする。
+        応答は科学表記の単一値(ガイドの Return Format / Example)。
+        """
+        to_scpi, _ = self._afg_enum(
+            "measure_statistic_types", "the measurement statistic type"
+        )
+        wanted = types if types is not None else list(
+            self.profile.dialect["measure_statistic_types"]
+        )
+        number = self._channel_number(channel)
+        dual = [name for name in names if name in DUAL_SOURCE_MEASUREMENTS]
+        if dual and channel_b is None:
+            raise _invalid(
+                "channel_b is required for delay/phase statistics "
+                "(the device would otherwise reuse its last selected source)",
+                {"measurements": dual},
+            )
+        number_b = self._channel_number(channel_b) if channel_b is not None else None
+
+        # 検証を全て済ませてから送る
+        plan: list[tuple[str, str, str]] = []
+        for name in names:
+            mnemonic = self._measurement_mnemonic(name)
+            source = f"CHANnel{number}"
+            if name in DUAL_SOURCE_MEASUREMENTS:
+                source = f"{source},CHANnel{number_b}"
+            for kind in wanted:
+                token = to_scpi(kind, "type")
+                plan.append((name, kind, f"{_MEASURE_STATISTIC_ITEM}? {token},{mnemonic},{source}"))
+
+        results: dict[str, dict[str, float | None]] = {}
+        for name, kind, query in plan:
+            value = parse_nr3(self.session.query(query))
+            results.setdefault(name, {})[kind] = (
+                None if abs(value) >= INVALID_MEASUREMENT else value
+            )
         return results
 
     def clear_measurements(self) -> None:

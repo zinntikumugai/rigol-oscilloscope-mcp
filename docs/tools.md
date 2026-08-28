@@ -520,9 +520,11 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `get_histogram_result` | READ_ONLY | M2 |
 | `configure_reference` | SAFE_WRITE | M3 |
 | `get_reference_state` | READ_ONLY | M3 |
+| `configure_measurement` | SAFE_WRITE | M4 |
+| `get_measurement_statistics` | READ_ONLY | M4 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は38(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
+登録Tool数は40(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
 
 将来(Phase 4の残り): `:PERiod` / `:VOLTage:HIGH`/`:LOW`(恒久スキップ。`frequency_hz`/`amplitude_vpp`+`offset_v`で表現可能なため)、DHOファミリの `:SOURce`(番号なし・DGモジュール)対応、Logic Analyzer。
 
@@ -887,3 +889,65 @@ MATH演算の現在設定を読む。**書き込みは一切行わず**、表示
 - **全枠読みは実機で安全**(10枠とも正常応答し、エラーキューは終始 `0,"No error"`。沈黙も応答のずれも無し → [verification/mho98-m3.md](verification/mho98-m3.md) 1章)
 - **色の応答はガイドの記載と違う**: ガイド3.20.7 は緑を `GRE` と書くが、**実機は `GREE` を返す**。工場出荷状態の枠4・枠9が緑なので、短形/長形の2形しか見ない実装では**未操作の実機でこのToolが丸ごと落ちる**。列挙値の照合は短形式以上・長形式以下の任意の略形を受理する(曖昧なら推測せず `SCPI_ERROR`)→ [verification/mho98-m3.md](verification/mho98-m3.md) 4章
 - **プロファイルゲート**: `ref_channels` が未宣言(または0)なら、`ref` 省略時も**1枠だけ問い合わせて** `UNSUPPORTED_FEATURE` を返させる(空の `channels` を「正常」に見せない)
+
+---
+
+## 14. 測定の前提設定と統計(Phase M4)
+
+**本章は章番号を末尾に置いている。** コード内コメントやテストが既存の章番号を参照しているため、機能章の途中へ挿入して既存章を繰り下げることはしない(位置づけとしては5章と同列の機能章)。
+
+`measure`(5章)が**何を測るか**を選ぶのに対し、本章の2本は**どう解釈するか**(しきい値・測定区間・振幅算出方式)と**どれだけばらつくか**(統計)を扱う。取り込み条件(垂直・水平・トリガ)にも出力にも触れない。
+
+### `configure_measurement` — SAFE_WRITE / Phase M4
+
+測定の前提設定を変える。未指定の項目は変更しない(1項目も指定しなければ `INVALID_PARAMETER`)。
+
+引数:
+
+| 名前 | 型 | 説明 |
+|---|---|---|
+| `source` | string | 既定の測定ソース。`"CH1"`-`"CH4"` / `"D0"`-`"D15"`(ガイド3.17.1) |
+| `threshold_source` | string | しきい値の基準ch。`"CH1"`-`"CH4"`(3.17.16) |
+| `threshold_type` | string | `percent` / `absolute`(3.17.17) |
+| `threshold_max` / `threshold_mid` / `threshold_min` | number | 上限・中央・下限。`percent` なら%、`absolute` ならV(3.17.9-11) |
+| `threshold_default` | bool | 既定へ戻す(3.17.18)。**送信順の先頭** |
+| `area` | string | 測定範囲。`main` / `zoom` / `cursor`(3.17.19) |
+| `region_ax_s` / `region_bx_s` | number | `area="cursor"` のときのカーソル位置(秒。3.17.21/22) |
+| `region_linked` | bool | カーソルA/Bを連動させる(3.17.23) |
+| `amp_type` | string | 振幅算出方式。`auto` / `manual`(3.17.28) |
+| `amp_top` / `amp_base` | string | `manual` のときのTop/Base算出。`histogram` / `maxmin`(3.17.29/30) |
+| `statistics_enabled` | bool | 統計表示のON/OFF(3.17.6) |
+| `statistics_count` | int | 統計のサンプル数。2〜100000(3.17.5) |
+| `statistics_items` | string[] | 統計を有効化する測定項目(3.17.8 の set 形)。**`source` の同時指定が必須** |
+| `statistics_reset` | bool | 履歴をクリアして取り直す(3.17.7)。**送信順の末尾** |
+
+返却: `requested` / `applied` / `changed`(0.3節の共通規約)。
+
+動作・規範:
+
+- **送信順を項目表で固定している。** `threshold_default`(既定へ戻す)を先頭に置くのは、同じ呼び出しで指定されたしきい値を後から潰さないため(M3の `:REFerence:RESet` と同じ原則)。`threshold_type` は `SETup:MAX/MID/MIN` より前(値域がtypeに依存する)、`area` は `CREGion:*` より前(区間の指定先を決める)、`amp_type` は `AMP:MANual:TOP/BASE` より前。`statistics_reset` は末尾(設定を変えてから取り直す)。**この順序を後から「単純化」してはならない**
+- **`area="zoom"` は遅延掃引の有効化が前提**(ガイド3.17.19 Remarks)。遅延掃引はまだ未実装なので、現状 `zoom` を指定すると機器が拒否する(エラーキュー確認で `SCPI_ERROR` として返る)
+- **`statistics_items` は `source` の同時指定を必須にしている。** ガイド3.17.8 の Remark によれば機器は省略時に「最後に選んだソース」を使い、呼び出し側から結果が予測できなくなるため
+- **プロファイルゲート**: `measure_areas` / `measure_threshold_types` / `measure_amp_types` / `measure_amp_methods` が未宣言の機種では送信ゼロで `UNSUPPORTED_FEATURE`。宣言しているのは `mho98` のみ
+- **意図的にスキップ**(ガイド3.17にあるが実装しない): `:MEASure:TYPE`(3.17.20)/ `:MEASure:CATegory`(3.17.33)/ `:MEASure:AMSource`(3.17.4)/ `:MEASure:INDicator`(3.17.24)— いずれも本体画面の分類・表示のみで測定値に影響しない。`:MEASure:SETup:PSA`・`PSB`・`DSA`・`DSB`(3.17.12-15)も不要 — `measure` / `get_measurement_statistics` が2ソースをコマンド引数で直接渡すため
+
+### `get_measurement_statistics` — READ_ONLY / Phase M4
+
+測定項目ごとの統計値(最大 / 最小 / 現在 / 平均 / 標準偏差 / 回数)を読む。**波形を1点も転送せずに「ばらつき」を数値で得る**のが用途で、「たまに出る異常」の存在証明に使える。
+
+引数:
+
+| 名前 | 型 | 説明 |
+|---|---|---|
+| `channel` | string | 必須。ソース(2ソース項目のソースA) |
+| `measurements` | string[] | 必須。`measure` と同じ意味的名 |
+| `types` | string[] | `maximum` / `minimum` / `current` / `average` / `deviation` / `count`。省略時は全6種 |
+| `channel_b` | string | 2ソース項目(遅延・位相)のソースB。それらを指定したときは必須 |
+
+返却: `channel` / `statistics`(意味的名 → `{統計種別: 値}`)/ `warnings`。`channel_b` は使ったときだけ入る。
+
+動作・規範:
+
+- **`<type>` は1つずつ指定する形式**(ガイド3.17.8)なので、項目数 × 種別数のクエリを送る。応答は科学表記の単一値
+- **統計は項目ごとの有効化が前提**。先に `configure_measurement` の `statistics_items` で有効化する
+- 番兵値(±9.9E37 相当)は `null` に変換し、その項目の全種別が `null` なら `warnings` に載せる

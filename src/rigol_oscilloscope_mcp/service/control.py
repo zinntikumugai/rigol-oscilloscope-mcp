@@ -688,6 +688,80 @@ class ControlService:
             "changed": before != after,
         }
 
+    # -- 測定の前提設定(Phase M4)-----------------------------------------
+
+    def configure_measurement(
+        self,
+        driver: ScopeDriver,
+        *,
+        source: str | None = None,
+        threshold_source: str | None = None,
+        threshold_type: str | None = None,
+        threshold_max: float | None = None,
+        threshold_mid: float | None = None,
+        threshold_min: float | None = None,
+        threshold_default: bool | None = None,
+        area: str | None = None,
+        region_ax_s: float | None = None,
+        region_bx_s: float | None = None,
+        region_linked: bool | None = None,
+        amp_type: str | None = None,
+        amp_top: str | None = None,
+        amp_base: str | None = None,
+        statistics_enabled: bool | None = None,
+        statistics_count: int | None = None,
+        statistics_reset: bool | None = None,
+        statistics_items: list[str] | None = None,
+    ) -> dict:
+        """測定の前提設定を変える(SAFE_WRITE)。未指定の項目は変更しない。
+
+        承認を要求しない根拠は configure_histogram と同じ — 取り込み条件(垂直・
+        水平・トリガ)にも出力にも触れず、測定値の**解釈のしかた**だけを変える。
+
+        送信順はドライバの項目表が持つ(`threshold_default` が先頭、
+        `statistics_reset` が末尾)。`changed` の判定は設定だけで行う。
+        """
+        items = {
+            "source": source,
+            "threshold_source": threshold_source,
+            "threshold_type": threshold_type,
+            "threshold_max": threshold_max,
+            "threshold_mid": threshold_mid,
+            "threshold_min": threshold_min,
+            "threshold_default": threshold_default,
+            "area": area,
+            "region_ax_s": region_ax_s,
+            "region_bx_s": region_bx_s,
+            "region_linked": region_linked,
+            "amp_type": amp_type,
+            "amp_top": amp_top,
+            "amp_base": amp_base,
+            "statistics_enabled": statistics_enabled,
+            "statistics_count": statistics_count,
+            "statistics_reset": statistics_reset,
+            "statistics_items": statistics_items,
+        }
+        requested = _specified(items)
+        if not requested:
+            raise _invalid(
+                "No item to change was specified "
+                f"(specify at least one of {' / '.join(items)})",
+                {},
+            )
+
+        with self._audited("configure_measurement", requested) as record:
+            before = driver.get_measurement_config()
+            record.before(before)
+            applied = driver.configure_measurement(**items)
+            after = driver.get_measurement_config()
+            record.after(after)
+
+        return {
+            "requested": requested,
+            "applied": applied,
+            "changed": before != after,
+        }
+
     # -- リファレンス波形(Phase M3)---------------------------------------
 
     def configure_reference(

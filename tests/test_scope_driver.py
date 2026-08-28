@@ -3708,3 +3708,143 @@ def test_measure_single_source_items_ignore_second_source(
         ":MEASure:ITEM? VPP,CHANnel1",
         ":MEASure:ITEM? FFDelay,CHANnel1,CHANnel3",
     ]
+
+
+# --------------------------------------------------------------------------
+# 測定の前提設定と統計(M4)
+# --------------------------------------------------------------------------
+
+
+def test_configure_measurement_sends_items_in_table_order(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """送信順は表の並びに固定する。
+
+    - `threshold_default`(既定へ戻す)は**先頭**。同じ呼び出しのしきい値を潰さない
+    - `threshold_type` は `threshold_max/mid/min` より前(値域が type に依存する)
+    - `area` は `region_*` より前(区間の指定先を決める)
+    - `amp_type` は `amp_top/base` より前
+    - `statistics_reset`(履歴クリア)は**末尾**
+    """
+    driver.configure_measurement(
+        statistics_reset=True,
+        region_ax_s=-1e-5,
+        threshold_type="absolute",
+        threshold_max=2.0,
+        area="cursor",
+        amp_top="maxmin",
+        amp_type="manual",
+        threshold_default=True,
+    )
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":MEASure")]
+    assert writes == [
+        ":MEASure:THReshold:DEFault",
+        ":MEASure:THReshold:TYPE ABSolute",
+        ":MEASure:SETup:MAX 2.0",
+        ":MEASure:AREA CURSor",
+        ":MEASure:CREGion:CAX -1e-05",
+        ":MEASure:AMP:TYPE MANual",
+        ":MEASure:AMP:MANual:TOP MAXMin",
+        ":MEASure:STATistic:RESet",
+    ]
+
+
+def test_configure_measurement_reads_back_each_item(driver: ScopeDriver) -> None:
+    applied = driver.configure_measurement(area="zoom", statistics_count=500)
+
+    assert applied["area"] == "zoom"
+    assert applied["statistics_count"] == 500
+
+
+def test_configure_measurement_without_items_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_measurement()
+
+    assert scope.command_log == []
+
+
+def test_configure_measurement_rejects_unknown_enum(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_measurement(area="nope")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_measurement_enables_statistics_items(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """統計は項目ごとに有効化が要る(ガイド3.17.8 の set 形)。"""
+    driver.configure_measurement(source="CH2", statistics_items=["vpp", "frequency"])
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":MEASure")]
+    assert writes == [
+        ":MEASure:SOURce CHANnel2",
+        ":MEASure:STATistic:ITEM VPP,CHANnel2",
+        ":MEASure:STATistic:ITEM FREQuency,CHANnel2",
+    ]
+
+
+def test_configure_measurement_statistics_items_require_source(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """ソース省略時は機器の「最後に選んだソース」依存になるため拒否する。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_measurement(statistics_items=["vpp"])
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_measurement_unsupported_on_generic(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """方言未宣言の機種では1コマンドも送らない。"""
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.configure_measurement(area="main")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_get_measurement_statistics_queries_each_type(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    results = driver.get_measurement_statistics(
+        "CH1", ["vpp"], types=["maximum", "deviation"]
+    )
+
+    assert [c for c in scope.command_log if c.startswith(":MEASure")] == [
+        ":MEASure:STATistic:ITEM? MAXimum,VPP,CHANnel1",
+        ":MEASure:STATistic:ITEM? DEViation,VPP,CHANnel1",
+    ]
+    assert set(results["vpp"]) == {"maximum", "deviation"}
+
+
+def test_get_measurement_statistics_defaults_to_all_types(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    results = driver.get_measurement_statistics("CH1", ["frequency"])
+
+    assert set(results["frequency"]) == {
+        "maximum",
+        "minimum",
+        "current",
+        "average",
+        "deviation",
+        "count",
+    }
+
+
+def test_get_measurement_statistics_dual_source_needs_channel_b(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_measurement_statistics("CH1", ["delay_rise_rise"])
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []

@@ -168,6 +168,8 @@ Transport(LAN raw socket / USB USBTMC)
 | 状態 | `get_state` / `get_channel` / `get_timebase` / `get_trigger` / `get_acquisition_state` | READ_ONLY | 1 |
 | 測定 | `measure` | READ_ONLY | 1 |
 | 測定 | `clear_measurements`(Resultビューの全消去) | SAFE_WRITE | 4 |
+| 測定 | `configure_measurement`(しきい値・測定区間・振幅算出方式・統計) | SAFE_WRITE | M4 |
+| 測定 | `get_measurement_statistics`(最大/最小/平均/標準偏差/回数) | READ_ONLY | M4 |
 | データ | `capture_waveform` / `capture_screenshot` | READ_ONLY | 1 |
 | 設定 | `configure_channel` / `configure_timebase` / `configure_trigger` | SAFE_WRITE(50ΩのみRESTRICTED) | 2 |
 | 取込 | `run` / `stop` / `single` | SAFE_WRITE | 2 |
