@@ -18,6 +18,14 @@ dialect:
     vpp: VPP
     vmax: VMAX
     vmin: VMIN
+  # エッジトリガは全シリーズ共通(MVPから宣言なしで動いていたものを明示化した)。
+  # 他のトリガ種別は機種ごとに実機検証してから足す — 不在がそのままゲート。
+  trigger_types:
+    edge: EDGE
+  trigger_slopes:
+    rising: POSitive
+    falling: NEGative
+    either: RFALl
   invalid_query_behavior: silent_timeout
   error_queue_stale_on_connect: true
 

@@ -393,7 +393,12 @@ def timebase_before(
 def trigger_before(
     request: pytest.FixtureRequest, control: ControlService, driver: ScopeDriver
 ) -> Iterator[dict]:
-    """トリガの現在値を取得し、teardownで必ず復元する(sourceは変更しない)。"""
+    """トリガの現在値を取得し、teardownで必ず復元する(sourceは変更しない)。
+
+    **種別(`type`)も復元する。** M5で `:TRIGger:MODE` を切り替えられるように
+    なったため、元の種別へ戻してからその配下を書き戻さないと、別のサブツリーに
+    書き込んでしまう。`configure_trigger` は `type` を先頭に送るので1往復で足りる。
+    """
     before = get_trigger_dict(driver)
     tag = request.node.name
     _report(f"[before:{tag}] trigger={before}")
@@ -404,9 +409,9 @@ def trigger_before(
         try:
             control.configure_trigger(
                 driver,
-                level_v=before["level_v"],
-                slope=before["slope"],
+                type=before["type"],
                 sweep_mode=before["sweep_mode"],
+                settings=before["settings"],
             )
         except Exception as exc:
             failure = exc
@@ -1932,3 +1937,33 @@ def test_measurement_statistics_round_trip(
         }
         for kind, value in values.items():
             assert value is None or isinstance(value, float), (name, kind, value)
+
+
+def test_configure_trigger_switches_type_and_restores(
+    control: ControlService, driver: ScopeDriver, trigger_before: dict
+) -> None:
+    """種別の切り替えと配下の設定の往復(Phase M5)。
+
+    パルス幅トリガを選ぶ。**取り込みを止めることも出力に触れることもない**。
+    復元は fixture が元の種別へ戻す。
+    """
+    result = control.configure_trigger(
+        driver,
+        type="pulse",
+        settings={"when": "less", "upper_width_s": 1e-6},
+    )
+    _report(f"[trigger] applied={result['applied']}")
+
+    assert result["applied"]["type"] == "pulse"
+    assert result["applied"]["when"] == "less"
+    assert result["trigger"]["type"] == "pulse"
+    # 他の種別のサブツリーは読んでいない(edge の項目が settings に無い)
+    assert "polarity" in result["trigger"]["settings"]
+
+
+def test_get_trigger_position_is_read_only(driver: ScopeDriver) -> None:
+    """`:TRIGger:POSition?`(ガイド3.27.7)。読み取りのみで副作用が無い。"""
+    position = driver.get_trigger_position()
+    _report(f"[trigger] position={position!r}")
+
+    assert position is None or isinstance(position, float)

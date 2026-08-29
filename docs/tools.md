@@ -152,11 +152,16 @@ API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。「500 mV」「20 us」等の�
 
 引数: `scale_s_per_div`(必須)、`position_s`(任意)
 
-### `configure_trigger` — SAFE_WRITE / Phase 2
+### `configure_trigger` — SAFE_WRITE / Phase 2(種別の拡張は Phase M5)
 
-MVPはEdge Triggerのみ。
+トリガは**いつ取り込むか**を決める。AIから見た価値は「波形を眺めて異常を探す」代わりに**機器のハードウェアに探させる**点にあるため、種別の選択がそのまま調査能力になる。詳細な種別一覧と設定キーは**15章**。
 
-引数: `type`(現状 `"edge"` 固定)、`source`(`"CH1"`等)、`level_v`、`slope`(`"rising"` / `"falling"` / `"either"`)、`sweep_mode`(`"auto"` / `"normal"` / `"single"`)
+引数: `type`、`source`、`level_v`、`slope`、`sweep_mode`(`"auto"` / `"normal"` / `"single"`)、`holdoff_s`、`settings`(種別固有。15章)
+
+- **`type` を省略すると「今アクティブなトリガ」へ書く。** `:TRIGger:MODE?` を1本先読みして書き込み先を決める(M2のカーソルで確立した原則)。**MVPの「常に `:TRIGger:MODE EDGE` を送る」挙動からは変わっている**
+- `type` を指定した場合は `:TRIGger:MODE` を**先頭**に送ってから配下を書く
+- **別の種別に属する `settings` キーは送信前に拒否**する(`INVALID_PARAMETER`、送信ゼロ)
+- `source` / `level_v` / `slope` はサブツリーの項目キーと同名なので、`settings` へ入れても同じ結果になる(既存の呼び出しとの互換のため引数としても残している)
 
 ---
 
@@ -951,3 +956,48 @@ MATH演算の現在設定を読む。**書き込みは一切行わず**、表示
 - **`<type>` は1つずつ指定する形式**(ガイド3.17.8)なので、項目数 × 種別数のクエリを送る。応答は科学表記の単一値
 - **統計は項目ごとの有効化が前提**。先に `configure_measurement` の `statistics_items` で有効化する
 - 番兵値(±9.9E37 相当)は `null` に変換し、その項目の全種別が `null` なら `warnings` に載せる
+
+---
+
+## 15. トリガ種別(Phase M5)
+
+MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標準搭載の11種**を `configure_trigger` の `type` + `settings` で開放している(オプション必須の IIS / FlexRay / MIL-STD-1553 と、用途が限定的な Video は対象外)。
+
+新Toolは増やしていない。種別ごとの引数差は `configure_decode` と同じ `settings` オブジェクトで吸収する。
+
+### 種別と設定キー
+
+| `type` | 捕まえられる現象 | `settings` のキー |
+|---|---|---|
+| `edge` | しきい値の交差(基本) | `source` / `level_v` / `slope`(rising/falling/either) |
+| `pulse` | 幅が範囲外のパルス(**グリッチ**) | `source` / `level_v` / `polarity`(positive/negative)/ `when`(greater/less/between)/ `upper_width_s` / `lower_width_s` |
+| `slope` | 遷移時間が範囲外のエッジ | `source` / `polarity` / `when` / `upper_time_s` / `lower_time_s` / `window`(a/b/ab)/ `level_a_v` / `level_b_v` |
+| `timeout` | 一定時間エッジが来ない(**無応答・ハング**) | `source` / `level_v` / `slope` / `time_s` |
+| `duration` | 状態の継続時間が範囲外 | `source` / `level_v` / `pattern`(high/low/ignore)/ `when`(greater/less/between/outside)/ `upper_time_s` / `lower_time_s` |
+| `runt` | 振幅が足りないパルス(**信号品質**) | `source` / `polarity` / `when`(none/greater/less/between)/ `upper_width_s` / `lower_width_s` / `level_a_v` / `level_b_v` |
+| `window` | 電圧帯からの逸脱・進入 | `source` / `slope` / `position`(exit/enter/time)/ `time_s` / `level_a_v` / `level_b_v` |
+| `delay` | 2ソースのエッジ間時間が範囲外 | `source_a` / `slope_a` / `source_b` / `slope_b` / `when`(greater/less/between/outside)/ `upper_time_s` / `lower_time_s` / `level_a_v` / `level_b_v` |
+| `setup_hold` | **セットアップ/ホールド違反** | `data_source` / `clock_source` / `slope` / `pattern`(high/low)/ `when`(setup/hold/both)/ `setup_time_s` / `hold_time_s` / `data_level_v` / `clock_level_v` |
+| `pattern` | 複数chの論理状態の組み合わせ | `source` / `level_v` / `pattern`(high/low/ignore/rising/falling) |
+| `nth_edge` | アイドル後のN番目のエッジ | `source` / `level_v` / `slope` / `idle_time_s` / `edge_number`(1〜65535) |
+
+共通設定(種別に依らない): `sweep_mode`、`holdoff_s`(再アームまでの不感時間)。
+
+### `get_trigger` の返却
+
+- `type` — 現在の種別。**プロファイル未宣言の種別(オプション等)では機器の生トークンをそのまま返し、配下には1本も問い合わせない**(`get_decode_result` と同じ fail-safe)
+- `source` / `level_v` / `slope` — **現在の種別のサブツリーに同名の項目があるときだけ**入る。2ソース・2レベルの種別(`delay` / `setup_hold` / `slope` / `runt` / `window`)では `null` になり、値は `settings` 側にある
+- `settings` — 現在の種別のサブツリー項目一式
+- `sweep_mode` / `status` — 従来どおり
+
+**他の種別のサブツリーは1本も問い合わせない。**
+
+### 実装上の注意(ガイドの罠)
+
+1. **`:TRIGger:MODE` のトークンとサブツリー名が一致しない種別が2つある。**
+   - `window`: MODEは **`WINDow`(単数)**、サブツリーは **`:TRIGger:WINDows`(複数)**
+   - `setup_hold`: MODEは **`SETup`**、サブツリーは **`:TRIGger:SHOLd`**
+2. **`when` の値域は種別ごとに違う。** 共有の対応表にすると値域外のトークンを送ってしまうため、プロファイルの方言キーを種別ごとに分けている(`trigger_pulse_when` / `trigger_duration_when` / `trigger_runt_when` / `trigger_delay_types`)
+3. **同じ `POSitive` / `NEGative` でも意味が違う。** `polarity` はパルスの正負、`slope` はエッジの向き。方言も `trigger_polarities` と `trigger_edge_slopes` に分けている
+4. **`window` の両エッジは未対応。** ガイド3.27.16.2 の Range欄は `RFALI`(大文字I)、Remarks欄は `RFALl`(小文字L)で綴りが割れている。**実機で確定するまで宣言しない**(AGENTS.mdルール2)
+5. **プロファイルゲートは「宣言された種別」で行う。** モジュールの項目表にあるだけでは足りない — 実機未検証の機種へ `:TRIGger:MODE PULSe` を送ってしまう。DHO系プロファイルは `edge` のみ宣言している

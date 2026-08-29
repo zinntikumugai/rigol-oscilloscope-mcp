@@ -85,6 +85,89 @@ dialect:
     phase_rise_fall: RFPHase
     phase_fall_rise: FRPHase
     phase_fall_fall: FFPHase
+  # トリガ種別(ガイド3.27.1 の :TRIGger:MODE の値)。標準搭載のみ宣言する。
+  # **video はロードマップで低優先、iis / flexray / m1553 はライセンス必須の
+  # ため意図的に不在** — 不在がそのままゲート(4.2の原則)。
+  # シリアル系(rs232 / iic / spi / can / lin)はM5後半で追加する。
+  #
+  # **罠**: MODEのトークンとサブツリー名が一致しない種別が2つある。
+  #   window     → MODEは WINDow(単数)/ サブツリーは :TRIGger:WINDows(複数)
+  #   setup_hold → MODEは SETup     / サブツリーは :TRIGger:SHOLd
+  trigger_types:
+    edge: EDGE
+    pulse: PULSe
+    slope: SLOPe
+    pattern: PATTern
+    duration: DURation
+    timeout: TIMeout
+    runt: RUNT
+    window: WINDow
+    delay: DELay
+    setup_hold: SETup
+    nth_edge: NEDGe
+  # スロープ・極性(ガイド3.27.8.2 / 3.27.14.2 ほか)
+  trigger_slopes:
+    rising: POSitive
+    falling: NEGative
+    either: RFALl
+  # **同じ POSitive/NEGative でも意味が違うので表を分ける。**
+  # polarity はパルスの正負(正パルス / 負パルス)、slope はエッジの向き
+  trigger_polarities: # 3.27.9.2 / 3.27.10.2 / 3.27.15.2
+    positive: POSitive
+    negative: NEGative
+  trigger_edge_slopes: # 3.27.17.2 / 3.27.18.3 / 3.27.19.2(両エッジは持たない)
+    rising: POSitive
+    falling: NEGative
+  # **ガイドが割れているため両エッジを宣言しない**。3.27.16.2 の Range欄は
+  # `RFALI`(大文字I)、Remarks欄は `RFALl`(小文字L)。実機で確定するまで送らない
+  trigger_window_slopes:
+    rising: POSitive
+    falling: NEGative
+  # 条件(WHEN)。**種別ごとに値域が違うので表を分ける**(共有すると値域外を送る)
+  trigger_pulse_when: # 3.27.9.3 / 3.27.10.3
+    greater: GREater
+    less: LESS
+    between: GLESs
+  trigger_duration_when: # 3.27.13.3
+    greater: GREater
+    less: LESS
+    between: GLESs
+    outside: UNGLess
+  trigger_runt_when: # 3.27.15.3
+    none: NONE
+    greater: GREater
+    less: LESS
+    between: GLESs
+  trigger_delay_types: # 3.27.17.5
+    greater: GREater
+    less: LESS
+    between: GLESs
+    outside: GOUT
+  trigger_slope_windows: # 3.27.10.6
+    a: TA
+    b: TB
+    ab: TAB
+  trigger_pattern_levels: # 3.27.12.1
+    high: H
+    low: L
+    ignore: X
+    rising: R
+    falling: F
+  trigger_duration_types: # 3.27.13.2
+    high: H
+    low: L
+    ignore: X
+  trigger_window_positions: # 3.27.16.3
+    exit: EXIT
+    enter: ENTer
+    time: TIME
+  trigger_shold_types: # 3.27.18.5
+    setup: SETup
+    hold: HOLD
+    both: SETHold
+  trigger_shold_patterns: # 3.27.18.4
+    high: H
+    low: L
   # 測定の前提設定と統計(ガイド3.17.6/3.17.8/3.17.17/3.17.19/3.17.28-30)。
   # 未宣言なら configure_measurement / get_measurement_statistics は送信ゼロで
   # UNSUPPORTED_FEATURE。DHO系は実機未検証のため意図的に不在。

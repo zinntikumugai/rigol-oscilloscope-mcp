@@ -488,22 +488,75 @@ def create_server(
 
     @_register
     def configure_trigger(
+        type: str | None = None,
         source: str | None = None,
         level_v: float | None = None,
         slope: str | None = None,
         sweep_mode: str | None = None,
+        holdoff_s: float | None = None,
+        settings: dict | None = None,
     ) -> dict:
-        """Configure the edge trigger. Omitted items are left unchanged.
+        """Configure the trigger. Omitted items are left unchanged.
 
-        source is "CH1" to "CH4", slope is rising / falling / either, and
-        sweep_mode is auto / normal / single. Specify at least one item to change.
+        The trigger decides *when* the scope captures, so use it to make the
+        instrument hunt for a problem instead of eyeballing waveforms: catch a
+        glitch, a missing response, a timing violation. Read the captured result
+        with measure / capture_waveform afterwards.
+
+        type selects what to hunt for (availability is model-dependent, see
+        get_capabilities):
+        - edge: a level crossing. The default and the usual starting point
+        - pulse: pulses whose width is out of range (glitches)
+        - slope: edges whose transition time is out of range
+        - timeout: no edge for a while (a dead or hung signal)
+        - duration: a state that lasts too long or not long enough
+        - runt: a pulse that fails to reach full amplitude (signal integrity)
+        - window: the signal leaving or entering a voltage band
+        - delay: the gap between edges on two sources being out of range
+        - setup_hold: setup or hold time violations between data and clock
+        - pattern: a logic combination across channels
+        - nth_edge: the Nth edge after an idle period
+
+        **Omit type to write into the trigger that is active right now** (the
+        current type is read back first). Passing settings that belong to a
+        different type is rejected before anything is sent.
+
+        source is "CH1"-"CH4", "EXT", "EXT5", "ACLINE" or "D0"-"D15";
+        sweep_mode is auto / normal / single; holdoff_s is the rearm dead time.
+        level_v and slope apply to the types that have a single source and level.
+
+        settings keys per type (all optional):
+        - edge: source, level_v, slope (rising/falling/either)
+        - pulse: source, level_v, polarity (positive/negative), when
+          (greater/less/between), upper_width_s, lower_width_s. Example:
+          {"polarity": "positive", "when": "less", "upper_width_s": 1e-7}
+        - slope: source, polarity, when, upper_time_s, lower_time_s, window
+          (a/b/ab), level_a_v, level_b_v
+        - timeout: source, level_v, slope, time_s
+        - duration: source, level_v, pattern (high/low/ignore), when
+          (greater/less/between/outside), upper_time_s, lower_time_s
+        - runt: source, polarity, when (none/greater/less/between),
+          upper_width_s, lower_width_s, level_a_v, level_b_v
+        - window: source, slope (rising/falling), position (exit/enter/time),
+          time_s, level_a_v, level_b_v
+        - delay: source_a, slope_a (rising/falling), source_b, slope_b, when
+          (greater/less/between/outside), upper_time_s, lower_time_s,
+          level_a_v, level_b_v
+        - setup_hold: data_source, clock_source, slope, pattern (high/low),
+          when (setup/hold/both), setup_time_s, hold_time_s, data_level_v,
+          clock_level_v
+        - pattern: source, level_v, pattern (high/low/ignore/rising/falling)
+        - nth_edge: source, level_v, slope, idle_time_s, edge_number
         """
         return control.configure_trigger(
             manager.require_scope(),
+            type=type,
             source=source,
             level_v=level_v,
             slope=slope,
             sweep_mode=sweep_mode,
+            holdoff_s=holdoff_s,
+            settings=settings,
         )
 
     # -- 測定の前提設定と統計(tools.md 14章 / Phase M4)---------------------

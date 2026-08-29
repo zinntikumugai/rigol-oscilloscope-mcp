@@ -156,6 +156,121 @@ BWLIMIT_OFF = "OFF"
 IMPEDANCE_UNKNOWN = "unknown"
 
 DEFAULT_ANALOG_CHANNELS = 4
+#: トリガ種別ごとの項目表(ガイド3.27)。`(意味的キー, SCPIパス, 種別)`。
+#: **キー名が `source` / `level_v` / `slope` のものは TriggerState の最上位にも出す**
+#: (既存の返却形を保つため。2ソース・2レベルの種別は最上位が None になる)。
+_TRIGGER_EDGE_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("slope", ":SLOPe", ("enum", "trigger_slopes", "the edge trigger slope")),
+)
+_TRIGGER_PULSE_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("polarity", ":POLarity", ("enum", "trigger_polarities", "the pulse polarity")),
+    ("when", ":WHEN", ("enum", "trigger_pulse_when", "the pulse width condition")),
+    ("upper_width_s", ":UWIDth", "number"),
+    ("lower_width_s", ":LWIDth", "number"),
+)
+_TRIGGER_SLOPE_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("polarity", ":POLarity", ("enum", "trigger_polarities", "the slope polarity")),
+    ("when", ":WHEN", ("enum", "trigger_pulse_when", "the slope time condition")),
+    ("upper_time_s", ":TUPPer", "number"),
+    ("lower_time_s", ":TLOWer", "number"),
+    ("window", ":WINDow", ("enum", "trigger_slope_windows", "the slope level window")),
+    ("level_a_v", ":ALEVel", "number"),
+    ("level_b_v", ":BLEVel", "number"),
+)
+_TRIGGER_PATTERN_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("pattern", ":PATTern", ("enum", "trigger_pattern_levels", "the pattern level")),
+)
+_TRIGGER_DURATION_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("pattern", ":TYPE", ("enum", "trigger_duration_types", "the duration pattern")),
+    ("when", ":WHEN", ("enum", "trigger_duration_when", "the duration condition")),
+    ("upper_time_s", ":TUPPer", "number"),
+    ("lower_time_s", ":TLOWer", "number"),
+)
+_TRIGGER_TIMEOUT_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("slope", ":SLOPe", ("enum", "trigger_slopes", "the timeout edge")),
+    ("time_s", ":TIME", "number"),
+)
+_TRIGGER_RUNT_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("polarity", ":POLarity", ("enum", "trigger_polarities", "the runt polarity")),
+    ("when", ":WHEN", ("enum", "trigger_runt_when", "the runt width condition")),
+    ("upper_width_s", ":WUPPer", "number"),
+    ("lower_width_s", ":WLOWer", "number"),
+    ("level_a_v", ":ALEVel", "number"),
+    ("level_b_v", ":BLEVel", "number"),
+)
+#: **サブツリーは `:WINDows`(複数)。`:TRIGger:MODE` の値は `WINDow`(単数)**
+_TRIGGER_WINDOW_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("slope", ":SLOPe", ("enum", "trigger_window_slopes", "the window edge")),
+    ("position", ":POSition", ("enum", "trigger_window_positions", "the window trigger position")),
+    ("time_s", ":TIME", "number"),
+    ("level_a_v", ":ALEVel", "number"),
+    ("level_b_v", ":BLEVel", "number"),
+)
+_TRIGGER_DELAY_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source_a", ":SA", "tsource"),
+    ("slope_a", ":ASLop", ("enum", "trigger_edge_slopes", "the source A edge")),
+    ("source_b", ":SB", "tsource"),
+    ("slope_b", ":BSLop", ("enum", "trigger_edge_slopes", "the source B edge")),
+    ("when", ":TYPE", ("enum", "trigger_delay_types", "the delay condition")),
+    ("upper_time_s", ":TUPPer", "number"),
+    ("lower_time_s", ":TLOWer", "number"),
+    ("level_a_v", ":ALEVel", "number"),
+    ("level_b_v", ":BLEVel", "number"),
+)
+#: **サブツリーは `:SHOLd`。`:TRIGger:MODE` の値は `SETup`**
+_TRIGGER_SHOLD_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("data_source", ":DSRC", "tsource"),
+    ("clock_source", ":CSRC", "tsource"),
+    ("slope", ":SLOPe", ("enum", "trigger_edge_slopes", "the clock edge")),
+    ("pattern", ":PATTern", ("enum", "trigger_shold_patterns", "the data pattern")),
+    ("when", ":TYPE", ("enum", "trigger_shold_types", "which time is checked")),
+    ("setup_time_s", ":STIMe", "number"),
+    ("hold_time_s", ":HTIMe", "number"),
+    ("data_level_v", ":DLEVel", "number"),
+    ("clock_level_v", ":CLEVel", "number"),
+)
+_TRIGGER_NEDGE_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("slope", ":SLOPe", ("enum", "trigger_edge_slopes", "the counted edge")),
+    ("idle_time_s", ":IDLE", "number"),
+    ("edge_number", ":EDGE", ("int", 1, 65535)),
+)
+#: 種別 → (SCPI接頭辞, 項目表)。**この表に無い種別は扱わない**(不在がゲート)
+_TRIGGER_SUBTREES: dict[str, tuple[str, tuple[tuple[str, str, object], ...]]] = {
+    "edge": (":TRIGger:EDGE", _TRIGGER_EDGE_ITEMS),
+    "pulse": (":TRIGger:PULSe", _TRIGGER_PULSE_ITEMS),
+    "slope": (":TRIGger:SLOPe", _TRIGGER_SLOPE_ITEMS),
+    "pattern": (":TRIGger:PATTern", _TRIGGER_PATTERN_ITEMS),
+    "duration": (":TRIGger:DURation", _TRIGGER_DURATION_ITEMS),
+    "timeout": (":TRIGger:TIMeout", _TRIGGER_TIMEOUT_ITEMS),
+    "runt": (":TRIGger:RUNT", _TRIGGER_RUNT_ITEMS),
+    "window": (":TRIGger:WINDows", _TRIGGER_WINDOW_ITEMS),
+    "delay": (":TRIGger:DELay", _TRIGGER_DELAY_ITEMS),
+    "setup_hold": (":TRIGger:SHOLd", _TRIGGER_SHOLD_ITEMS),
+    "nth_edge": (":TRIGger:NEDGe", _TRIGGER_NEDGE_ITEMS),
+}
+#: 種別に依らない共通設定(サブツリーを持たない)
+_TRIGGER_COMMON_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("sweep_mode", ":SWEep", "sweep"),
+    ("holdoff_s", ":HOLDoff", "number"),
+)
+#: TriggerState の最上位へ昇格させる項目キー
+_TRIGGER_TOP_LEVEL_KEYS = ("source", "level_v", "slope")
+
 # :TRIGger:STATus? の生値がこれなら停止中(TD / WAIT / AUTO 等は動作中)
 STOPPED_TRIGGER_STATUS = "STOP"
 PREAMBLE_FIELDS = 10
@@ -743,15 +858,67 @@ class ScopeDriver:
             memory_depth=_optional_number(query(":ACQuire:MDEPth?")),
         )
 
+    def _declared_trigger_types(self) -> dict[str, str]:
+        """このプロファイルが宣言する 種別名 → `:TRIGger:MODE` の値。
+
+        宣言の不在がそのままゲート(オプション必須の種別は載せない)。
+        項目表(`_TRIGGER_SUBTREES`)を持たない種別は宣言されていても扱わない。
+        **未宣言なら空dictを返す** — 読み取り(`get_trigger`)は方言なしでも
+        MVPから動いており、そこを壊さないため。書き込み側だけがゲートする。
+        """
+        declared = self.profile.dialect.get("trigger_types")
+        if not isinstance(declared, dict):
+            return {}
+        return {n: v for n, v in declared.items() if n in _TRIGGER_SUBTREES}
+
+    def _writable_trigger_types(self) -> dict[str, str]:
+        """書き込みに使う種別表。未宣言なら1コマンドも送らずに失敗する。"""
+        types = self._declared_trigger_types()
+        if not types:
+            raise _unsupported(
+                "this model's profile does not declare any trigger type",
+                {"dialect": "trigger_types", "profile": self.profile.name},
+            )
+        return types
+
+    def _trigger_type(self) -> str:
+        """機器の現在のトリガ種別(`:TRIGger:MODE?` を1本読む)。
+
+        宣言に無いトークン(オプション種別など)は**そのまま返す**。呼び出し側は
+        サブツリーを引けないので配下に触れない(get_decode_config と同じ fail-safe)。
+        `edge` は rigol-generic が宣言しているので全機種で解決する。
+        """
+        raw = self.session.query(":TRIGger:MODE?").strip()
+        types = self._declared_trigger_types()
+        _, from_scpi = profile_enum(tuple(types.items()))
+        try:
+            return from_scpi(raw)
+        except ScopeError:
+            return raw.upper()
+
     def get_trigger(self) -> TriggerState:
+        """現在のトリガ種別のサブツリーだけを読む。
+
+        **他の種別のサブツリーは1本も問い合わせない**(M2のカーソルで確立した
+        「今のモードのサブツリーだけを突く」原則)。
+        """
         query = self.session.query
+        trigger_type = self._trigger_type()
+        settings: dict[str, object] = {}
+        subtree = _TRIGGER_SUBTREES.get(trigger_type)
+        if subtree is not None:
+            prefix, items = subtree
+            for key, path, kind in items:
+                _, from_scpi = self._converter(kind, 0)
+                settings[key] = from_scpi(query(f"{prefix}{path}?"))
         return TriggerState(
-            type="edge",
-            source=self._normalize_source(query(":TRIGger:EDGE:SOURce?")),
-            level_v=parse_nr3(query(":TRIGger:EDGE:LEVel?")),
-            slope=from_scpi_slope(query(":TRIGger:EDGE:SLOPe?")),
+            type=trigger_type,
+            source=settings.get("source"),
+            level_v=settings.get("level_v"),
+            slope=settings.get("slope"),
             sweep_mode=from_scpi_sweep(query(":TRIGger:SWEep?")),
             status=self.get_trigger_status(),
+            settings=settings,
         )
 
     def get_trigger_status(self) -> str:
@@ -1147,31 +1314,80 @@ class ScopeDriver:
 
     # -- トリガ -----------------------------------------------------------
 
-    def set_trigger_edge(
+    def configure_trigger(
         self,
+        type: str | None = None,
         source: str | None = None,
         level_v: float | None = None,
         slope: str | None = None,
         sweep_mode: str | None = None,
-    ) -> TriggerState:
-        """エッジトリガを設定する。None の項目は変更しない。
+        holdoff_s: float | None = None,
+        settings: dict | None = None,
+    ) -> dict:
+        """トリガを設定する。None の項目は変更しない。
 
-        引数の検証を全て済ませてから送信する(途中で失敗して機器が中途半端な
-        状態になるのを避ける)。
+        `type` を省略すると `:TRIGger:MODE?` を1本読み、**今の種別のサブツリー**
+        へ書く(M2のカーソルで確立した原則)。サブツリー違いのキーは送信前に拒否
+        する。`type` を指定した場合は `:TRIGger:MODE` を**先頭**に送ってから配下を
+        書く(切り替えてから書かないと別種別の設定を触ることになる)。
+
+        `source` / `level_v` / `slope` はサブツリーの項目キーと同名なので、
+        `settings` に入れても同じ結果になる(既存の呼び出しとの互換のため残す)。
         """
-        commands: list[str] = [":TRIGger:MODE EDGE"]
-        if source is not None:
-            commands.append(f":TRIGger:EDGE:SOURce {self._trigger_source(source)}")
-        if level_v is not None:
-            commands.append(f":TRIGger:EDGE:LEVel {format_number(level_v)}")
-        if slope is not None:
-            commands.append(f":TRIGger:EDGE:SLOPe {to_scpi_slope(slope)}")
-        if sweep_mode is not None:
-            commands.append(f":TRIGger:SWEep {to_scpi_sweep(sweep_mode)}")
+        types = self._writable_trigger_types()
+        to_scpi_type, _ = profile_enum(tuple(types.items()))
 
-        for command in commands:
-            self.session.write_checked(command)
-        return self.get_trigger()
+        merged: dict = dict(settings or {})
+        for key, value in (("source", source), ("level_v", level_v), ("slope", slope)):
+            if value is not None:
+                merged[key] = value
+
+        subtree_name = type if type is not None else self._trigger_type()
+        # **ゲートは「プロファイルが宣言した種別」で行う。** モジュールの項目表
+        # (_TRIGGER_SUBTREES)にあるだけでは足りない — 実機未検証の機種へ
+        # `:TRIGger:MODE PULSe` を送ってしまう(AGENTS.mdルール2)
+        subtree = _TRIGGER_SUBTREES.get(subtree_name) if subtree_name in types else None
+        if subtree is None:
+            raise _unsupported(
+                f"trigger type '{subtree_name}' is unverified in this model's profile",
+                {
+                    "trigger_type": subtree_name,
+                    "profile": self.profile.name,
+                    "supported": sorted(types),
+                },
+            )
+        prefix, items = subtree
+        allowed = [key for key, _, _ in items]
+        unknown = sorted(key for key in merged if key not in allowed)
+        if unknown:
+            raise _invalid(
+                f"the {subtree_name} trigger does not have these settings: {unknown}",
+                {"type": subtree_name, "unknown": unknown, "allowed": allowed},
+            )
+
+        # 検証を全て済ませてから送る(1つでも不正なら1コマンドも送らない)
+        mode_command = (
+            f":TRIGger:MODE {to_scpi_type(type, 'type')}" if type is not None else None
+        )
+        plan = self._command_plan(prefix, 0, items, merged)
+        common = self._command_plan(
+            ":TRIGger",
+            0,
+            _TRIGGER_COMMON_ITEMS,
+            {"sweep_mode": sweep_mode, "holdoff_s": holdoff_s},
+        )
+
+        applied: dict[str, object] = {}
+        if mode_command is not None:
+            self.session.write_checked(mode_command)
+            applied["type"] = type
+        for key, set_cmd, query, from_scpi in plan + common:
+            applied[key] = from_scpi(self.session.set_and_verify(set_cmd, query))
+        return applied
+
+    def get_trigger_position(self) -> float | None:
+        """取得メモリ内のトリガ発生位置(ガイド3.27.7。読み取り専用)。"""
+        return _readout(self.session.query(":TRIGger:POSition?"))
 
     # -- シリアルデコード(tools.md 6章)-----------------------------------
 
@@ -2120,6 +2336,17 @@ class ScopeDriver:
             return (lambda value, key: _afg_number(key, value)), parse_nr3
         if kind == "bool":
             return _math_bool, parse_bool
+        if kind == "tsource":
+            # トリガのソースは CH / EXT / EXT5 / ACLINE / D0-D15(ガイド3.27.8.1)
+            return (
+                (lambda value, key: self._trigger_source(value)),
+                (lambda text: self._normalize_source(text)),
+            )
+        if kind == "sweep":
+            return (
+                (lambda value, key: to_scpi_sweep(value)),
+                from_scpi_sweep,
+            )
         if kind == "csource":
             return (
                 (lambda value, key: self._cursor_source(value, key)),

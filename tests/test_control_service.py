@@ -643,7 +643,7 @@ def test_configure_trigger_sets_source_and_sweep(
     result = service.configure_trigger(driver, source="CH2", sweep_mode="normal")
 
     assert result["applied"] == {"source": "CH2", "sweep_mode": "normal"}
-    assert scope.trigger["source"] == "CHAN2"
+    assert scope.trigger_subtrees["EDGE"]["source"] == "CHAN2"
     assert scope.trigger["sweep"] == "NORM"
 
 

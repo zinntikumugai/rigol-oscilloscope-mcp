@@ -48,12 +48,19 @@ class TimebaseState:
 class TriggerState:
     """トリガ設定と状態。"""
 
-    type: str  # "edge"
-    source: str
-    level_v: float
-    slope: str  # "rising" | "falling" | "either"
+    #: 種別(`"edge"` / `"pulse"` / …)。プロファイル未宣言の種別(オプション等)
+    #: では機器の生トークンをそのまま入れる
+    type: str
+    #: 以下3つは**現在の種別のサブツリーに同名の項目があるときだけ**入る。
+    #: 2ソース・2レベルの種別(delay / setup_hold 等)では None になり、
+    #: 値は `settings` 側にある
+    source: str | None
+    level_v: float | None
+    slope: str | None  # "rising" | "falling" | "either"
     sweep_mode: str  # "auto" | "normal" | "single"
     status: str  # :TRIGger:STATus? の生値(例 "TD")
+    #: 現在の種別のサブツリー項目一式(上の3つもここに入る)
+    settings: dict
 
 
 @dataclass(frozen=True)

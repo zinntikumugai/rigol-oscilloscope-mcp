@@ -681,43 +681,46 @@ def test_set_timebase_position(driver: ScopeDriver) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_set_trigger_edge_all_fields(driver: ScopeDriver, scope: FakeScope) -> None:
-    state = driver.set_trigger_edge(
-        source="CH2", level_v=1.25, slope="falling", sweep_mode="normal"
+def test_configure_trigger_edge_all_fields(driver: ScopeDriver, scope: FakeScope) -> None:
+    applied = driver.configure_trigger(
+        type="edge", source="CH2", level_v=1.25, slope="falling", sweep_mode="normal"
     )
 
-    assert state.source == "CH2"
-    assert state.level_v == pytest.approx(1.25)
-    assert state.slope == "falling"
-    assert state.sweep_mode == "normal"
+    assert applied["source"] == "CH2"
+    assert applied["level_v"] == pytest.approx(1.25)
+    assert applied["slope"] == "falling"
+    assert applied["sweep_mode"] == "normal"
     assert ":TRIGger:MODE EDGE" in scope.command_log
     assert ":TRIGger:EDGE:SOURce CHANnel2" in scope.command_log
     assert ":TRIGger:EDGE:SLOPe NEGative" in scope.command_log
     assert ":TRIGger:SWEep NORMal" in scope.command_log
 
 
-def test_set_trigger_edge_omits_unspecified(driver: ScopeDriver, scope: FakeScope) -> None:
-    """未指定の項目には**書き込まない**(最後の read-back での問い合わせは除く)。"""
-    driver.set_trigger_edge(level_v=0.5)
+def test_configure_trigger_omits_unspecified(driver: ScopeDriver, scope: FakeScope) -> None:
+    """未指定の項目には**書き込まない**(最後の read-back での問い合わせは除く)。
+
+    `type` を省略しているので `:TRIGger:MODE` も送らない(今の種別へ書く)。
+    """
+    driver.configure_trigger(level_v=0.5)
 
     writes = [c for c in scope.command_log if "?" not in c]
-    assert writes == [":TRIGger:MODE EDGE", ":TRIGger:EDGE:LEVel 0.5"]
-    assert scope.trigger["source"] == "CHAN1"
-    assert scope.trigger["slope"] == "POS"
+    assert writes == [":TRIGger:EDGE:LEVel 0.5"]
+    assert scope.trigger_subtrees["EDGE"]["source"] == "CHAN1"
+    assert scope.trigger_subtrees["EDGE"]["slope"] == "POS"
     assert scope.trigger["sweep"] == "AUTO"
 
 
-def test_set_trigger_edge_rejects_bad_slope(driver: ScopeDriver, scope: FakeScope) -> None:
+def test_configure_trigger_rejects_bad_slope(driver: ScopeDriver, scope: FakeScope) -> None:
     with pytest.raises(ScopeError) as excinfo:
-        driver.set_trigger_edge(slope="sideways")
+        driver.configure_trigger(type="edge", slope="sideways")
 
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
     assert scope.command_log == []
 
 
-def test_set_trigger_edge_rejects_bad_source(driver: ScopeDriver, scope: FakeScope) -> None:
+def test_configure_trigger_rejects_bad_source(driver: ScopeDriver, scope: FakeScope) -> None:
     with pytest.raises(ScopeError) as excinfo:
-        driver.set_trigger_edge(source="CH9")
+        driver.configure_trigger(type="edge", source="CH9")
 
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
     assert scope.command_log == []
@@ -831,20 +834,21 @@ def test_read_back_source_is_writable(driver: ScopeDriver, raw: str) -> None:
     driver._trigger_source(driver._normalize_source(raw))
 
 
-def test_set_trigger_edge_roundtrips_channel_source(
+def test_configure_trigger_roundtrips_channel_source(
     driver: ScopeDriver, scope: FakeScope
 ) -> None:
     """get_trigger が返した source をそのまま書き戻せる(FakeScopeはCH系のみ受理)。"""
     state = driver.get_trigger()
 
-    assert driver.set_trigger_edge(source=state.source).source == state.source
+    applied = driver.configure_trigger(source=state.source)
+    assert applied["source"] == state.source
     assert ":TRIGger:EDGE:SOURce CHANnel1" in scope.command_log
 
 
-def test_set_trigger_edge_sends_ext_source(driver: ScopeDriver, scope: FakeScope) -> None:
+def test_configure_trigger_sends_ext_source(driver: ScopeDriver, scope: FakeScope) -> None:
     """EXT はチャンネル数検証を通さず、正規化形のまま送る。"""
     with pytest.raises(ScopeError):  # FakeScope は EXT 書き込みを受理しない
-        driver.set_trigger_edge(source="ext")
+        driver.configure_trigger(source="ext")
 
     assert ":TRIGger:EDGE:SOURce EXT" in scope.command_log
 
@@ -3848,3 +3852,133 @@ def test_get_measurement_statistics_dual_source_needs_channel_b(
 
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
     assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# トリガ種別の開放(M5)
+# --------------------------------------------------------------------------
+
+
+def test_configure_trigger_sends_mode_first(driver: ScopeDriver, scope: FakeScope) -> None:
+    """種別を指定したら `:TRIGger:MODE` を先頭に送る(サブツリーを切り替えてから書く)。"""
+    driver.configure_trigger(
+        type="pulse", settings={"polarity": "positive", "upper_width_s": 1e-6}
+    )
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [
+        ":TRIGger:MODE PULSe",
+        ":TRIGger:PULSe:POLarity POSitive",
+        ":TRIGger:PULSe:UWIDth 1e-06",
+    ]
+
+
+def test_configure_trigger_window_mode_token_is_singular(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """**罠**: MODEは `WINDow`(単数)だがサブツリーは `:WINDows`(複数)。"""
+    driver.configure_trigger(type="window", settings={"position": "enter"})
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [":TRIGger:MODE WINDow", ":TRIGger:WINDows:POSition ENTer"]
+
+
+def test_configure_trigger_setup_hold_mode_token_differs_from_subtree(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """**罠**: MODEは `SETup` だがサブツリーは `:SHOLd`。"""
+    driver.configure_trigger(type="setup_hold", settings={"pattern": "high"})
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [":TRIGger:MODE SETup", ":TRIGger:SHOLd:PATTern H"]
+
+
+def test_configure_trigger_without_type_reads_current_mode(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`type` 省略時は `:TRIGger:MODE?` を1本読んでから書き込み先を決める。"""
+    driver.configure_trigger(type="pulse")
+    scope.command_log.clear()
+
+    driver.configure_trigger(settings={"polarity": "negative"})
+
+    assert ":TRIGger:MODE?" in scope.command_log
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [":TRIGger:PULSe:POLarity NEGative"]
+
+
+def test_configure_trigger_rejects_settings_from_another_subtree(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_trigger(type="pulse", settings={"position": "enter"})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert not [c for c in scope.command_log if "?" not in c]
+
+
+def test_configure_trigger_edge_keeps_the_legacy_arguments(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """既存の呼び出し(source / level_v / slope / sweep_mode)はそのまま通る。"""
+    driver.configure_trigger(
+        type="edge", source="CH2", level_v=0.5, slope="falling", sweep_mode="normal"
+    )
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [
+        ":TRIGger:MODE EDGE",
+        ":TRIGger:EDGE:SOURce CHANnel2",
+        ":TRIGger:EDGE:LEVel 0.5",
+        ":TRIGger:EDGE:SLOPe NEGative",
+        ":TRIGger:SWEep NORMal",
+    ]
+
+
+def test_configure_trigger_holdoff_is_a_common_setting(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_trigger(holdoff_s=1e-6)
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [":TRIGger:HOLDoff 1e-06"]
+
+
+def test_get_trigger_reports_the_active_type_and_settings(driver: ScopeDriver) -> None:
+    driver.configure_trigger(type="timeout", settings={"time_s": 2e-6})
+
+    state = driver.get_trigger()
+
+    assert state.type == "timeout"
+    assert state.settings["time_s"] == pytest.approx(2e-6)
+    # 共通名の項目は最上位にも出す(既存の返却形を保つ)
+    assert state.source is not None
+
+
+def test_get_trigger_does_not_touch_other_subtrees(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_trigger(type="pulse")
+    scope.command_log.clear()
+
+    driver.get_trigger()
+
+    assert not any(":TRIGger:EDGE" in c for c in scope.command_log)
+
+
+def test_configure_trigger_unsupported_without_profile_dialect(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """トリガ種別の方言が未宣言の機種では送信ゼロ。"""
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.configure_trigger(type="pulse")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_window_slope_does_not_declare_the_ambiguous_token(driver: ScopeDriver) -> None:
+    """ガイドが `RFALI` / `RFALl` で割れているため両エッジは宣言しない。"""
+    slopes = driver.profile.dialect["trigger_window_slopes"]
+
+    assert set(slopes) == {"rising", "falling"}

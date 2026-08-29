@@ -229,7 +229,117 @@ _OPTION_TYPES = (
 _COUPLINGS = ("DC", "AC", "GND")
 _BWLIMITS = ("OFF", "20M", "100M", "250M")
 _IMPEDANCES = ("OMEG", "FIFTy")
-_TRIGGER_MODES = ("EDGE",)
+#: `:TRIGger:MODE` の値(ガイド3.27.1)。標準搭載11種のみ。
+#: **罠**: window は MODEが `WINDow`(単数)/ サブツリーは `:WINDows`(複数)、
+#: setup&hold は MODEが `SETup` / サブツリーは `:SHOLd`。
+_TRIGGER_MODES = (
+    "EDGE",
+    "PULSe",
+    "SLOPe",
+    "PATTern",
+    "DURation",
+    "TIMeout",
+    "RUNT",
+    "WINDow",
+    "DELay",
+    "SETup",
+    "NEDGe",
+)
+_TRIGGER_SOURCES = tuple(f"CHANnel{n}" for n in range(1, 5)) + tuple(
+    f"D{n}" for n in range(16)
+)
+_POLARITIES = ("POSitive", "NEGative")
+#: サブツリーのニモニック → 属性表。`:TRIGger:MODE` の値とは別物なので分けている
+_TRIGGER_SUBTREE_PROPS: dict[str, tuple[tuple[str, str, object, object], ...]] = {
+    "EDGE": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        ("slope", "SLOPe", ("POSitive", "NEGative", "RFALl"), "POS"),
+    ),
+    "PULSe": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        ("polarity", "POLarity", _POLARITIES, "POS"),
+        ("when", "WHEN", ("GREater", "LESS", "GLESs"), "GRE"),
+        ("uwidth", "UWIDth", "nr3", 2.0e-6),
+        ("lwidth", "LWIDth", "nr3", 1.0e-6),
+    ),
+    "SLOPe": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("polarity", "POLarity", _POLARITIES, "POS"),
+        ("when", "WHEN", ("GREater", "LESS", "GLESs"), "GRE"),
+        ("tupper", "TUPPer", "nr3", 1.0e-6),
+        ("tlower", "TLOWer", "nr3", 1.0e-6),
+        ("window", "WINDow", ("TA", "TB", "TAB"), "TA"),
+        ("alevel", "ALEVel", "nr3", 0.1),
+        ("blevel", "BLEVel", "nr3", -0.1),
+    ),
+    "PATTern": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        ("pattern", "PATTern", ("H", "L", "X", "R", "F"), "H"),
+    ),
+    "DURation": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        ("type", "TYPE", ("H", "L", "X"), "H"),
+        ("when", "WHEN", ("GREater", "LESS", "GLESs", "UNGLess"), "GRE"),
+        ("tupper", "TUPPer", "nr3", 2.0e-6),
+        ("tlower", "TLOWer", "nr3", 1.0e-6),
+    ),
+    "TIMeout": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        ("slope", "SLOPe", ("POSitive", "NEGative", "RFALl"), "POS"),
+        ("time", "TIME", "nr3", 1.0e-6),
+    ),
+    "RUNT": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("polarity", "POLarity", _POLARITIES, "POS"),
+        ("when", "WHEN", ("NONE", "GREater", "LESS", "GLESs"), "NONE"),
+        ("wupper", "WUPPer", "nr3", 2.0e-6),
+        ("wlower", "WLOWer", "nr3", 1.0e-6),
+        ("alevel", "ALEVel", "nr3", 0.1),
+        ("blevel", "BLEVel", "nr3", -0.1),
+    ),
+    "WINDows": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("slope", "SLOPe", ("POSitive", "NEGative"), "POS"),
+        ("position", "POSition", ("EXIT", "ENTer", "TIME"), "EXIT"),
+        ("time", "TIME", "nr3", 1.0e-6),
+        ("alevel", "ALEVel", "nr3", 0.1),
+        ("blevel", "BLEVel", "nr3", -0.1),
+    ),
+    "DELay": (
+        ("sa", "SA", _TRIGGER_SOURCES, "CHAN1"),
+        ("aslop", "ASLop", _POLARITIES, "POS"),
+        ("sb", "SB", _TRIGGER_SOURCES, "CHAN2"),
+        ("bslop", "BSLop", _POLARITIES, "POS"),
+        ("type", "TYPE", ("GREater", "LESS", "GLESs", "GOUT"), "GRE"),
+        ("tupper", "TUPPer", "nr3", 2.0e-6),
+        ("tlower", "TLOWer", "nr3", 1.0e-6),
+        ("alevel", "ALEVel", "nr3", 0.0),
+        ("blevel", "BLEVel", "nr3", 0.0),
+    ),
+    "SHOLd": (
+        ("dsrc", "DSRC", _TRIGGER_SOURCES, "CHAN1"),
+        ("csrc", "CSRC", _TRIGGER_SOURCES, "CHAN2"),
+        ("slope", "SLOPe", _POLARITIES, "POS"),
+        ("pattern", "PATTern", ("H", "L"), "H"),
+        ("type", "TYPE", ("SETup", "HOLD", "SETHold"), "SET"),
+        ("stime", "STIMe", "nr3", 2.0e-6),
+        ("htime", "HTIMe", "nr3", 1.0e-6),
+        ("dlevel", "DLEVel", "nr3", 0.0),
+        ("clevel", "CLEVel", "nr3", 0.0),
+    ),
+    "NEDGe": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        ("slope", "SLOPe", _POLARITIES, "POS"),
+        ("idle", "IDLE", "nr3", 1.0e-6),
+        ("edge", "EDGE", ("int", 1, 65535), 1),
+    ),
+}
 _SLOPES = ("POSitive", "NEGative", "RFALl")
 _SWEEPS = ("AUTO", "NORMal", "SINGle")
 _WAVEFORM_MODES = ("NORMal", "MAXimum", "RAW")
@@ -783,10 +893,14 @@ class FakeScope:
         self.timebase: dict[str, float] = {"scale": 2.0e-4, "offset": 0.0}
         self.trigger: dict[str, object] = {
             "mode": "EDGE",
-            "source": "CHAN1",
-            "level": 0.0,
-            "slope": "POS",
             "sweep": "AUTO",
+            "holdoff": 8.0e-9,
+            "position": 0.0,
+        }
+        #: 種別ごとのサブツリー状態(ニモニック → 属性辞書)
+        self.trigger_subtrees: dict[str, dict] = {
+            name: {key: default for key, _, _, default in props}
+            for name, props in _TRIGGER_SUBTREE_PROPS.items()
         }
         self.acquisition = "RUN"
         self.waveform: dict[str, object] = {
@@ -894,7 +1008,7 @@ class FakeScope:
                 rf":?{_mn('ACQuire')}:{_mn('MDEPth')}\?",
                 lambda m: MDEPTH.encode("ascii"),
             ),
-            # トリガ
+            # トリガ(共通)。種別ごとのサブツリーは _trigger_entries() が持つ
             (
                 rf"{trigger}:{_mn('MODE')}\?",
                 lambda m: str(self.trigger["mode"]).encode("ascii"),
@@ -906,36 +1020,24 @@ class FakeScope:
                 ),
             ),
             (
-                rf"{edge}:{_mn('SOURce')}\?",
-                lambda m: str(self.trigger["source"]).encode("ascii"),
-            ),
-            (
-                rf"{edge}:{_mn('SOURce')}\s+{_VALUE}",
-                lambda m: self._set_trigger("source", self._channel_token(m.group(1))),
-            ),
-            (
-                rf"{edge}:{_mn('LEVel')}\?",
-                lambda m: _nr3(float(self.trigger["level"])).encode("ascii"),
-            ),
-            (
-                rf"{edge}:{_mn('LEVel')}\s+{_VALUE}",
-                lambda m: self._set_trigger("level", self._float(m.group(1))),
-            ),
-            (
-                rf"{edge}:{_mn('SLOPe')}\?",
-                lambda m: str(self.trigger["slope"]).encode("ascii"),
-            ),
-            (
-                rf"{edge}:{_mn('SLOPe')}\s+{_VALUE}",
-                lambda m: self._set_trigger("slope", self._enum(m.group(1), _SLOPES)),
-            ),
-            (
                 rf"{trigger}:{_mn('SWEep')}\?",
                 lambda m: str(self.trigger["sweep"]).encode("ascii"),
             ),
             (
                 rf"{trigger}:{_mn('SWEep')}\s+{_VALUE}",
                 lambda m: self._set_trigger("sweep", self._enum(m.group(1), _SWEEPS)),
+            ),
+            (
+                rf"{trigger}:{_mn('HOLDoff')}\?",
+                lambda m: _nr3(float(self.trigger["holdoff"])).encode("ascii"),
+            ),
+            (
+                rf"{trigger}:{_mn('HOLDoff')}\s+{_VALUE}",
+                lambda m: self._set_trigger("holdoff", self._float(m.group(1))),
+            ),
+            (
+                rf"{trigger}:{_mn('POSition')}\?",
+                lambda m: _nr3(float(self.trigger["position"])).encode("ascii"),
             ),
             (
                 rf"{trigger}:{_mn('STATus')}\?",
@@ -1026,6 +1128,7 @@ class FakeScope:
         entries += self._math_entries()
         entries += self._cursor_entries()
         entries += self._meter_entries()
+        entries += self._trigger_entries()
         entries += self._measure_setup_entries()
         entries += self._histogram_entries()
         entries += self._reference_entries()
@@ -1336,6 +1439,22 @@ class FakeScope:
             ),
             (rf"{dvm}:{_mn('CURRent')}\?", lambda m: self._dvm_current()),
         ]
+        return entries
+
+    def _trigger_entries(self) -> list[tuple[str, Callable]]:
+        """トリガ種別ごとのサブツリー(ガイド3.27.8-3.27.19)。
+
+        表から機械生成する。手書きで足すと種別の数だけ線形に増えるため、
+        バス側(`_BUS_PROTOCOL_PROPS`)と同じ方式にしている。
+
+        表に無いサブツリー(`:TRIGger:VIDeo` / シリアル系 / オプション系)は
+        どのパターンにも一致せず、実機同様に沈黙する。
+        """
+        trigger = rf":?{_mn('TRIGger')}"
+        entries: list[tuple[str, Callable]] = []
+        for name, props in _TRIGGER_SUBTREE_PROPS.items():
+            head = rf"{trigger}:{_mn(name)}"
+            entries += self._prop_entries(head, props, self.trigger_subtrees[name])
         return entries
 
     def _measure_setup_entries(self) -> list[tuple[str, Callable]]:

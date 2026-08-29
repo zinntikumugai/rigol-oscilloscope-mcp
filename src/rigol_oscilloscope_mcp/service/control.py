@@ -225,40 +225,56 @@ class ControlService:
         self,
         driver: ScopeDriver,
         *,
+        type: str | None = None,
         source: str | None = None,
         level_v: float | None = None,
         slope: str | None = None,
         sweep_mode: str | None = None,
+        holdoff_s: float | None = None,
+        settings: dict | None = None,
     ) -> dict:
-        """エッジトリガを設定する(SAFE_WRITE)。未指定の項目は変更しない。
+        """トリガを設定する(SAFE_WRITE)。未指定の項目は変更しない。
 
-        ドライバが一括で設定・read-backするため、`applied` はその結果から抽出する
-        (項目ごとに read-back を送らない)。
+        `type` 省略時はドライバが `:TRIGger:MODE?` を読み、**今の種別のサブツリー**
+        へ書く。`applied` はドライバの返り値をそのまま透過する(種別ごとに項目が
+        違うため、`TriggerState` のフィールドから引き直すことはできない)。
         """
         requested = _specified(
             {
+                "type": type,
                 "source": source,
                 "level_v": level_v,
                 "slope": slope,
                 "sweep_mode": sweep_mode,
+                "holdoff_s": holdoff_s,
+                "settings": settings,
             }
         )
         if not requested:
             raise _invalid(
-                "No item to change was specified "
-                "(specify at least one of source / level_v / slope / sweep_mode)",
+                "No item to change was specified (specify at least one of "
+                "type / source / level_v / slope / sweep_mode / holdoff_s / settings)",
                 {},
             )
 
         with self._audited("configure_trigger", requested) as record:
             before = get_trigger_dict(driver)
             record.before(before)
-            after = asdict(driver.set_trigger_edge(**requested))
+            applied = driver.configure_trigger(
+                type=type,
+                source=source,
+                level_v=level_v,
+                slope=slope,
+                sweep_mode=sweep_mode,
+                holdoff_s=holdoff_s,
+                settings=settings,
+            )
+            after = get_trigger_dict(driver)
             record.after(after)
 
         return {
             "requested": requested,
-            "applied": {key: after[key] for key in requested},
+            "applied": applied,
             "changed": before != after,
             "trigger": after,
         }
