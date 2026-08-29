@@ -533,19 +533,24 @@ def create_server(
         - slope: source, polarity, when, upper_time_s, lower_time_s, window
           (a/b/ab), level_a_v, level_b_v
         - timeout: source, level_v, slope, time_s
-        - duration: source, level_v, pattern (high/low/ignore), when
-          (greater/less/between/outside), upper_time_s, lower_time_s
+        - duration: source, level_v, when (greater/less/between/outside),
+          upper_time_s, lower_time_s, and pattern — **a list with one entry per
+          analog channel**, each high / low / ignore, e.g.
+          ["low", "ignore", "high", "low"]
         - runt: source, polarity, when (none/greater/less/between),
           upper_width_s, lower_width_s, level_a_v, level_b_v
-        - window: source, slope (rising/falling), position (exit/enter/time),
-          time_s, level_a_v, level_b_v
+        - window: source, slope (rising/falling/either), position
+          (exit/enter/time), time_s, level_a_v, level_b_v
         - delay: source_a, slope_a (rising/falling), source_b, slope_b, when
           (greater/less/between/outside), upper_time_s, lower_time_s,
           level_a_v, level_b_v
         - setup_hold: data_source, clock_source, slope, pattern (high/low),
           when (setup/hold/both), setup_time_s, hold_time_s, data_level_v,
           clock_level_v
-        - pattern: source, level_v, pattern (high/low/ignore/rising/falling)
+        - pattern: source, level_v, and pattern — **a list with one entry per
+          analog channel**, each high / low / ignore / rising / falling, e.g.
+          ["high", "low", "ignore", "ignore"]. Only one edge (rising or falling)
+          may appear in the list
         - nth_edge: source, level_v, slope, idle_time_s, edge_number
         - uart: source, level_v, polarity, when (start/error/check_error/data),
           baud_bps, user_baud_bps, data_bits (5-8), stop_bits (1/1.5/2), parity
@@ -562,7 +567,9 @@ def create_server(
           data_bytes (1-8), data
         - lin: source, level_v, standard (v1x/v2x/both), baud_bps,
           sample_point_percent, when (sync_break/id/data/error/…), error_type
-          (sync/id/checksum), frame_id (0-63), data
+          (sync/id/checksum), frame_id (0-63), data. **lin data reads back as a
+          binary mask string** ("01100100", or "XXXXXXXX" while unset) rather
+          than the integer the other protocols return
 
         The serial types pair with configure_decode: trigger on the moment
         (a NACK, an error frame, one address) and decode to read what happened

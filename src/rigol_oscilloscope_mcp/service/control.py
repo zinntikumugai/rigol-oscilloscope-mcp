@@ -66,9 +66,19 @@ def _invalid(message: str, detail: dict) -> ScopeError:
     return ScopeError(ErrorCode.INVALID_PARAMETER, message, detail)
 
 
-def _specified(values: dict) -> dict:
-    """`None` でない項目だけを、宣言順のまま取り出す。"""
-    return {key: value for key, value in values.items() if value is not None}
+def _specified(values: dict, actions: tuple[str, ...] = ()) -> dict:
+    """`None` でない項目だけを、宣言順のまま取り出す。
+
+    `actions` に挙げたキーは**一発動作**(`threshold_default` / `statistics_reset`
+    / `settings` 等)で、`False` や空のリスト・辞書には意味が無い。それらを
+    「変更する項目を指定した」と数えると、1コマンドも送らないまま成功が返り
+    呼び出し側が「適用された」と誤解する。
+    """
+    return {
+        key: value
+        for key, value in values.items()
+        if value is not None and (key not in actions or value)
+    }
 
 
 #: `get_math_config` の返却のうち、設定ではなく測定結果として毎回変わりうるキー。
@@ -248,7 +258,8 @@ class ControlService:
                 "sweep_mode": sweep_mode,
                 "holdoff_s": holdoff_s,
                 "settings": settings,
-            }
+            },
+            actions=("settings",),
         )
         if not requested:
             raise _invalid(
@@ -678,7 +689,8 @@ class ControlService:
             "top_v": top_v,
             "reset": reset,
         }
-        requested = _specified(items)
+        # `reset` は一発動作なので False には意味が無い(送信ゼロの成功を防ぐ)
+        requested = _specified(items, actions=("reset",))
         if not requested:
             raise _invalid(
                 "No item to change was specified "
@@ -757,7 +769,13 @@ class ControlService:
             "statistics_reset": statistics_reset,
             "statistics_items": statistics_items,
         }
-        requested = _specified(items)
+        # `statistics_enabled` は**設定**なので False も有効。一発動作
+        # (`threshold_default` / `statistics_reset`)と空の `statistics_items`
+        # だけを「指定なし」として扱う
+        requested = _specified(
+            items,
+            actions=("threshold_default", "statistics_reset", "statistics_items"),
+        )
         if not requested:
             raise _invalid(
                 "No item to change was specified "
@@ -820,7 +838,9 @@ class ControlService:
             "save": save,
             "reset": reset,
         }
-        requested = _specified(items)
+        actions = ("save", "reset")
+        # 一発動作は True のときだけ意味を持つ(送信ゼロの成功を防ぐ)
+        requested = _specified(items, actions=actions)
         if not requested:
             raise _invalid(
                 "No item to change was specified "
@@ -828,7 +848,6 @@ class ControlService:
                 {"ref": ref},
             )
 
-        actions = ("save", "reset")
         settings = {
             key: value for key, value in requested.items() if key not in actions
         }

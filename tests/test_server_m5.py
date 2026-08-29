@@ -214,3 +214,28 @@ def test_configure_trigger_documents_the_decode_pairing(server) -> None:
     description = descriptions(server)["configure_trigger"]
 
     assert "configure_decode" in description or "decode" in description
+
+
+def test_description_marks_the_per_channel_pattern_lists(server) -> None:
+    """`pattern` / `duration` の `pattern` はリスト。説明文が実装とずれないよう固定。
+
+    スカラの列挙値に読める書き方をしていると、LLMが `"high"` を渡して
+    `INVALID_PARAMETER` を踏む(Copilotレビュー指摘)。
+    """
+    description = descriptions(server)["configure_trigger"]
+
+    assert "a list with one entry per" in description
+    assert '["high", "low", "ignore", "ignore"]' in description
+
+
+def test_description_lists_the_window_either_slope(server) -> None:
+    """V-9 決着で `either` が使えるようになった。説明文にも出す。"""
+    description = descriptions(server)["configure_trigger"]
+
+    assert "rising/falling/either" in description
+
+
+def test_description_warns_that_lin_data_reads_back_as_a_mask(server) -> None:
+    description = descriptions(server)["configure_trigger"]
+
+    assert "binary mask" in description

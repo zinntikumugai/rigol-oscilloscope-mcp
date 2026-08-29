@@ -2141,3 +2141,74 @@ def test_control_service_exported_from_service_package() -> None:
     from rigol_oscilloscope_mcp import service as service_pkg
 
     assert service_pkg.ControlService is ControlService
+
+
+# --------------------------------------------------------------------------
+# 実質no-opの呼び出しを弾く(Copilotレビュー指摘)
+# --------------------------------------------------------------------------
+
+
+def test_configure_trigger_rejects_empty_settings(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`settings={}` は「変更する項目を指定した」ことにならない。
+
+    `None` でないだけで通してしまうと、1コマンドも送らないまま成功が返り
+    呼び出し側が「適用された」と誤解する。
+    """
+    with pytest.raises(ScopeError) as excinfo:
+        service.configure_trigger(driver, settings={})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"threshold_default": False},
+        {"statistics_reset": False},
+        {"statistics_items": []},
+    ],
+)
+def test_configure_measurement_rejects_no_op_flags(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope, kwargs: dict
+) -> None:
+    """一発動作のフラグは True のときだけ意味を持つ。False / 空リストは no-op。"""
+    with pytest.raises(ScopeError) as excinfo:
+        service.configure_measurement(driver, **kwargs)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_measurement_accepts_statistics_disabled(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    """`statistics_enabled=False` は**設定**なので通す(一発動作と区別する)。"""
+    result = service.configure_measurement(driver, statistics_enabled=False)
+
+    assert result["applied"]["statistics_enabled"] is False
+
+
+@pytest.mark.parametrize(
+    ("tool", "kwargs"),
+    [
+        ("configure_histogram", {"reset": False}),
+        ("configure_reference", {"save": False}),
+        ("configure_reference", {"reset": False}),
+    ],
+)
+def test_existing_tools_also_reject_no_op_action_flags(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope, tool: str, kwargs: dict
+) -> None:
+    """同じ根の潜在バグが既存Toolにも残っていた(Copilotレビューを機に発見)。
+
+    一発動作のフラグに `False` を渡すと、1コマンドも送らないまま成功が返って
+    いた。呼び出し側が「適用された」と誤解するので、新Toolと同じ扱いにする。
+    """
+    with pytest.raises(ScopeError) as excinfo:
+        getattr(service, tool)(driver, **kwargs)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []

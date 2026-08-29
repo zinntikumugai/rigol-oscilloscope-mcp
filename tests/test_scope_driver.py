@@ -4206,3 +4206,17 @@ def test_lin_data_reads_back_as_a_bit_mask(driver: ScopeDriver, scope: FakeScope
 
     assert ":TRIGger:LIN:DATA 100" in scope.command_log
     assert applied["data"] in (100, "01100100")
+
+
+def test_get_measurement_statistics_rejects_channel_b_without_dual_items(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`measure` と対称にする(Copilotレビュー指摘)。
+
+    2ソース項目が1つも無いのに `channel_b` を渡すのは取り違えなので拒否する。
+    """
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_measurement_statistics("CH1", ["vpp"], channel_b="CH2")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []

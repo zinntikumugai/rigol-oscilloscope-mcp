@@ -1261,6 +1261,12 @@ class ScopeDriver:
                 "(the device would otherwise reuse its last selected source)",
                 {"measurements": dual},
             )
+        # `measure` と対称にする(2ソース項目が無いのに渡すのは取り違え)
+        if channel_b is not None and not dual:
+            raise _invalid(
+                "channel_b is only used by delay/phase measurements",
+                {"measurements": list(names)},
+            )
         number_b = self._channel_number(channel_b) if channel_b is not None else None
 
         # 検証を全て済ませてから送る

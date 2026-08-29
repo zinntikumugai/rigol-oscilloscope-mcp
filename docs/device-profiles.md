@@ -67,14 +67,14 @@
 |---|---|---|
 | `measurement_items` | 意味的測定名 → SCPIニモニック対応表 | `vavg` → `VAVG`(`VAVerage` は**不可**、無応答+`-222`) |
 | `measurement_clear` | Resultビューの全測定項目を消すコマンド(未宣言 = 送信ゼロで `UNSUPPORTED_FEATURE`) | mho98: `":MEASure:DELete"`。**DHO800/900系はガイド上 `":MEASure:CLEar"`**(ニモニックがファミリで分岐。MHO98実機は両方受理 → [verification/mho98-measure-clear.md](verification/mho98-measure-clear.md)) |
-| `trigger_types` | `:TRIGger:MODE` の値(種別名 → トークン)。**宣言した種別しか書き込めない** — 未宣言は送信ゼロで `UNSUPPORTED_FEATURE` | rigol-generic: `edge` のみ(全シリーズ共通)。mho98: 標準11種(ガイド3.27.1)。**罠**: `window` のトークンは `WINDow`(単数)だがサブツリーは `:WINDows`、`setup_hold` は `SETup` / `:SHOLd` |
+| `trigger_types` | `:TRIGger:MODE` の値(種別名 → トークン)。**宣言した種別しか書き込めない** — 未宣言は送信ゼロで `UNSUPPORTED_FEATURE` | rigol-generic: `edge` のみ(全シリーズ共通)。mho98: 標準16種(非シリアル11 + シリアルバス5。ガイド3.27.1)。**罠**: `window` のトークンは `WINDow`(単数)だがサブツリーは `:WINDows`、`setup_hold` は `SETup` / `:SHOLd` |
 | `trigger_slopes` / `trigger_edge_slopes` / `trigger_polarities` | エッジの向き / 極性。**同じ `POSitive`・`NEGative` でも意味が違うので分ける**(polarity=パルスの正負、slope=エッジの向き) | mho98: `trigger_slopes` は両エッジ `RFALl` を含む3値、他は2値 |
-| `trigger_window_slopes` | `:TRIGger:WINDows:SLOPe` の値 | mho98: `rising` / `falling` の2値のみ。**ガイドの Range欄(`RFALI`)と Remarks欄(`RFALl`)で綴りが割れているため両エッジは宣言しない** |
+| `trigger_window_slopes` | `:TRIGger:WINDows:SLOPe` の値 | mho98: `rising` / `falling` / `either`(`RFALl`)の3値。**ガイドの Range欄 `RFALI`(大文字I)は誤植** — 実機は `-222` で拒否し、Remarks欄の `RFALl`(小文字L)を受理する([verification/mho98-m4-m5.md](verification/mho98-m4-m5.md) で決着) |
 | `trigger_pulse_when` / `trigger_duration_when` / `trigger_runt_when` / `trigger_delay_types` | 条件(WHEN)の値。**種別ごとに値域が違うので表を分ける**(共有すると値域外を送る) | mho98: 3〜4値(ガイド3.27.9.3 / 3.27.13.3 / 3.27.15.3 / 3.27.17.5) |
 | `trigger_slope_windows` / `trigger_pattern_levels` / `trigger_duration_types` / `trigger_window_positions` / `trigger_shold_types` / `trigger_shold_patterns` | 各種別固有の列挙 | mho98のみ宣言 |
 | `measure_areas` | `:MEASure:AREA` の値(`main` / `zoom` / `cursor`)。未宣言 = `configure_measurement` が送信ゼロで `UNSUPPORTED_FEATURE` | mho98: 3種(ガイド3.17.19)。**DHO系は実機未検証のため意図的に不在** |
 | `measure_threshold_types` | `:MEASure:THReshold:TYPE` の値 | mho98: `percent` → `PERCent` / `absolute` → `ABSolute`(3.17.17) |
-| `measure_amp_types` | `:MEASure:AMP:TYPE` の値 | mho98: `auto` → `AUTO` / `manual` → `MANual`(3.17.28) |
+| `measure_amp_types` | `:MEASure:AMP:TYPE` の値 | mho98: `auto` → `AUTO` / **`manual` → `MAN`(短形)**(3.17.28)。**長形 `MANual` は実機が `-222` で拒否する**(`VAVerage` 不可 / `VAVG` 可 と同じ癖)。`:AMP:MANual:TOP` / `BASE` は長形を受理するので、短形が要るのは TYPE だけ |
 | `measure_amp_methods` | `:MEASure:AMP:MANual:TOP`・`BASE` の値(両者で共通) | mho98: `histogram` → `HISTogram` / `maxmin` → `MAXMin`(3.17.29/30) |
 | `measure_statistic_types` | `:MEASure:STATistic:ITEM?` の `<type>`。未宣言 = `get_measurement_statistics` が送信ゼロ | mho98: 6種(3.17.8)。省略時はこの全種別を読む |
 | `autoset_command` | オートセットアップの実行コマンド(未宣言 = 送信ゼロで `UNSUPPORTED_FEATURE`) | mho98: `":AUToset"`(DHO系も同じ。旧世代DS1000Z等は `:AUToscale`)。`:AUToscale` はMHO900では `:SYSTem:AUToscale`(AUTOキー有効化)しか存在しない → [verification/mho98-autoset.md](verification/mho98-autoset.md) |

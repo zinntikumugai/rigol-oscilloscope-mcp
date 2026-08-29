@@ -629,3 +629,25 @@ def test_m4_measurement_expansion_is_mho98_only() -> None:
         items = load_profile(name).dialect["measurement_items"]
         assert len(items) < 41, f"{name} に未検証の測定項目が混入している"
         assert "delay_rise_rise" not in items
+
+
+def test_device_profiles_doc_matches_the_verified_dialect() -> None:
+    """`docs/device-profiles.md` の記述とプロファイル実体を突き合わせる。
+
+    実機検証で綴りが変わった2件(Copilotレビューで文書側の取り残しを指摘された)
+    が、また乖離しないよう機械的に固定する。
+    """
+    from pathlib import Path
+
+    doc = Path(__file__).resolve().parents[1] / "docs" / "device-profiles.md"
+    text = doc.read_text(encoding="utf-8")
+    dialect = load_profile("mho98").dialect
+
+    # `:MEASure:AMP:TYPE` は短形のみ(長形は実機が -222 で拒否)
+    assert dialect["measure_amp_types"]["manual"] == "MAN"
+    assert "`manual` → `MAN`(短形)" in text
+    assert "`manual` → `MANual`" not in text
+
+    # `:TRIGger:WINDows:SLOPe` は両エッジも宣言済み(ガイドのRange欄が誤植)
+    assert dialect["trigger_window_slopes"]["either"] == "RFALl"
+    assert "両エッジは宣言しない" not in text

@@ -1661,8 +1661,17 @@ def test_configure_histogram_round_trip(
     outcome = driver.get_histogram_result()
     _report(f"[histogram] result={outcome}")
     assert outcome["raw"].startswith("[")
-    assert "warnings" not in outcome, "統計の解釈に失敗した項目がある"
     stats = outcome["stats"]
+    # **実機実測**: `:HISTogram:RESet` の直後でヒットが1つも溜まっていないと、
+    # 機器はシグマ由来の項目を `meanPlus2Sigma:*****` の形で返す(数値ではない)。
+    # パーサはこれを fail-open で warnings に載せる — 正しい挙動なので、
+    # **ヒット0のときだけ**警告を許す。ヒットがあるのに警告が出たら異常。
+    if stats.get("sum"):
+        assert "warnings" not in outcome, (
+            f"統計の解釈に失敗した項目がある: {outcome.get('warnings')}"
+        )
+    elif "warnings" in outcome:
+        _report(f"[histogram] ヒット0のため未確定の項目あり: {outcome['warnings']}")
     # SI接頭辞は換算済み(`30.37khits` → 30370.0 / `sum_unit="hits"`)。
     # reset直後はヒット数が少なく接頭辞が付かないこともあるため、単位は
     # 「付いていれば hits」で見る
