@@ -283,12 +283,13 @@ _TRIGGER_SUBTREE_PROPS: dict[str, tuple[tuple[str, str, object, object], ...]] =
     "PATTern": (
         ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
         ("level", "LEVel", "nr3", 0.0),
-        ("pattern", "PATTern", ("H", "L", "X", "R", "F"), "H"),
+        # 実機はch別のカンマ区切りを返す(アナログ4 + デジタル/MATH分で24個)
+        ("pattern", "PATTern", "csv", "H,X,X,X" + ",X" * 20),
     ),
     "DURation": (
         ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
         ("level", "LEVel", "nr3", 0.0),
-        ("type", "TYPE", ("H", "L", "X"), "H"),
+        ("type", "TYPE", "csv", "L,X,X,X"),
         ("when", "WHEN", ("GREater", "LESS", "GLESs", "UNGLess"), "GRE"),
         ("tupper", "TUPPer", "nr3", 2.0e-6),
         ("tlower", "TLOWer", "nr3", 1.0e-6),
@@ -310,7 +311,7 @@ _TRIGGER_SUBTREE_PROPS: dict[str, tuple[tuple[str, str, object, object], ...]] =
     ),
     "WINDows": (
         ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
-        ("slope", "SLOPe", ("POSitive", "NEGative"), "POS"),
+        ("slope", "SLOPe", ("POSitive", "NEGative", "RFALl"), "POS"),
         ("position", "POSition", ("EXIT", "ENTer", "TIME"), "EXIT"),
         ("time", "TIME", "nr3", 1.0e-6),
         ("alevel", "ALEVel", "nr3", 0.1),
@@ -424,7 +425,8 @@ _TRIGGER_SUBTREE_PROPS: dict[str, tuple[tuple[str, str, object, object], ...]] =
         ),
         ("error", "ERRor", ("SYNC", "ID", "CHECk"), "SYNC"),
         ("id", "ID", ("int", 0, 63), 0),
-        ("data", "DATA", ("int", 0, 2**64 - 1), 0),
+        # 実機は2進マスクを返す(未設定ビットは X)
+        ("data", "DATA", "bitmask", "XXXXXXXX"),
     ),
 }
 _SLOPES = ("POSitive", "NEGative", "RFALl")
@@ -1974,6 +1976,15 @@ class FakeScope:
             value = self._int(token)
         elif kind == "str":  # 文字列属性(:REFerence:LABel:CONTent)は素通し
             value = token
+        elif kind == "csv":
+            # ch別のカンマ区切り(:TRIGger:PATTern:PATTern / :DURation:TYPE)。
+            # **実機は書いた分だけ先頭を差し替え、残りは保持する**
+            parts = [p.strip().upper() for p in token.split(",") if p.strip()]
+            current = str(state[key]).split(",")
+            value = ",".join(parts + current[len(parts):])
+        elif kind == "bitmask":
+            # :TRIGger:LIN:DATA は整数で書き、2進マスクで読み戻る(実機実測)
+            value = format(self._int(token), "08b")
         elif isinstance(kind, tuple) and kind[0] == "int":
             _, low, high = kind
             value = self._int(token)

@@ -186,12 +186,12 @@ _TRIGGER_SLOPE_ITEMS: tuple[tuple[str, str, object], ...] = (
 _TRIGGER_PATTERN_ITEMS: tuple[tuple[str, str, object], ...] = (
     ("source", ":SOURce", "tsource"),
     ("level_v", ":LEVel", "number"),
-    ("pattern", ":PATTern", ("enum", "trigger_pattern_levels", "the pattern level")),
+    ("pattern", ":PATTern", ("pattern", "trigger_pattern_levels", "the per-channel pattern")),
 )
 _TRIGGER_DURATION_ITEMS: tuple[tuple[str, str, object], ...] = (
     ("source", ":SOURce", "tsource"),
     ("level_v", ":LEVel", "number"),
-    ("pattern", ":TYPE", ("enum", "trigger_duration_types", "the duration pattern")),
+    ("pattern", ":TYPE", ("pattern", "trigger_duration_types", "the per-channel pattern")),
     ("when", ":WHEN", ("enum", "trigger_duration_when", "the duration condition")),
     ("upper_time_s", ":TUPPer", "number"),
     ("lower_time_s", ":TLOWer", "number"),
@@ -319,9 +319,10 @@ _TRIGGER_LIN_ITEMS: tuple[tuple[str, str, object], ...] = (
     ("when", ":WHEN", ("enum", "trigger_lin_when", "the LIN trigger condition")),
     ("error_type", ":ERRor", ("enum", "trigger_lin_errors", "which LIN error is caught")),
     ("frame_id", ":ID", ("int", 0, 63)),
-    # ガイドの値域は "Refer to Remarks" で具体値が無い。機器のエラーキュー確認に
-    # 委ね、ホスト側では広めに取る
-    ("data", ":DATA", ("int", 0, 2**64 - 1)),
+    # **実機実測**: 書き込みは整数だが読み戻しは2進マスク文字列
+    # (`'01100100'` / 未設定ビットは `X`)。ガイドは「整数を返す」と書いている
+    # が実機は違う。他プロトコル(CAN等)の `:DATA?` は素の整数を返す
+    ("data", ":DATA", "bitmask"),
 )
 #: 種別 → (SCPI接頭辞, 項目表)。**この表に無い種別は扱わない**(不在がゲート)
 _TRIGGER_SUBTREES: dict[str, tuple[str, tuple[tuple[str, str, object], ...]]] = {
@@ -621,6 +622,29 @@ def math_source_number(value: object) -> int | None:
     """
     match = _MATH_SOURCE_RE.match(value.strip()) if isinstance(value, str) else None
     return int(match.group(1)) if match else None
+
+
+def _pattern_token(value: object, key: str, to_token, width: int) -> str:
+    """ch別パターンのリストを `H,L,X,X` の形へ。スカラは受け付けない。"""
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise _invalid(
+            f"{key} must be a list of per-channel levels (one per analog channel)",
+            {"key": key, "value": value},
+        )
+    if not value or len(value) > width:
+        raise _invalid(
+            f"{key} must have 1 to {width} entries (one per analog channel)",
+            {"key": key, "value": list(value), "analog_channels": width},
+        )
+    return ",".join(to_token(item, key) for item in value)
+
+
+def _bitmask_readback(text: str) -> object:
+    """2進マスクの読み戻し。全て0/1なら整数へ、`X`(don't care)を含むならそのまま。"""
+    token = text.strip()
+    if token and all(c in "01" for c in token):
+        return int(token, 2)
+    return token
 
 
 def _threshold_token(key: str, value: object) -> str:
@@ -2479,6 +2503,32 @@ class ScopeDriver:
             # 読み戻しは引用符無しの `TESTLBL`。つまりこの strip は**現状不要**
             # だが、他機種・他ファームで引用符が付く可能性に対して無害なので残す
             return _reference_label, (lambda text: text.strip().strip('"'))
+        if isinstance(kind, tuple) and kind[0] == "pattern":
+            # **実機実測**: `:TRIGger:PATTern:PATTern` / `:DURation:TYPE` は
+            # ch別のリストを取る(ガイド3.27.12.1 / 3.27.13.2 の
+            # `<pch1>[,<pch2>[,<pch3>[,<pch4>]]]`)。単一の列挙値ではない。
+            # 読み戻しは機器が24個返すことがある(デジタル/MATHの分)が、
+            # 書けるのはアナログch分だけなのでそこまでに切る
+            to_token, from_token = self._afg_enum(kind[1], kind[2])
+            width = self.analog_channels
+            return (
+                (lambda value, key: _pattern_token(value, key, to_token, width)),
+                (
+                    lambda text: [
+                        from_token(part.strip())
+                        for part in text.split(",")[:width]
+                        if part.strip()
+                    ]
+                ),
+            )
+        if kind == "bitmask":
+            # **実機実測**: `:TRIGger:LIN:DATA?` は2進のマスク文字列を返す
+            # (`'01100100'` / 未設定ビットは `X` で `'XXXXXXXX'`)。ガイドは
+            # 「整数を返す」と書いているが実機は違う。書き込みは整数のまま
+            return (
+                (lambda value, key: _math_int(value, key, 0, 2**64 - 1)),
+                _bitmask_readback,
+            )
         if kind == "threshold":
             # **実機実測**: `:MEASure:SETup:MAX 88.0` は黙って上限へ張り付く。
             # ガイド3.17.9-11 の型は Integer で、percentモードは小数形を誤解釈

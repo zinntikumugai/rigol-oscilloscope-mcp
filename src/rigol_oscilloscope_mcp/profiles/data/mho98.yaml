@@ -192,11 +192,13 @@ dialect:
   trigger_edge_slopes: # 3.27.17.2 / 3.27.18.3 / 3.27.19.2(両エッジは持たない)
     rising: POSitive
     falling: NEGative
-  # **ガイドが割れているため両エッジを宣言しない**。3.27.16.2 の Range欄は
-  # `RFALI`(大文字I)、Remarks欄は `RFALl`(小文字L)。実機で確定するまで送らない
+  # **実機で決着(2026-08-29)**。3.27.16.2 の Range欄 `RFALI`(大文字I)は
+  # **誤植** — 実機は `-222` で拒否する。Remarks欄の `RFALl`(小文字L)が正しく、
+  # 他のトリガ(EDGE / TIMeout)と同じ綴り。記録: verification/mho98-m4-m5.md
   trigger_window_slopes:
     rising: POSitive
     falling: NEGative
+    either: RFALl
   # 条件(WHEN)。**種別ごとに値域が違うので表を分ける**(共有すると値域外を送る)
   trigger_pulse_when: # 3.27.9.3 / 3.27.10.3
     greater: GREater

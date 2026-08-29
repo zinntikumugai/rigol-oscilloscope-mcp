@@ -3977,11 +3977,16 @@ def test_configure_trigger_unsupported_without_profile_dialect(
     assert scope.command_log == []
 
 
-def test_window_slope_does_not_declare_the_ambiguous_token(driver: ScopeDriver) -> None:
-    """ガイドが `RFALI` / `RFALl` で割れているため両エッジは宣言しない。"""
+def test_window_slope_uses_the_spelling_the_device_accepts(driver: ScopeDriver) -> None:
+    """**実機実測(V-9 決着)**: ガイドの Range欄 `RFALI` は誤植。
+
+    `:TRIGger:WINDows:SLOPe RFALl`(Remarks欄の綴り)は受理され、`RFALI` は
+    `-222,"Data out of range"` で拒否された。他のトリガ(EDGE / TIMeout)と
+    同じ `RFALl` が正しい。
+    """
     slopes = driver.profile.dialect["trigger_window_slopes"]
 
-    assert set(slopes) == {"rising", "falling"}
+    assert slopes == {"rising": "POSitive", "falling": "NEGative", "either": "RFALl"}
 
 
 # --------------------------------------------------------------------------
@@ -4134,3 +4139,70 @@ def test_get_trigger_position_reads_without_writing(
 
     assert position is None or isinstance(position, float)
     assert scope.command_log == [":TRIGger:POSition?"]
+
+
+# --------------------------------------------------------------------------
+# 実機で判明したトリガの応答形式(M5)
+# --------------------------------------------------------------------------
+
+
+def test_pattern_trigger_takes_a_per_channel_list(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """**実機実測**: `:TRIGger:PATTern:PATTern` はch別の**リスト**を取る。
+
+    ガイド3.27.12.1 の構文は `<pch1>[,<pch2>[,<pch3>[,<pch4>]]]` で、
+    CH1〜CH4 のパターンを一度に指定する。単一の列挙値ではない。
+    """
+    applied = driver.configure_trigger(
+        type="pattern", settings={"pattern": ["high", "low", "ignore", "ignore"]}
+    )
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [":TRIGger:MODE PATTern", ":TRIGger:PATTern:PATTern H,L,X,X"]
+    assert applied["pattern"] == ["high", "low", "ignore", "ignore"]
+
+
+def test_duration_trigger_takes_a_per_channel_list(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`:TRIGger:DURation:TYPE` も同じ形(値域は H/L/X の3種)。"""
+    driver.configure_trigger(
+        type="duration", settings={"pattern": ["low", "ignore", "high", "low"]}
+    )
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [":TRIGger:MODE DURation", ":TRIGger:DURation:TYPE L,X,H,L"]
+
+
+def test_pattern_trigger_rejects_a_scalar(driver: ScopeDriver, scope: FakeScope) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_trigger(type="pattern", settings={"pattern": "high"})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert not [c for c in scope.command_log if "?" not in c]
+
+
+def test_pattern_trigger_rejects_more_than_the_analog_channels(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_trigger(
+            type="pattern", settings={"pattern": ["high"] * 5}
+        )
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert not [c for c in scope.command_log if "?" not in c]
+
+
+def test_lin_data_reads_back_as_a_bit_mask(driver: ScopeDriver, scope: FakeScope) -> None:
+    """**実機実測**: `:TRIGger:LIN:DATA?` は2進のビットマスク文字列を返す。
+
+    書き込みは整数(`100`)だが、読み戻しは `'01100100'`。未設定のビットは `X`
+    (don't care)で `'XXXXXXXX'` が返る。ガイドは「整数を返す」と書いているが
+    実機は違う。**全て0/1なら整数へ、Xを含むならマスク文字列のまま返す。**
+    """
+    applied = driver.configure_trigger(type="lin", settings={"data": 100})
+
+    assert ":TRIGger:LIN:DATA 100" in scope.command_log
+    assert applied["data"] in (100, "01100100")

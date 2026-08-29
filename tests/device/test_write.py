@@ -35,7 +35,7 @@ from pathlib import Path
 import pytest
 
 from rigol_oscilloscope_mcp.config import Config
-from rigol_oscilloscope_mcp.driver.scope import ScopeDriver
+from rigol_oscilloscope_mcp.driver.scope import _TRIGGER_SUBTREES, ScopeDriver
 from rigol_oscilloscope_mcp.errors import ErrorCode, ScopeError
 from rigol_oscilloscope_mcp.safety import AuditLogger, ConfirmTokenStore
 from rigol_oscilloscope_mcp.service import (
@@ -162,7 +162,11 @@ requires_ref_save = pytest.mark.skipif(
 )
 
 #: `:SINGle` 直後に許容するトリガ状態(実測: WAIT。すぐトリガすると TD を経て STOP)
-SINGLE_STATUSES = ("WAIT", "TD")
+#: `:SINGle` 直後に取りうるトリガ状態。**STOP を含めるのは競合を避けるため** —
+#: 生きた信号(CH1のプローブ補償 1kHz)では単発取り込みが往復時間より速く完了し、
+#: 最初の読みが既に STOP になることがある(実測)。WAIT(待機)/ TD(トリガ済)/
+#: STOP(完了)のいずれも「単発取り込みに入った」ことを示すので受理する
+SINGLE_STATUSES = ("WAIT", "TD", "STOP")
 
 #: `:RUN` / `:STOP` の反映待ち。実測で `:RUN` 直後の1回目の `:TRIGger:STATus?` は
 #: まだ STOP を返し、約0.2秒後に TD へ変わる(機器側の再アーム待ち)。
@@ -1967,6 +1971,53 @@ def test_get_trigger_position_is_read_only(driver: ScopeDriver) -> None:
     _report(f"[trigger] position={position!r}")
 
     assert position is None or isinstance(position, float)
+
+
+# 種別ごとの代表設定。**全16種を実機へ送る**(3種だけの確認では
+# pattern / duration / lin の応答形式の違いを取り逃がした)。
+TRIGGER_PROBES: dict[str, dict] = {
+    "edge": {"slope": "falling"},
+    "pulse": {"when": "less", "upper_width_s": 1e-6},
+    "slope": {"when": "greater", "lower_time_s": 2e-6, "window": "ab"},
+    "pattern": {"pattern": ["high", "low", "ignore", "ignore"]},
+    "duration": {"pattern": ["low", "ignore", "high", "low"], "when": "outside"},
+    "timeout": {"time_s": 5e-6},
+    "runt": {"polarity": "negative", "when": "greater"},
+    "window": {"position": "enter", "time_s": 4e-6, "slope": "either"},
+    "delay": {"when": "between", "lower_time_s": 1e-6},
+    "setup_hold": {"when": "both", "setup_time_s": 3e-6, "hold_time_s": 2e-6},
+    "nth_edge": {"edge_number": 5, "idle_time_s": 2e-6},
+    "uart": {"when": "data", "baud_bps": 115200, "data_bits": 7, "stop_bits": 2},
+    "i2c": {"when": "address", "address_bits": 10, "address": 300},
+    "spi": {"when": "timeout", "timeout_s": 2e-5, "data_bits": 12},
+    "can": {"when": "bit_error", "baud_bps": 250000, "sample_point_percent": 60},
+    "lin": {"when": "data", "standard": "v1x", "frame_id": 33, "data": 100},
+}
+
+
+@pytest.mark.parametrize("trigger_type", sorted(TRIGGER_PROBES))
+def test_configure_trigger_every_type_round_trips(
+    control: ControlService,
+    driver: ScopeDriver,
+    trigger_before: dict,
+    trigger_type: str,
+) -> None:
+    """**全16種**の往復。取り込みを止めることも出力に触れることもない。
+
+    復元は fixture が元の種別・設定へ戻す。**種別を切り替えるとトリガレベルが
+    サブツリー間で伝播する**ため、復元は種別を先に戻してから設定を書く
+    (`configure_trigger` が `type` を先頭に送る)。
+    """
+    settings = TRIGGER_PROBES[trigger_type]
+    result = control.configure_trigger(driver, type=trigger_type, settings=settings)
+    _report(f"[trigger:{trigger_type}] applied={result['applied']}")
+
+    assert result["applied"]["type"] == trigger_type
+    assert result["trigger"]["type"] == trigger_type
+    # 読み戻しはその種別のサブツリーだけ(他種別の項目が混ざらない)
+    allowed = {key for key, _, _ in _TRIGGER_SUBTREES[trigger_type][1]}
+    assert set(result["trigger"]["settings"]) <= allowed
+    _report(f"[trigger:{trigger_type}] settings={result['trigger']['settings']}")
 
 
 def test_configure_trigger_serial_type_and_restore(

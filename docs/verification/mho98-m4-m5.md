@@ -2,19 +2,30 @@
 
 **対象:** RIGOL MHO98(ファームウェア 00.01.00、LAN SCPI :5555)。IP・シリアルは記録しない
 **実施日:** 2026-08-29
-**状態:** **実施済み**(read-only 19 passed / write 25 passed。**実装バグ3件を発見し修正済み**)
+**状態:** **実施済み**(read-only 19 passed / write 25 passed + **トリガ16種の全数往復検証**。**実装バグ6件を発見し修正済み**)
 **規範:** [tools.md](../tools.md) 14章(M4)/ 15章(M5)
 **前提:** MHO900-BND適用済み。手順規律は [mho98-math.md](mho98-math.md) / [mho98-m2.md](mho98-m2.md) と同じ(1コマンド → 応答5s timeout → `:SYSTem:ERRor?` → 記録)
 **安全条件:** write項目は全て「現在値取得 → set → readback → finally で復元」。50Ω・autoset・factory reset は一切行っていない。プローブで変更した設定(しきい値・振幅算出方式・統計の有効化・Resultビュー)は**最後に作業前の状態へ戻したことを読み出しで確認済み**
 
 ## 結論(実装への影響)
 
-実測で**実装バグ3件**が判明し、いずれも修正済み(テスト付き)。加えて**機器の実用上の限界を1つ**発見し、警告として実装へ反映した。
+実測で**実装バグ6件**が判明し、いずれも修正済み(テスト付き)。加えて**機器の実用上の限界を1つ**と**ガイドの誤植を1つ**確定した。
+
+M4(測定):
 
 1. **`:MEASure:SETup:MAX/MID/MIN` に小数形を送ると黙って上限へ張り付く** — エラーは積まれない。最も危険な種類の不具合
 2. **`:MEASure:AMP:TYPE` は長形 `MANual` が拒否され、短形 `MAN` が通る**
-3. **`get_trigger_position` が `NameError`** — 存在しないヘルパ名を呼んでいた(ユニットテストの穴)
-4. **同時に有効化できる測定項目数に実用上の限界がある**(16項目以上で収束しない)
+3. **同時に有効化できる測定項目数に実用上の限界がある**(16項目以上で収束しない)
+
+M5(トリガ):
+
+4. **`get_trigger_position` が `NameError`** — 存在しないヘルパ名を呼んでいた(ユニットテストの穴)
+5. **`pattern` / `duration` の `pattern` は ch別のリスト**を取る。単一の列挙値として実装していたため両種別が丸ごと使えなかった
+6. **`:TRIGger:LIN:DATA?` は2進のビットマスク文字列を返す**。整数として実装していたため LIN トリガが読めなかった
+
+**V-9(`:TRIGger:WINDows:SLOPe` の綴り)も決着**: ガイドの Range欄 `RFALI` は誤植で、実機は `-222` で拒否する。
+
+**検証の教訓:** 最初は write スイート(edge / pulse / i2c の3種)だけを回して「実機検証済み」と判断しかけた。**16種すべてを実際に送って初めてバグ3件(上記4〜6)が出た。** 項目表が同じ機構でも、種別ごとの応答形式は実際に送らないと分からない。
 
 ---
 
@@ -126,9 +137,70 @@ frequency: maximum=9058.0 minimum=8912.7 current=9025.3 average=8991.6 deviation
 
 **ガイドの罠(MODEトークンとサブツリー名の不一致、`WINDow`/`:WINDows` と `SETup`/`:SHOLd`)は、いずれもユニットテストで固定済み。実機での送信は今回 pulse と i2c のみ**(他の14種は未送信)。
 
+## 8. トリガ16種の全数往復検証
+
+`configure_trigger` で種別を切り替え、種別固有の設定を書いて `get_trigger` で読み戻す、を16種すべてに対して実施した。**最後に元の種別・設定へ復元し、復元漏れゼロを確認済み。**
+
+| 種別 | 結果 |
+|---|---|
+| edge / pulse / slope / timeout / runt / window / setup_hold / nth_edge | 往復OK |
+| **pattern / duration** | **初回FAIL** → ch別リストとして実装し直して往復OK |
+| **lin** | **初回FAIL** → DATA を2進マスクとして読むよう直して往復OK |
+| uart / i2c / spi / can | 往復OK |
+| delay | 往復OK。ただし `upper_time_s` は 9e-06 → 8.999999e-06 に量子化される(**機器の分解能。requested / applied の差として正しく現れている**) |
+
+### 8.1 pattern / duration は ch別のリスト
+
+```
+:TRIGger:PATTern:PATTern?        -> 'H,X,X,X,X,X,X,X,X,X,X,X,X,X,X,X,X,X,X,X,X,X,X,X'   (24個)
+:TRIGger:PATTern:PATTern H,L,X,X -> 0,"No error"
+:TRIGger:PATTern:PATTern?        -> 'H,L,X,X,X,...'                                      (先頭4個が反映)
+:TRIGger:DURation:TYPE?          -> 'L,X,X,X'                                            (4個)
+:TRIGger:DURation:TYPE L,X,H,L   -> 0,"No error"
+```
+
+ガイド3.27.12.1 / 3.27.13.2 の構文は `<pch1>[,<pch2>[,<pch3>[,<pch4>]]]` で CH1〜CH4 を一度に指定する。**書けるのはアナログch分だけだが、読み戻しは24個返る**(デジタル/MATH分と思われる)。実装はアナログch数までに切っている。
+
+### 8.2 `:TRIGger:LIN:DATA?` は2進マスク
+
+```
+:TRIGger:LIN:DATA?      -> 'XXXXXXXX'   (未設定。X = don't care)
+:TRIGger:LIN:DATA 100   -> 0,"No error"
+:TRIGger:LIN:DATA?      -> '01100100'   (= 100 の2進表現)
+:TRIGger:CAN:DATA?      -> '0'          (他プロトコルは素の整数)
+```
+
+ガイド3.27.24.9 の Return Format は「0 から 2^64-1 の整数を返す」だが**実機は違う**。全て0/1なら整数へ、`X` を含むならマスク文字列のまま返す実装にした。**この表現の違いは LIN だけ**で、CAN / SPI / I2C / RS232 の `:DATA?` は素の整数を返す。
+
+### 8.3 種別を切り替えるとトリガレベルが伝播する
+
+window トリガの `level_a_v`(0.48)を触ったあと edge へ戻したところ、`:TRIGger:EDGE:LEVel?` が元の 0.18 ではなく **0.48** になっていた。復元するときは**元の種別へ戻したうえでレベルも明示的に書き戻す**必要がある(本検証では手動で 0.18 へ戻して確認済み)。
+
+## 9. V-9 決着: `:TRIGger:WINDows:SLOPe` の綴り
+
+| 送信 | エラーキュー | 読み戻し |
+|---|---|---|
+| `:TRIGger:WINDows:SLOPe RFALl` | `0,"No error"` | `RFAL` |
+| `:TRIGger:WINDows:SLOPe RFALI` | **`-222,"Data out of range"`** | `RFAL`(変わらず) |
+
+**ガイド3.27.16.2 の Range欄 `RFALI`(大文字I)は誤植。** Remarks欄の `RFALl`(小文字L)が正しく、EDGE / TIMeout と同じ綴り。`trigger_window_slopes` に `either: RFALl` を宣言した。
+
+## 10. 測定区間(カーソル領域)と `area="zoom"`
+
+```
+:MEASure:AREA CURSor          -> 0,"No error"
+:MEASure:CREGion:CAX -0.0001  -> 0,"No error" / 読み戻し '-1.000000E-4'
+:MEASure:CREGion:CBX 0.0001   -> 0,"No error" / 読み戻し '1.000000E-4'
+:MEASure:CREGion:CABX?        -> '0'
+:MEASure:AREA ZOOM            -> 0,"No error"     ← エラーを積まない
+:MEASure:AREA?                -> 'CURS'           ← **値が変わっていない**
+```
+
+**`area="zoom"` は遅延掃引が無効だと無言で無視される**(ガイド3.17.19 Remarks のとおりだが、拒否ではなく無視)。`applied` が要求値と一致しないことで呼び出し側は検出できる。
+
 ## 未実施・今後の予定
 
-- **今回実機で送っていないトリガ種別が14種ある**(slope / pattern / duration / timeout / runt / window / delay / setup_hold / nth_edge / uart / spi / can / lin)。項目表は同じ機構なので構造的なリスクは低いが、**種別ごとの値域は未検証**
-- **V-9(`:TRIGger:WINDows:SLOPe` の両エッジの綴り)は未確認。** ガイドの Range欄 `RFALI` と Remarks欄 `RFALl` のどちらが正しいか、1コマンドのプローブで決着する
-- `area="zoom"`(遅延掃引が前提)は未検証。遅延掃引そのものが未実装のため
-- `configure_measurement` の `region_ax_s` / `region_bx_s`(カーソル区間)は未検証。画面にカーソルが出る操作のため今回は触っていない
+- **オプション必須のトリガ3種**(FlexRay / I2S / MIL-STD-1553)は未実装・未検証。ライセンスは適用済みなので実機検証の障害は無い
+- **`VIDeo` トリガ**は優先度「低」のため未実装
+- CURRbit / CODE(データのビット単位マスク編集)は未対応。LIN の `:DATA?` がマスクを返すことが分かったので、着手するならこの機構と合わせて設計する
+- `area="zoom"` の実動作は遅延掃引(`:TIMebase:DELay:*`)の実装後に再検証する

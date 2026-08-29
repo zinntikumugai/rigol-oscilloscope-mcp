@@ -931,7 +931,7 @@ MATH演算の現在設定を読む。**書き込みは一切行わず**、表示
 動作・規範:
 
 - **送信順を項目表で固定している。** `threshold_default`(既定へ戻す)を先頭に置くのは、同じ呼び出しで指定されたしきい値を後から潰さないため(M3の `:REFerence:RESet` と同じ原則)。`threshold_type` は `SETup:MAX/MID/MIN` より前(値域がtypeに依存する)、`area` は `CREGion:*` より前(区間の指定先を決める)、`amp_type` は `AMP:MANual:TOP/BASE` より前。`statistics_reset` は末尾(設定を変えてから取り直す)。**この順序を後から「単純化」してはならない**
-- **`area="zoom"` は遅延掃引の有効化が前提**(ガイド3.17.19 Remarks)。遅延掃引はまだ未実装なので、現状 `zoom` を指定すると機器が拒否する(エラーキュー確認で `SCPI_ERROR` として返る)
+- **`area="zoom"` は遅延掃引の有効化が前提**(ガイド3.17.19 Remarks)。遅延掃引はまだ未実装で、**実測では `:MEASure:AREA ZOOM` はエラーを積まずに無言で無視される**(読み戻しは直前の値のまま)。`applied` に反映されないことで検出できる
 - **`statistics_items` は `source` の同時指定を必須にしている。** ガイド3.17.8 の Remark によれば機器は省略時に「最後に選んだソース」を使い、呼び出し側から結果が予測できなくなるため
 - **プロファイルゲート**: `measure_areas` / `measure_threshold_types` / `measure_amp_types` / `measure_amp_methods` が未宣言の機種では送信ゼロで `UNSUPPORTED_FEATURE`。宣言しているのは `mho98` のみ
 - **意図的にスキップ**(ガイド3.17にあるが実装しない): `:MEASure:TYPE`(3.17.20)/ `:MEASure:CATegory`(3.17.33)/ `:MEASure:AMSource`(3.17.4)/ `:MEASure:INDicator`(3.17.24)— いずれも本体画面の分類・表示のみで測定値に影響しない。`:MEASure:SETup:PSA`・`PSB`・`DSA`・`DSB`(3.17.12-15)も不要 — `measure` / `get_measurement_statistics` が2ソースをコマンド引数で直接渡すため
@@ -973,12 +973,12 @@ MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標
 | `pulse` | 幅が範囲外のパルス(**グリッチ**) | `source` / `level_v` / `polarity`(positive/negative)/ `when`(greater/less/between)/ `upper_width_s` / `lower_width_s` |
 | `slope` | 遷移時間が範囲外のエッジ | `source` / `polarity` / `when` / `upper_time_s` / `lower_time_s` / `window`(a/b/ab)/ `level_a_v` / `level_b_v` |
 | `timeout` | 一定時間エッジが来ない(**無応答・ハング**) | `source` / `level_v` / `slope` / `time_s` |
-| `duration` | 状態の継続時間が範囲外 | `source` / `level_v` / `pattern`(high/low/ignore)/ `when`(greater/less/between/outside)/ `upper_time_s` / `lower_time_s` |
+| `duration` | 状態の継続時間が範囲外 | `source` / `level_v` / **`pattern`(ch別のリスト。`["low","ignore","high","low"]`)** / `when`(greater/less/between/outside)/ `upper_time_s` / `lower_time_s` |
 | `runt` | 振幅が足りないパルス(**信号品質**) | `source` / `polarity` / `when`(none/greater/less/between)/ `upper_width_s` / `lower_width_s` / `level_a_v` / `level_b_v` |
 | `window` | 電圧帯からの逸脱・進入 | `source` / `slope` / `position`(exit/enter/time)/ `time_s` / `level_a_v` / `level_b_v` |
 | `delay` | 2ソースのエッジ間時間が範囲外 | `source_a` / `slope_a` / `source_b` / `slope_b` / `when`(greater/less/between/outside)/ `upper_time_s` / `lower_time_s` / `level_a_v` / `level_b_v` |
 | `setup_hold` | **セットアップ/ホールド違反** | `data_source` / `clock_source` / `slope` / `pattern`(high/low)/ `when`(setup/hold/both)/ `setup_time_s` / `hold_time_s` / `data_level_v` / `clock_level_v` |
-| `pattern` | 複数chの論理状態の組み合わせ | `source` / `level_v` / `pattern`(high/low/ignore/rising/falling) |
+| `pattern` | 複数chの論理状態の組み合わせ | `source` / `level_v` / **`pattern`(ch別のリスト。`["high","low","ignore","ignore"]`)** |
 | `nth_edge` | アイドル後のN番目のエッジ | `source` / `level_v` / `slope` / `idle_time_s` / `edge_number`(1〜65535) |
 | `uart` | RS232/UARTの**エラーフレーム・特定データ** | `source` / `level_v` / `polarity` / `when`(start/error/check_error/data)/ `baud_bps` / `user_baud_bps` / `data_bits`(5-8)/ `stop_bits`(1/1.5/2)/ `parity`(even/odd/none)/ `data` |
 | `i2c` | I2Cの**NACK・特定アドレス/データ** | `clock_source` / `clock_level_v` / `data_source` / `data_level_v` / `when`(start/restart/stop/nack/address/data/address_data)/ `address_bits`(7/8/10)/ `address` / `direction`(read/write/both)/ `data_bytes`(1-5)/ `data` |
@@ -1008,7 +1008,10 @@ MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標
    - `setup_hold`: MODEは **`SETup`**、サブツリーは **`:TRIGger:SHOLd`**
 2. **`when` の値域は種別ごとに違う。** 共有の対応表にすると値域外のトークンを送ってしまうため、プロファイルの方言キーを種別ごとに分けている(`trigger_pulse_when` / `trigger_duration_when` / `trigger_runt_when` / `trigger_delay_types`)
 3. **同じ `POSitive` / `NEGative` でも意味が違う。** `polarity` はパルスの正負、`slope` はエッジの向き。方言も `trigger_polarities` と `trigger_edge_slopes` に分けている
-4. **`window` の両エッジは未対応。** ガイド3.27.16.2 の Range欄は `RFALI`(大文字I)、Remarks欄は `RFALl`(小文字L)で綴りが割れている。**実機で確定するまで宣言しない**(AGENTS.mdルール2)
-5. **SPIは `CLK`/`SCL` と `MISO`/`SDA` が同義の別名**(ガイドの説明文が同一)。片方(`:CLK` / `:MISO`)だけを公開している — 両方出すと同じ設定に2つの入口ができる
-6. **CURRbit / CODE(データのビット単位マスク)は意図的に未対応。** 「桁を選ぶ → その桁の値を 0/1/任意 に設定」という状態を持つ2コマンドの対で、デコードの `bit_sources` と同じくリスト値のキーが要る。`data` で「この値のとき」は表現できるため、必要になってから足す
-7. **プロファイルゲートは「宣言された種別」で行う。** モジュールの項目表にあるだけでは足りない — 実機未検証の機種へ `:TRIGger:MODE PULSe` を送ってしまう。DHO系プロファイルは `edge` のみ宣言している
+4. **`window` の両エッジはガイドの Range欄が誤植。** 3.27.16.2 の Range欄は `RFALI`(大文字I)だが**実機は `-222` で拒否する**。Remarks欄の `RFALl`(小文字L)が正しく、他のトリガ(EDGE / TIMeout)と同じ綴り([verification/mho98-m4-m5.md](verification/mho98-m4-m5.md) で決着)
+5. **`pattern` トリガと `duration` トリガの `pattern` は「ch別のリスト」**(ガイド3.27.12.1 / 3.27.13.2 の `<pch1>[,<pch2>[,<pch3>[,<pch4>]]]`)。単一の列挙値ではない。アナログch数までのリストを渡す。**読み戻しは機器が24個返す**ことがある(デジタル/MATH分)が、書けるのはアナログch分だけなのでそこまでに切っている
+6. **`:TRIGger:LIN:DATA?` は2進のビットマスク文字列を返す**(`'01100100'`。未設定ビットは `X` で `'XXXXXXXX'`)。ガイドは「整数を返す」と書いているが実機は違う。**全て0/1なら整数へ、`X` を含むならマスク文字列のまま**返す。他プロトコル(CAN等)の `:DATA?` は素の整数
+7. **種別を切り替えるとトリガレベルがサブツリー間で伝播する**(実測: window の `level_a_v` を触ったあと edge に戻すと `level_v` が変わっていた)。復元するときは**元の種別へ戻したうえでレベルも明示的に書き戻す**
+8. **SPIは `CLK`/`SCL` と `MISO`/`SDA` が同義の別名**(ガイドの説明文が同一)。片方(`:CLK` / `:MISO`)だけを公開している — 両方出すと同じ設定に2つの入口ができる
+9. **CURRbit / CODE(データのビット単位マスク)は意図的に未対応。** 「桁を選ぶ → その桁の値を 0/1/任意 に設定」という状態を持つ2コマンドの対で、デコードの `bit_sources` と同じくリスト値のキーが要る。`data` で「この値のとき」は表現できるため、必要になってから足す
+10. **プロファイルゲートは「宣言された種別」で行う。** モジュールの項目表にあるだけでは足りない — 実機未検証の機種へ `:TRIGger:MODE PULSe` を送ってしまう。DHO系プロファイルは `edge` のみ宣言している
