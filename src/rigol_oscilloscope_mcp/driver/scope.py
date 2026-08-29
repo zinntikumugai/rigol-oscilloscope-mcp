@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -120,9 +121,9 @@ _MEASURE_SETUP_ITEMS: tuple[tuple[str, str, object], ...] = (
     ("source", ":SOURce", "lsource"),
     ("threshold_source", ":THReshold:SOURce", "achannel"),
     ("threshold_type", ":THReshold:TYPE", ("enum", "measure_threshold_types", "the measurement threshold type")),
-    ("threshold_max", ":SETup:MAX", "number"),
-    ("threshold_mid", ":SETup:MID", "number"),
-    ("threshold_min", ":SETup:MIN", "number"),
+    ("threshold_max", ":SETup:MAX", "threshold"),
+    ("threshold_mid", ":SETup:MID", "threshold"),
+    ("threshold_min", ":SETup:MIN", "threshold"),
     ("area", ":AREA", ("enum", "measure_areas", "the measurement range")),
     ("region_ax_s", ":CREGion:CAX", "number"),
     ("region_bx_s", ":CREGion:CBX", "number"),
@@ -620,6 +621,16 @@ def math_source_number(value: object) -> int | None:
     """
     match = _MATH_SOURCE_RE.match(value.strip()) if isinstance(value, str) else None
     return int(match.group(1)) if match else None
+
+
+def _threshold_token(key: str, value: object) -> str:
+    """しきい値の送信形。**整数値は小数点を落とす**(実機がそれを要求する)。"""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise _invalid(f"{key} is not a number: {value!r}", {"key": key, "value": value})
+    number = float(value)
+    if not math.isfinite(number):
+        raise _invalid(f"{key} is not finite: {value!r}", {"key": key, "value": value})
+    return str(int(number)) if number.is_integer() else repr(number)
 
 
 def _choice_token(value: object, key: str, allowed: tuple) -> str:
@@ -1478,7 +1489,7 @@ class ScopeDriver:
 
     def get_trigger_position(self) -> float | None:
         """取得メモリ内のトリガ発生位置(ガイド3.27.7。読み取り専用)。"""
-        return _readout(self.session.query(":TRIGger:POSition?"))
+        return self._readout(":TRIGger:POSition?")
 
     # -- シリアルデコード(tools.md 6章)-----------------------------------
 
@@ -2468,6 +2479,15 @@ class ScopeDriver:
             # 読み戻しは引用符無しの `TESTLBL`。つまりこの strip は**現状不要**
             # だが、他機種・他ファームで引用符が付く可能性に対して無害なので残す
             return _reference_label, (lambda text: text.strip().strip('"'))
+        if kind == "threshold":
+            # **実機実測**: `:MEASure:SETup:MAX 88.0` は黙って上限へ張り付く。
+            # ガイド3.17.9-11 の型は Integer で、percentモードは小数形を誤解釈
+            # する(エラーは積まれない)。absoluteモードは小数が要るが整数形も
+            # 受理するので、「整数値のときだけ小数点を落とす」で両立する
+            return (
+                (lambda value, key: _threshold_token(key, value)),
+                parse_nr3,
+            )
         if isinstance(kind, tuple) and kind[0] == "choice":
             # 飛び飛びの数値選択肢(RS232のストップビット 1/1.5/2 など)。
             # decode.py の `_choice` と同じ考え方を項目表からも使えるようにする

@@ -3745,10 +3745,10 @@ def test_configure_measurement_sends_items_in_table_order(
     assert writes == [
         ":MEASure:THReshold:DEFault",
         ":MEASure:THReshold:TYPE ABSolute",
-        ":MEASure:SETup:MAX 2.0",
+        ":MEASure:SETup:MAX 2",
         ":MEASure:AREA CURSor",
         ":MEASure:CREGion:CAX -1e-05",
-        ":MEASure:AMP:TYPE MANual",
+        ":MEASure:AMP:TYPE MAN",
         ":MEASure:AMP:MANual:TOP MAXMin",
         ":MEASure:STATistic:RESet",
     ]
@@ -4094,3 +4094,43 @@ def test_configure_trigger_serial_unsupported_on_dho(scope: FakeScope) -> None:
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert not [c for c in scope.command_log if "?" not in c]
+
+
+def test_configure_measurement_sends_integral_thresholds_without_decimal_point(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """**実機実測**: `:MEASure:SETup:MAX 88.0` は黙って100へ張り付く。
+
+    ガイド3.17.9-11 の型は Integer で、percentモードでは小数形を機器が
+    誤解釈する(エラーは積まれない)。absoluteモードでは小数が必要なので、
+    「整数値のときだけ小数点を落とす」形にする(absoluteでも整数形は通る)。
+    """
+    driver.configure_measurement(threshold_max=88.0, threshold_mid=48, threshold_min=0.5)
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":MEASure")]
+    assert writes == [
+        ":MEASure:SETup:MAX 88",
+        ":MEASure:SETup:MID 48",
+        ":MEASure:SETup:MIN 0.5",
+    ]
+
+
+def test_amp_type_uses_the_short_form(driver: ScopeDriver, scope: FakeScope) -> None:
+    """**実機実測**: `:MEASure:AMP:TYPE MANual` は `-222` で拒否され、`MAN` が通る。
+
+    `VAVerage` が不可で `VAVG` が通るのと同じ癖。`AMP:MANual:TOP` / `BASE` は
+    長形を受理するので、短形が要るのは `AMP:TYPE` だけ。
+    """
+    driver.configure_measurement(amp_type="manual", amp_top="maxmin")
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":MEASure")]
+    assert writes == [":MEASure:AMP:TYPE MAN", ":MEASure:AMP:MANual:TOP MAXMin"]
+
+
+def test_get_trigger_position_reads_without_writing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    position = driver.get_trigger_position()
+
+    assert position is None or isinstance(position, float)
+    assert scope.command_log == [":TRIGger:POSition?"]

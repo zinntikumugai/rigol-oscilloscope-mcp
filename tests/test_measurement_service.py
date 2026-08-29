@@ -283,3 +283,24 @@ def test_measure_omits_channel_b_key_when_unused(driver: ScopeDriver) -> None:
     result = measure(driver, "CH1", ["vpp"])
 
     assert "channel_b" not in result
+
+
+def test_measure_warns_when_too_many_items_are_requested(driver: ScopeDriver) -> None:
+    """**実機実測**: 同時に有効化する項目が多いと一部が番兵値になる。
+
+    MHO98では16項目以上で毎回ランダムに数項目が `unknown` になり、読み直しても
+    収束しない(12項目以下なら2巡目で収束する)。呼び出し側が「測れない」と
+    誤解しないよう警告を添える。
+    """
+    from rigol_oscilloscope_mcp.driver.scope import MEASUREMENT_KEYS
+
+    names = list(MEASUREMENT_KEYS)[:16]
+    result = measure(driver, "CH1", names)
+
+    assert any("16" in w or "at once" in w for w in result["warnings"])
+
+
+def test_measure_does_not_warn_for_a_small_batch(driver: ScopeDriver) -> None:
+    result = measure(driver, "CH1", ["frequency", "vpp"])
+
+    assert result["warnings"] == []

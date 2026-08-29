@@ -254,7 +254,10 @@ dialect:
     absolute: ABSolute
   measure_amp_types: # ガイド3.17.28
     auto: AUTO
-    manual: MANual
+    # **実機実測**: 長形 `MANual` は -222 で拒否され、短形 `MAN` が通る
+    # (`VAVerage` 不可 / `VAVG` 可 と同じ癖)。`AMP:MANual:TOP` / `BASE` は
+    # 長形を受理するので、短形が要るのは `AMP:TYPE` だけ
+    manual: MAN
   measure_amp_methods: # ガイド3.17.29/3.17.30(TOP / BASE 共通の値域)
     histogram: HISTogram
     maxmin: MAXMin

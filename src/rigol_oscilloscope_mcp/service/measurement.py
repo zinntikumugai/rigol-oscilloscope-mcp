@@ -25,6 +25,13 @@ _METER_UNITS: dict[str, dict[str, str]] = {
 }
 
 
+#: 1回の呼び出しで安全に読める測定項目数(**MHO98実機実測**)。
+#: 16項目以上を同時に有効化すると毎回ランダムに数項目が番兵値になり、読み直しても
+#: 収束しない。12項目以下なら1巡目に数件出ても2巡目で収束する。
+#: 記録: docs/verification/mho98-m4-m5.md
+RELIABLE_MEASUREMENT_BATCH = 12
+
+
 def _warning(name: str) -> str:
     return f"{name} measurement is invalid (possibly no signal or not yet settled)"
 
@@ -58,6 +65,14 @@ def measure(
         "quality": {r.name: r.quality for r in results},
         "warnings": [_warning(r.name) for r in results if r.quality != VALID_QUALITY],
     }
+    if len(names) > RELIABLE_MEASUREMENT_BATCH:
+        payload["warnings"].insert(
+            0,
+            f"{len(names)} measurement items were requested at once; the device "
+            f"cannot keep more than about {RELIABLE_MEASUREMENT_BATCH} items updated "
+            "and reports the rest as invalid at random. Split the request into "
+            "smaller batches and clear_measurements between them.",
+        )
     if channel_b is not None:
         payload["channel_b"] = normalize_channel(channel_b)
     return payload
