@@ -25,12 +25,27 @@ _METER_UNITS: dict[str, dict[str, str]] = {
 }
 
 
+#: 1回の呼び出しで安全に読める測定項目数(**MHO98実機実測**)。
+#: 16項目以上を同時に有効化すると毎回ランダムに数項目が番兵値になり、読み直しても
+#: 収束しない。12項目以下なら1巡目に数件出ても2巡目で収束する。
+#: 記録: docs/verification/mho98-m4-m5.md
+RELIABLE_MEASUREMENT_BATCH = 12
+
+
 def _warning(name: str) -> str:
     return f"{name} measurement is invalid (possibly no signal or not yet settled)"
 
 
-def measure(driver: ScopeDriver, channel: str, measurements: list[str]) -> dict:
-    """指定チャンネルの測定値を読む。"""
+def measure(
+    driver: ScopeDriver,
+    channel: str,
+    measurements: list[str],
+    channel_b: str | None = None,
+) -> dict:
+    """指定チャンネルの測定値を読む。
+
+    `channel_b` は遅延・位相測定の第2ソース。使ったときだけ返却に含める。
+    """
     # 重複除去(順序は維持)。同一項目を2度問い合わせない。
     names = list(dict.fromkeys(measurements))
     if not names:
@@ -41,8 +56,8 @@ def measure(driver: ScopeDriver, channel: str, measurements: list[str]) -> dict:
         )
 
     # 先にドライバへ委ねる(チャンネル名・測定項目の検証はドライバの責務)
-    results = driver.measure(channel, names)
-    return {
+    results = driver.measure(channel, names, channel_b)
+    payload = {
         # 返却は正規化名で揃える(`chan1` / `1` でも "CH1")。
         # 検証済みの入力に対する表記ゆれ吸収のみで、判定はドライバが済ませている。
         "channel": normalize_channel(channel),
@@ -50,6 +65,52 @@ def measure(driver: ScopeDriver, channel: str, measurements: list[str]) -> dict:
         "quality": {r.name: r.quality for r in results},
         "warnings": [_warning(r.name) for r in results if r.quality != VALID_QUALITY],
     }
+    if len(names) > RELIABLE_MEASUREMENT_BATCH:
+        payload["warnings"].insert(
+            0,
+            f"{len(names)} measurement items were requested at once; the device "
+            f"cannot keep more than about {RELIABLE_MEASUREMENT_BATCH} items updated "
+            "and reports the rest as invalid at random. Split the request into "
+            "smaller batches and clear_measurements between them.",
+        )
+    if channel_b is not None:
+        payload["channel_b"] = normalize_channel(channel_b)
+    return payload
+
+
+def get_measurement_statistics(
+    driver: ScopeDriver,
+    channel: str,
+    measurements: list[str],
+    types: list[str] | None = None,
+    channel_b: str | None = None,
+) -> dict:
+    """測定項目ごとの統計値を読む(tools.md 14章)。
+
+    統計は `configure_measurement` の `statistics_items` で先に有効化しておく。
+    """
+    names = list(dict.fromkeys(measurements))
+    if not names:
+        raise ScopeError(
+            ErrorCode.INVALID_PARAMETER,
+            "measurements is empty (specify at least one measurement item)",
+            {"measurements": measurements},
+        )
+
+    stats = driver.get_measurement_statistics(channel, names, types, channel_b)
+    payload = {
+        "channel": normalize_channel(channel),
+        # 意味的名 → {統計種別: 値}。値がNoneなら機器が番兵値を返した
+        "statistics": stats,
+        "warnings": [
+            _warning(name)
+            for name, values in stats.items()
+            if all(value is None for value in values.values())
+        ],
+    }
+    if channel_b is not None:
+        payload["channel_b"] = normalize_channel(channel_b)
+    return payload
 
 
 def get_meter_value(driver: ScopeDriver, kind: str) -> dict:

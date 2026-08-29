@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -48,19 +49,96 @@ from .parsers import (
 )
 from .session import ScpiSession
 
-# 測定の意味的名 → SI単位付きキー(Requirements.md 7.5)
+# 測定の意味的名 → SI単位付きキー(Requirements.md 7.5)。
+# ガイド3.17.2 の <item> 41トークンに1対1で対応する。SCPIニモニックは
+# 機種プロファイルの `dialect.measurement_items` が持つ(綴りは機種差がある)。
 MEASUREMENT_KEYS: dict[str, str] = {
+    # 時間・周期系(ガイド "Horizontal Parameters")
     "frequency": "frequency_hz",
     "period": "period_s",
+    "rise_time": "rise_time_s",
+    "fall_time": "fall_time_s",
+    "pulse_width_pos": "pulse_width_pos_s",
+    "pulse_width_neg": "pulse_width_neg_s",
+    "duty": "duty_ratio",
+    "duty_neg": "duty_neg_ratio",
+    "time_at_vmax": "time_at_vmax_s",
+    "time_at_vmin": "time_at_vmin_s",
+    # 振幅・電圧系(ガイド "Vertical Parameters")
     "vpp": "vpp_v",
     "vmax": "vmax_v",
     "vmin": "vmin_v",
+    "vtop": "vtop_v",
+    "vbase": "vbase_v",
+    "vamp": "vamp_v",
+    "vupper": "vupper_v",
+    "vmid": "vmid_v",
+    "vlower": "vlower_v",
     "vavg": "vavg_v",
     "rms": "rms_v",
-    "duty": "duty_ratio",
-    "rise_time": "rise_time_s",
-    "fall_time": "fall_time_s",
+    "period_rms": "period_rms_v",
+    "ac_rms": "ac_rms_v",
+    "overshoot": "overshoot_ratio",
+    "preshoot": "preshoot_ratio",
+    # 面積・スルーレート系(ガイド "Other Parameters")
+    "area": "area_vs",
+    "period_area": "period_area_vs",
+    "slew_rate_pos": "slew_rate_pos_v_per_s",
+    "slew_rate_neg": "slew_rate_neg_v_per_s",
+    # カウント系
+    "pulses_pos": "pulses_pos_count",
+    "pulses_neg": "pulses_neg_count",
+    "edges_pos": "edges_pos_count",
+    "edges_neg": "edges_neg_count",
+    # 位相・遅延系(**2ソース必須**。DUAL_SOURCE_MEASUREMENTS を参照)
+    "delay_rise_rise": "delay_rise_rise_s",
+    "delay_rise_fall": "delay_rise_fall_s",
+    "delay_fall_rise": "delay_fall_rise_s",
+    "delay_fall_fall": "delay_fall_fall_s",
+    "phase_rise_rise": "phase_rise_rise_deg",
+    "phase_rise_fall": "phase_rise_fall_deg",
+    "phase_fall_rise": "phase_fall_rise_deg",
+    "phase_fall_fall": "phase_fall_fall_deg",
 }
+
+#: ソースを2つ取る測定項目(ガイド3.17.2 の `<item>[,<src>[,<src>]]`)。
+#: 第2ソースを省略すると機器は「最後に選んだソース」を使う(ガイドのRemark)。
+#: 呼び出し側から見て結果が予測できないため、**省略は送信前に拒否する**。
+DUAL_SOURCE_MEASUREMENTS: frozenset[str] = frozenset(
+    name
+    for name in MEASUREMENT_KEYS
+    if name.startswith(("delay_", "phase_"))
+)
+
+#: 測定の前提設定(ガイド3.17)。**この並びがそのまま送信順**。
+#: - `threshold_default`(既定へ戻す)を先頭に置くのは、同じ呼び出しで指定された
+#:   しきい値を後から潰さないため(M3の `:REFerence:RESet` と同じ原則)
+#: - `threshold_type` は `SETup:MAX/MID/MIN` より前(値域が type に依存する)
+#: - `area` は `CREGion:*` より前(区間の指定先を決める)
+#: - `amp_type` は `AMP:MANual:TOP/BASE` より前
+#: - `statistics_reset`(履歴クリア)は末尾。設定を変えてから取り直す
+_MEASURE_SETUP_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "lsource"),
+    ("threshold_source", ":THReshold:SOURce", "achannel"),
+    ("threshold_type", ":THReshold:TYPE", ("enum", "measure_threshold_types", "the measurement threshold type")),
+    ("threshold_max", ":SETup:MAX", "threshold"),
+    ("threshold_mid", ":SETup:MID", "threshold"),
+    ("threshold_min", ":SETup:MIN", "threshold"),
+    ("area", ":AREA", ("enum", "measure_areas", "the measurement range")),
+    ("region_ax_s", ":CREGion:CAX", "number"),
+    ("region_bx_s", ":CREGion:CBX", "number"),
+    ("region_linked", ":CREGion:CABX", "bool"),
+    ("amp_type", ":AMP:TYPE", ("enum", "measure_amp_types", "the amplitude method")),
+    ("amp_top", ":AMP:MANual:TOP", ("enum", "measure_amp_methods", "the manual amplitude top method")),
+    ("amp_base", ":AMP:MANual:BASE", ("enum", "measure_amp_methods", "the manual amplitude base method")),
+    ("statistics_enabled", ":STATistic:DISPlay", "bool"),
+    ("statistics_count", ":STATistic:COUNt", ("int", 2, 100_000)),
+)
+_MEASURE_PREFIX = ":MEASure"
+#: read-back を持たない一発動作(ガイド3.17.18 / 3.17.7)
+_MEASURE_THRESHOLD_DEFAULT = ":MEASure:THReshold:DEFault"
+_MEASURE_STATISTIC_RESET = ":MEASure:STATistic:RESet"
+_MEASURE_STATISTIC_ITEM = ":MEASure:STATistic:ITEM"
 
 # 機器が「測定不能」を示すために返す番兵値(±9.9E37 前後)
 INVALID_MEASUREMENT = 9.0e37
@@ -79,6 +157,200 @@ BWLIMIT_OFF = "OFF"
 IMPEDANCE_UNKNOWN = "unknown"
 
 DEFAULT_ANALOG_CHANNELS = 4
+#: トリガ種別ごとの項目表(ガイド3.27)。`(意味的キー, SCPIパス, 種別)`。
+#: **キー名が `source` / `level_v` / `slope` のものは TriggerState の最上位にも出す**
+#: (既存の返却形を保つため。2ソース・2レベルの種別は最上位が None になる)。
+_TRIGGER_EDGE_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("slope", ":SLOPe", ("enum", "trigger_slopes", "the edge trigger slope")),
+)
+_TRIGGER_PULSE_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("polarity", ":POLarity", ("enum", "trigger_polarities", "the pulse polarity")),
+    ("when", ":WHEN", ("enum", "trigger_pulse_when", "the pulse width condition")),
+    ("upper_width_s", ":UWIDth", "number"),
+    ("lower_width_s", ":LWIDth", "number"),
+)
+_TRIGGER_SLOPE_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("polarity", ":POLarity", ("enum", "trigger_polarities", "the slope polarity")),
+    ("when", ":WHEN", ("enum", "trigger_pulse_when", "the slope time condition")),
+    ("upper_time_s", ":TUPPer", "number"),
+    ("lower_time_s", ":TLOWer", "number"),
+    ("window", ":WINDow", ("enum", "trigger_slope_windows", "the slope level window")),
+    ("level_a_v", ":ALEVel", "number"),
+    ("level_b_v", ":BLEVel", "number"),
+)
+_TRIGGER_PATTERN_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("pattern", ":PATTern", ("pattern", "trigger_pattern_levels", "the per-channel pattern")),
+)
+_TRIGGER_DURATION_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("pattern", ":TYPE", ("pattern", "trigger_duration_types", "the per-channel pattern")),
+    ("when", ":WHEN", ("enum", "trigger_duration_when", "the duration condition")),
+    ("upper_time_s", ":TUPPer", "number"),
+    ("lower_time_s", ":TLOWer", "number"),
+)
+_TRIGGER_TIMEOUT_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("slope", ":SLOPe", ("enum", "trigger_slopes", "the timeout edge")),
+    ("time_s", ":TIME", "number"),
+)
+_TRIGGER_RUNT_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("polarity", ":POLarity", ("enum", "trigger_polarities", "the runt polarity")),
+    ("when", ":WHEN", ("enum", "trigger_runt_when", "the runt width condition")),
+    ("upper_width_s", ":WUPPer", "number"),
+    ("lower_width_s", ":WLOWer", "number"),
+    ("level_a_v", ":ALEVel", "number"),
+    ("level_b_v", ":BLEVel", "number"),
+)
+#: **サブツリーは `:WINDows`(複数)。`:TRIGger:MODE` の値は `WINDow`(単数)**
+_TRIGGER_WINDOW_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("slope", ":SLOPe", ("enum", "trigger_window_slopes", "the window edge")),
+    ("position", ":POSition", ("enum", "trigger_window_positions", "the window trigger position")),
+    ("time_s", ":TIME", "number"),
+    ("level_a_v", ":ALEVel", "number"),
+    ("level_b_v", ":BLEVel", "number"),
+)
+_TRIGGER_DELAY_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source_a", ":SA", "tsource"),
+    ("slope_a", ":ASLop", ("enum", "trigger_edge_slopes", "the source A edge")),
+    ("source_b", ":SB", "tsource"),
+    ("slope_b", ":BSLop", ("enum", "trigger_edge_slopes", "the source B edge")),
+    ("when", ":TYPE", ("enum", "trigger_delay_types", "the delay condition")),
+    ("upper_time_s", ":TUPPer", "number"),
+    ("lower_time_s", ":TLOWer", "number"),
+    ("level_a_v", ":ALEVel", "number"),
+    ("level_b_v", ":BLEVel", "number"),
+)
+#: **サブツリーは `:SHOLd`。`:TRIGger:MODE` の値は `SETup`**
+_TRIGGER_SHOLD_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("data_source", ":DSRC", "tsource"),
+    ("clock_source", ":CSRC", "tsource"),
+    ("slope", ":SLOPe", ("enum", "trigger_edge_slopes", "the clock edge")),
+    ("pattern", ":PATTern", ("enum", "trigger_shold_patterns", "the data pattern")),
+    ("when", ":TYPE", ("enum", "trigger_shold_types", "which time is checked")),
+    ("setup_time_s", ":STIMe", "number"),
+    ("hold_time_s", ":HTIMe", "number"),
+    ("data_level_v", ":DLEVel", "number"),
+    ("clock_level_v", ":CLEVel", "number"),
+)
+_TRIGGER_NEDGE_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("slope", ":SLOPe", ("enum", "trigger_edge_slopes", "the counted edge")),
+    ("idle_time_s", ":IDLE", "number"),
+    ("edge_number", ":EDGE", ("int", 1, 65535)),
+)
+#: --- シリアルバストリガ(ガイド3.27.20-24)------------------------------
+#: デコード側(`:BUS<n>`)とは**別サブシステム**。デコードは「読んで表にする」、
+#: トリガは「条件に合った瞬間に取り込む」で、綴りも値域も別に確認している。
+#:
+#: **CURRbit / CODE(データのビット単位マスク)は意図的に未対応。**
+#: `<CURRbit で桁を選ぶ → CODE でその桁の値を 0/1/任意 に設定>` という状態を
+#: 持つ2コマンドの対で、decode の `bit_sources` と同じくリスト値のキーが要る。
+#: `data` で「この値のとき」は表現できるため、必要になってから足す。
+_TRIGGER_RS232_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("polarity", ":POLarity", ("enum", "trigger_polarities", "the RS232 polarity")),
+    ("when", ":WHEN", ("enum", "trigger_rs232_when", "the RS232 trigger condition")),
+    ("baud_bps", ":BAUD", ("int", 1, 20_000_000)),
+    ("user_baud_bps", ":BUSer", ("int", 1, 20_000_000)),
+    ("data_bits", ":WIDTh", ("choice", (5, 6, 7, 8))),
+    ("stop_bits", ":STOP", ("choice", (1, 1.5, 2))),
+    ("parity", ":PARity", ("enum", "trigger_parities", "the RS232 parity")),
+    ("data", ":DATA", ("int", 0, 255)),
+)
+_TRIGGER_IIC_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("clock_source", ":SCL", "tsource"),
+    ("clock_level_v", ":CLEVel", "number"),
+    ("data_source", ":SDA", "tsource"),
+    ("data_level_v", ":DLEVel", "number"),
+    ("when", ":WHEN", ("enum", "trigger_iic_when", "the I2C trigger condition")),
+    ("address_bits", ":AWIDth", ("choice", (7, 8, 10))),
+    ("address", ":ADDRess", ("int", 0, 1023)),
+    ("direction", ":DIRection", ("enum", "trigger_iic_directions", "the I2C direction")),
+    ("data_bytes", ":DBYTes", ("int", 1, 5)),
+    ("data", ":DATA", ("int", 0, 2**40 - 1)),
+)
+#: SPIは `CLK`/`SCL` と `MISO`/`SDA` が**同義の別名**(ガイドの説明文が同一)。
+#: 片方だけ公開する — 両方出すと同じ設定に2つの入口ができて混乱する
+_TRIGGER_SPI_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("clock_source", ":CLK", "tsource"),
+    ("clock_level_v", ":CLEVel", "number"),
+    ("clock_slope", ":SLOPe", ("enum", "trigger_edge_slopes", "the SPI clock edge")),
+    ("data_source", ":MISO", "tsource"),
+    ("data_level_v", ":DLEVel", "number"),
+    ("cs_source", ":CS", "tsource"),
+    ("cs_level_v", ":SLEVel", "number"),
+    ("cs_polarity", ":MODE", ("enum", "trigger_spi_cs_modes", "the chip select polarity")),
+    ("when", ":WHEN", ("enum", "trigger_spi_when", "how a frame is delimited")),
+    ("timeout_s", ":TIMeout", "number"),
+    ("data_bits", ":WIDTh", ("int", 4, 32)),
+    ("data", ":DATA", ("int", 0, 2**32 - 1)),
+)
+_TRIGGER_CAN_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("baud_bps", ":BAUD", ("int", 10_000, 5_000_000)),
+    ("signal_type", ":STYPe", ("enum", "trigger_can_signal_types", "the CAN signal type")),
+    ("when", ":WHEN", ("enum", "trigger_can_when", "the CAN trigger condition")),
+    ("sample_point_percent", ":SPOint", ("int", 10, 90)),
+    ("extended_id", ":EXTended", "bool"),
+    ("define", ":DEFine", ("enum", "trigger_can_defines", "what the data condition matches")),
+    ("data_bytes", ":DWIDth", ("int", 1, 8)),
+    ("data", ":DATA", ("int", 0, 2**64 - 1)),
+)
+_TRIGGER_LIN_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("standard", ":STANdard", ("enum", "trigger_lin_standards", "the LIN standard")),
+    ("baud_bps", ":BAUD", ("int", 1_000, 20_000_000)),
+    ("sample_point_percent", ":SAMPlepoint", ("int", 10, 90)),
+    ("when", ":WHEN", ("enum", "trigger_lin_when", "the LIN trigger condition")),
+    ("error_type", ":ERRor", ("enum", "trigger_lin_errors", "which LIN error is caught")),
+    ("frame_id", ":ID", ("int", 0, 63)),
+    # **実機実測**: 書き込みは整数だが読み戻しは2進マスク文字列
+    # (`'01100100'` / 未設定ビットは `X`)。ガイドは「整数を返す」と書いている
+    # が実機は違う。他プロトコル(CAN等)の `:DATA?` は素の整数を返す
+    ("data", ":DATA", "bitmask"),
+)
+#: 種別 → (SCPI接頭辞, 項目表)。**この表に無い種別は扱わない**(不在がゲート)
+_TRIGGER_SUBTREES: dict[str, tuple[str, tuple[tuple[str, str, object], ...]]] = {
+    "edge": (":TRIGger:EDGE", _TRIGGER_EDGE_ITEMS),
+    "pulse": (":TRIGger:PULSe", _TRIGGER_PULSE_ITEMS),
+    "slope": (":TRIGger:SLOPe", _TRIGGER_SLOPE_ITEMS),
+    "pattern": (":TRIGger:PATTern", _TRIGGER_PATTERN_ITEMS),
+    "duration": (":TRIGger:DURation", _TRIGGER_DURATION_ITEMS),
+    "timeout": (":TRIGger:TIMeout", _TRIGGER_TIMEOUT_ITEMS),
+    "runt": (":TRIGger:RUNT", _TRIGGER_RUNT_ITEMS),
+    "window": (":TRIGger:WINDows", _TRIGGER_WINDOW_ITEMS),
+    "delay": (":TRIGger:DELay", _TRIGGER_DELAY_ITEMS),
+    "setup_hold": (":TRIGger:SHOLd", _TRIGGER_SHOLD_ITEMS),
+    "nth_edge": (":TRIGger:NEDGe", _TRIGGER_NEDGE_ITEMS),
+    "uart": (":TRIGger:RS232", _TRIGGER_RS232_ITEMS),
+    "i2c": (":TRIGger:IIC", _TRIGGER_IIC_ITEMS),
+    "spi": (":TRIGger:SPI", _TRIGGER_SPI_ITEMS),
+    "can": (":TRIGger:CAN", _TRIGGER_CAN_ITEMS),
+    "lin": (":TRIGger:LIN", _TRIGGER_LIN_ITEMS),
+}
+#: 種別に依らない共通設定(サブツリーを持たない)
+_TRIGGER_COMMON_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("sweep_mode", ":SWEep", "sweep"),
+    ("holdoff_s", ":HOLDoff", "number"),
+)
+#: TriggerState の最上位へ昇格させる項目キー
+_TRIGGER_TOP_LEVEL_KEYS = ("source", "level_v", "slope")
+
 # :TRIGger:STATus? の生値がこれなら停止中(TD / WAIT / AUTO 等は動作中)
 STOPPED_TRIGGER_STATUS = "STOP"
 PREAMBLE_FIELDS = 10
@@ -350,6 +622,52 @@ def math_source_number(value: object) -> int | None:
     """
     match = _MATH_SOURCE_RE.match(value.strip()) if isinstance(value, str) else None
     return int(match.group(1)) if match else None
+
+
+def _pattern_token(value: object, key: str, to_token, width: int) -> str:
+    """ch別パターンのリストを `H,L,X,X` の形へ。スカラは受け付けない。"""
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise _invalid(
+            f"{key} must be a list of per-channel levels (one per analog channel)",
+            {"key": key, "value": value},
+        )
+    if not value or len(value) > width:
+        raise _invalid(
+            f"{key} must have 1 to {width} entries (one per analog channel)",
+            {"key": key, "value": list(value), "analog_channels": width},
+        )
+    return ",".join(to_token(item, key) for item in value)
+
+
+def _bitmask_readback(text: str) -> object:
+    """2進マスクの読み戻し。全て0/1なら整数へ、`X`(don't care)を含むならそのまま。"""
+    token = text.strip()
+    if token and all(c in "01" for c in token):
+        return int(token, 2)
+    return token
+
+
+def _threshold_token(key: str, value: object) -> str:
+    """しきい値の送信形。**整数値は小数点を落とす**(実機がそれを要求する)。"""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise _invalid(f"{key} is not a number: {value!r}", {"key": key, "value": value})
+    number = float(value)
+    if not math.isfinite(number):
+        raise _invalid(f"{key} is not finite: {value!r}", {"key": key, "value": value})
+    return str(int(number)) if number.is_integer() else repr(number)
+
+
+def _choice_token(value: object, key: str, allowed: tuple) -> str:
+    """飛び飛びの数値選択肢を送信形へ。整数は小数点を落とす(`1.0` → `1`)。"""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise _invalid(f"{key} is not a number: {value!r}", {"key": key, "value": value})
+    if not any(abs(float(value) - float(option)) < 1e-12 for option in allowed):
+        raise _invalid(
+            f"{key} must be one of {list(allowed)}: {value!r}",
+            {"key": key, "value": value, "allowed": list(allowed)},
+        )
+    number = float(value)
+    return str(int(number)) if number.is_integer() else str(number)
 
 
 def _invalid(message: str, detail: dict) -> ScopeError:
@@ -666,15 +984,67 @@ class ScopeDriver:
             memory_depth=_optional_number(query(":ACQuire:MDEPth?")),
         )
 
+    def _declared_trigger_types(self) -> dict[str, str]:
+        """このプロファイルが宣言する 種別名 → `:TRIGger:MODE` の値。
+
+        宣言の不在がそのままゲート(オプション必須の種別は載せない)。
+        項目表(`_TRIGGER_SUBTREES`)を持たない種別は宣言されていても扱わない。
+        **未宣言なら空dictを返す** — 読み取り(`get_trigger`)は方言なしでも
+        MVPから動いており、そこを壊さないため。書き込み側だけがゲートする。
+        """
+        declared = self.profile.dialect.get("trigger_types")
+        if not isinstance(declared, dict):
+            return {}
+        return {n: v for n, v in declared.items() if n in _TRIGGER_SUBTREES}
+
+    def _writable_trigger_types(self) -> dict[str, str]:
+        """書き込みに使う種別表。未宣言なら1コマンドも送らずに失敗する。"""
+        types = self._declared_trigger_types()
+        if not types:
+            raise _unsupported(
+                "this model's profile does not declare any trigger type",
+                {"dialect": "trigger_types", "profile": self.profile.name},
+            )
+        return types
+
+    def _trigger_type(self) -> str:
+        """機器の現在のトリガ種別(`:TRIGger:MODE?` を1本読む)。
+
+        宣言に無いトークン(オプション種別など)は**そのまま返す**。呼び出し側は
+        サブツリーを引けないので配下に触れない(get_decode_config と同じ fail-safe)。
+        `edge` は rigol-generic が宣言しているので全機種で解決する。
+        """
+        raw = self.session.query(":TRIGger:MODE?").strip()
+        types = self._declared_trigger_types()
+        _, from_scpi = profile_enum(tuple(types.items()))
+        try:
+            return from_scpi(raw)
+        except ScopeError:
+            return raw.upper()
+
     def get_trigger(self) -> TriggerState:
+        """現在のトリガ種別のサブツリーだけを読む。
+
+        **他の種別のサブツリーは1本も問い合わせない**(M2のカーソルで確立した
+        「今のモードのサブツリーだけを突く」原則)。
+        """
         query = self.session.query
+        trigger_type = self._trigger_type()
+        settings: dict[str, object] = {}
+        subtree = _TRIGGER_SUBTREES.get(trigger_type)
+        if subtree is not None:
+            prefix, items = subtree
+            for key, path, kind in items:
+                _, from_scpi = self._converter(kind, 0)
+                settings[key] = from_scpi(query(f"{prefix}{path}?"))
         return TriggerState(
-            type="edge",
-            source=self._normalize_source(query(":TRIGger:EDGE:SOURce?")),
-            level_v=parse_nr3(query(":TRIGger:EDGE:LEVel?")),
-            slope=from_scpi_slope(query(":TRIGger:EDGE:SLOPe?")),
+            type=trigger_type,
+            source=settings.get("source"),
+            level_v=settings.get("level_v"),
+            slope=settings.get("slope"),
             sweep_mode=from_scpi_sweep(query(":TRIGger:SWEep?")),
             status=self.get_trigger_status(),
+            settings=settings,
         )
 
     def get_trigger_status(self) -> str:
@@ -709,9 +1079,31 @@ class ScopeDriver:
 
     # -- 測定 -------------------------------------------------------------
 
-    def measure(self, channel: str, names: list[str]) -> list[MeasurementResult]:
-        """指定の測定項目を読む。未確認ニモニックは実機へ送らない。"""
+    def measure(
+        self,
+        channel: str,
+        names: list[str],
+        channel_b: str | None = None,
+    ) -> list[MeasurementResult]:
+        """指定の測定項目を読む。未確認ニモニックは実機へ送らない。
+
+        `channel_b` は遅延・位相(`DUAL_SOURCE_MEASUREMENTS`)専用の第2ソース。
+        単一ソース項目には付けない(機器が余分な引数を拒否しうるため)。
+        """
         number = self._channel_number(channel)
+        dual = [name for name in names if name in DUAL_SOURCE_MEASUREMENTS]
+        if dual and channel_b is None:
+            raise _invalid(
+                "channel_b is required for delay/phase measurements "
+                "(the device would otherwise reuse its last selected source)",
+                {"measurements": dual},
+            )
+        if channel_b is not None and not dual:
+            raise _invalid(
+                "channel_b is only used by delay/phase measurements",
+                {"measurements": list(names)},
+            )
+        number_b = self._channel_number(channel_b) if channel_b is not None else None
 
         # 1件でも未対応なら送信前に失敗する(部分的な送信でキューを汚さない)
         plan: list[tuple[str, str, str]] = []
@@ -727,14 +1119,173 @@ class ScopeDriver:
 
         results: list[MeasurementResult] = []
         for name, key, mnemonic in plan:
-            response = self.session.query(
-                f":MEASure:ITEM? {mnemonic},CHANnel{number}"
-            )
+            source = f"CHANnel{number}"
+            if name in DUAL_SOURCE_MEASUREMENTS:
+                source = f"{source},CHANnel{number_b}"
+            response = self.session.query(f":MEASure:ITEM? {mnemonic},{source}")
             value = parse_nr3(response)
             if abs(value) >= INVALID_MEASUREMENT:
                 results.append(MeasurementResult(name, key, None, "unknown"))
             else:
                 results.append(MeasurementResult(name, key, value, "valid"))
+        return results
+
+    def configure_measurement(
+        self,
+        *,
+        source: str | None = None,
+        threshold_source: str | None = None,
+        threshold_type: str | None = None,
+        threshold_max: float | None = None,
+        threshold_mid: float | None = None,
+        threshold_min: float | None = None,
+        threshold_default: bool | None = None,
+        area: str | None = None,
+        region_ax_s: float | None = None,
+        region_bx_s: float | None = None,
+        region_linked: bool | None = None,
+        amp_type: str | None = None,
+        amp_top: str | None = None,
+        amp_base: str | None = None,
+        statistics_enabled: bool | None = None,
+        statistics_count: int | None = None,
+        statistics_reset: bool | None = None,
+        statistics_items: list[str] | None = None,
+    ) -> dict:
+        """測定の前提設定(tools.md 14章)。None の項目は変更しない。
+
+        検証は全て送信前に済ませる。1つでも不正なら1コマンドも送らない。
+        """
+        values = {
+            "source": source,
+            "threshold_source": threshold_source,
+            "threshold_type": threshold_type,
+            "threshold_max": threshold_max,
+            "threshold_mid": threshold_mid,
+            "threshold_min": threshold_min,
+            "area": area,
+            "region_ax_s": region_ax_s,
+            "region_bx_s": region_bx_s,
+            "region_linked": region_linked,
+            "amp_type": amp_type,
+            "amp_top": amp_top,
+            "amp_base": amp_base,
+            "statistics_enabled": statistics_enabled,
+            "statistics_count": statistics_count,
+        }
+        # 統計の項目別有効化はソースを明示させる。省略すると機器は「最後に選んだ
+        # ソース」を使い、呼び出し側から結果が予測できなくなる(ガイド3.17.8)
+        if statistics_items and source is None:
+            raise _invalid(
+                "source is required when enabling statistics_items "
+                "(the device would otherwise reuse its last selected source)",
+                {"statistics_items": list(statistics_items)},
+            )
+
+        plan = self._command_plan(_MEASURE_PREFIX, 0, _MEASURE_SETUP_ITEMS, values)
+        stat_commands = self._statistic_enable_commands(statistics_items, source)
+
+        if not plan and not stat_commands and not threshold_default and not statistics_reset:
+            return {}
+
+        applied: dict[str, object] = {}
+        if threshold_default:
+            self.session.write_checked(_MEASURE_THRESHOLD_DEFAULT)
+            applied["threshold_default"] = True
+        for key, set_cmd, query, from_scpi in plan:
+            applied[key] = from_scpi(self.session.set_and_verify(set_cmd, query))
+        if stat_commands:
+            for command in stat_commands:
+                self.session.write_checked(command)
+            applied["statistics_items"] = list(statistics_items or [])
+        if statistics_reset:
+            self.session.write_checked(_MEASURE_STATISTIC_RESET)
+            applied["statistics_reset"] = True
+        return applied
+
+    def _statistic_enable_commands(
+        self, items: list[str] | None, source: str | None
+    ) -> list[str]:
+        """`:MEASure:STATistic:ITEM <item>,<src>` の送信計画(検証もここで)。"""
+        if not items:
+            return []
+        token = self._math_lsource(source, "source")
+        commands = []
+        for name in items:
+            mnemonic = self._measurement_mnemonic(name)
+            commands.append(f"{_MEASURE_STATISTIC_ITEM} {mnemonic},{token}")
+        return commands
+
+    def _measurement_mnemonic(self, name: str) -> str:
+        """測定項目名 → SCPIニモニック。未宣言なら送信前に失敗する。"""
+        mnemonic = self.profile.measurement_mnemonic(name)
+        if mnemonic is None or name not in MEASUREMENT_KEYS:
+            raise _unsupported(
+                f"measurement item '{name}' is unverified in this model's profile",
+                {"measurement": name, "profile": self.profile.name},
+            )
+        return mnemonic
+
+    def get_measurement_config(self) -> dict:
+        """測定の前提設定を読む(一発動作は状態を持たないので含めない)。"""
+        self._afg_enum("measure_areas", "the measurement range")
+        config: dict[str, object] = {}
+        for key, path, kind in _MEASURE_SETUP_ITEMS:
+            _, from_scpi = self._converter(kind, 0)
+            config[key] = from_scpi(self.session.query(f"{_MEASURE_PREFIX}{path}?"))
+        return config
+
+    def get_measurement_statistics(
+        self,
+        channel: str,
+        names: list[str],
+        types: list[str] | None = None,
+        channel_b: str | None = None,
+    ) -> dict:
+        """測定項目ごとの統計値を読む(ガイド3.17.8 のクエリ形)。
+
+        `<type>` は1つずつ指定する形式なので、項目×種別の回数だけクエリする。
+        応答は科学表記の単一値(ガイドの Return Format / Example)。
+        """
+        to_scpi, _ = self._afg_enum(
+            "measure_statistic_types", "the measurement statistic type"
+        )
+        wanted = types if types is not None else list(
+            self.profile.dialect["measure_statistic_types"]
+        )
+        number = self._channel_number(channel)
+        dual = [name for name in names if name in DUAL_SOURCE_MEASUREMENTS]
+        if dual and channel_b is None:
+            raise _invalid(
+                "channel_b is required for delay/phase statistics "
+                "(the device would otherwise reuse its last selected source)",
+                {"measurements": dual},
+            )
+        # `measure` と対称にする(2ソース項目が無いのに渡すのは取り違え)
+        if channel_b is not None and not dual:
+            raise _invalid(
+                "channel_b is only used by delay/phase measurements",
+                {"measurements": list(names)},
+            )
+        number_b = self._channel_number(channel_b) if channel_b is not None else None
+
+        # 検証を全て済ませてから送る
+        plan: list[tuple[str, str, str]] = []
+        for name in names:
+            mnemonic = self._measurement_mnemonic(name)
+            source = f"CHANnel{number}"
+            if name in DUAL_SOURCE_MEASUREMENTS:
+                source = f"{source},CHANnel{number_b}"
+            for kind in wanted:
+                token = to_scpi(kind, "type")
+                plan.append((name, kind, f"{_MEASURE_STATISTIC_ITEM}? {token},{mnemonic},{source}"))
+
+        results: dict[str, dict[str, float | None]] = {}
+        for name, kind, query in plan:
+            value = parse_nr3(self.session.query(query))
+            results.setdefault(name, {})[kind] = (
+                None if abs(value) >= INVALID_MEASUREMENT else value
+            )
         return results
 
     def clear_measurements(self) -> None:
@@ -895,31 +1446,80 @@ class ScopeDriver:
 
     # -- トリガ -----------------------------------------------------------
 
-    def set_trigger_edge(
+    def configure_trigger(
         self,
+        type: str | None = None,
         source: str | None = None,
         level_v: float | None = None,
         slope: str | None = None,
         sweep_mode: str | None = None,
-    ) -> TriggerState:
-        """エッジトリガを設定する。None の項目は変更しない。
+        holdoff_s: float | None = None,
+        settings: dict | None = None,
+    ) -> dict:
+        """トリガを設定する。None の項目は変更しない。
 
-        引数の検証を全て済ませてから送信する(途中で失敗して機器が中途半端な
-        状態になるのを避ける)。
+        `type` を省略すると `:TRIGger:MODE?` を1本読み、**今の種別のサブツリー**
+        へ書く(M2のカーソルで確立した原則)。サブツリー違いのキーは送信前に拒否
+        する。`type` を指定した場合は `:TRIGger:MODE` を**先頭**に送ってから配下を
+        書く(切り替えてから書かないと別種別の設定を触ることになる)。
+
+        `source` / `level_v` / `slope` はサブツリーの項目キーと同名なので、
+        `settings` に入れても同じ結果になる(既存の呼び出しとの互換のため残す)。
         """
-        commands: list[str] = [":TRIGger:MODE EDGE"]
-        if source is not None:
-            commands.append(f":TRIGger:EDGE:SOURce {self._trigger_source(source)}")
-        if level_v is not None:
-            commands.append(f":TRIGger:EDGE:LEVel {format_number(level_v)}")
-        if slope is not None:
-            commands.append(f":TRIGger:EDGE:SLOPe {to_scpi_slope(slope)}")
-        if sweep_mode is not None:
-            commands.append(f":TRIGger:SWEep {to_scpi_sweep(sweep_mode)}")
+        types = self._writable_trigger_types()
+        to_scpi_type, _ = profile_enum(tuple(types.items()))
 
-        for command in commands:
-            self.session.write_checked(command)
-        return self.get_trigger()
+        merged: dict = dict(settings or {})
+        for key, value in (("source", source), ("level_v", level_v), ("slope", slope)):
+            if value is not None:
+                merged[key] = value
+
+        subtree_name = type if type is not None else self._trigger_type()
+        # **ゲートは「プロファイルが宣言した種別」で行う。** モジュールの項目表
+        # (_TRIGGER_SUBTREES)にあるだけでは足りない — 実機未検証の機種へ
+        # `:TRIGger:MODE PULSe` を送ってしまう(AGENTS.mdルール2)
+        subtree = _TRIGGER_SUBTREES.get(subtree_name) if subtree_name in types else None
+        if subtree is None:
+            raise _unsupported(
+                f"trigger type '{subtree_name}' is unverified in this model's profile",
+                {
+                    "trigger_type": subtree_name,
+                    "profile": self.profile.name,
+                    "supported": sorted(types),
+                },
+            )
+        prefix, items = subtree
+        allowed = [key for key, _, _ in items]
+        unknown = sorted(key for key in merged if key not in allowed)
+        if unknown:
+            raise _invalid(
+                f"the {subtree_name} trigger does not have these settings: {unknown}",
+                {"type": subtree_name, "unknown": unknown, "allowed": allowed},
+            )
+
+        # 検証を全て済ませてから送る(1つでも不正なら1コマンドも送らない)
+        mode_command = (
+            f":TRIGger:MODE {to_scpi_type(type, 'type')}" if type is not None else None
+        )
+        plan = self._command_plan(prefix, 0, items, merged)
+        common = self._command_plan(
+            ":TRIGger",
+            0,
+            _TRIGGER_COMMON_ITEMS,
+            {"sweep_mode": sweep_mode, "holdoff_s": holdoff_s},
+        )
+
+        applied: dict[str, object] = {}
+        if mode_command is not None:
+            self.session.write_checked(mode_command)
+            applied["type"] = type
+        for key, set_cmd, query, from_scpi in plan + common:
+            applied[key] = from_scpi(self.session.set_and_verify(set_cmd, query))
+        return applied
+
+    def get_trigger_position(self) -> float | None:
+        """取得メモリ内のトリガ発生位置(ガイド3.27.7。読み取り専用)。"""
+        return self._readout(":TRIGger:POSition?")
 
     # -- シリアルデコード(tools.md 6章)-----------------------------------
 
@@ -1868,6 +2468,17 @@ class ScopeDriver:
             return (lambda value, key: _afg_number(key, value)), parse_nr3
         if kind == "bool":
             return _math_bool, parse_bool
+        if kind == "tsource":
+            # トリガのソースは CH / EXT / EXT5 / ACLINE / D0-D15(ガイド3.27.8.1)
+            return (
+                (lambda value, key: self._trigger_source(value)),
+                (lambda text: self._normalize_source(text)),
+            )
+        if kind == "sweep":
+            return (
+                (lambda value, key: to_scpi_sweep(value)),
+                from_scpi_sweep,
+            )
         if kind == "csource":
             return (
                 (lambda value, key: self._cursor_source(value, key)),
@@ -1898,6 +2509,49 @@ class ScopeDriver:
             # 読み戻しは引用符無しの `TESTLBL`。つまりこの strip は**現状不要**
             # だが、他機種・他ファームで引用符が付く可能性に対して無害なので残す
             return _reference_label, (lambda text: text.strip().strip('"'))
+        if isinstance(kind, tuple) and kind[0] == "pattern":
+            # **実機実測**: `:TRIGger:PATTern:PATTern` / `:DURation:TYPE` は
+            # ch別のリストを取る(ガイド3.27.12.1 / 3.27.13.2 の
+            # `<pch1>[,<pch2>[,<pch3>[,<pch4>]]]`)。単一の列挙値ではない。
+            # 読み戻しは機器が24個返すことがある(デジタル/MATHの分)が、
+            # 書けるのはアナログch分だけなのでそこまでに切る
+            to_token, from_token = self._afg_enum(kind[1], kind[2])
+            width = self.analog_channels
+            return (
+                (lambda value, key: _pattern_token(value, key, to_token, width)),
+                (
+                    lambda text: [
+                        from_token(part.strip())
+                        for part in text.split(",")[:width]
+                        if part.strip()
+                    ]
+                ),
+            )
+        if kind == "bitmask":
+            # **実機実測**: `:TRIGger:LIN:DATA?` は2進のマスク文字列を返す
+            # (`'01100100'` / 未設定ビットは `X` で `'XXXXXXXX'`)。ガイドは
+            # 「整数を返す」と書いているが実機は違う。書き込みは整数のまま
+            return (
+                (lambda value, key: _math_int(value, key, 0, 2**64 - 1)),
+                _bitmask_readback,
+            )
+        if kind == "threshold":
+            # **実機実測**: `:MEASure:SETup:MAX 88.0` は黙って上限へ張り付く。
+            # ガイド3.17.9-11 の型は Integer で、percentモードは小数形を誤解釈
+            # する(エラーは積まれない)。absoluteモードは小数が要るが整数形も
+            # 受理するので、「整数値のときだけ小数点を落とす」で両立する
+            return (
+                (lambda value, key: _threshold_token(key, value)),
+                parse_nr3,
+            )
+        if isinstance(kind, tuple) and kind[0] == "choice":
+            # 飛び飛びの数値選択肢(RS232のストップビット 1/1.5/2 など)。
+            # decode.py の `_choice` と同じ考え方を項目表からも使えるようにする
+            allowed = kind[1]
+            return (
+                (lambda value, key: _choice_token(value, key, allowed)),
+                parse_nr3,
+            )
         if isinstance(kind, tuple) and kind[0] == "int":
             _, low, high = kind
             return (

@@ -27,7 +27,11 @@ from pathlib import Path
 import pytest
 
 from rigol_oscilloscope_mcp.config import Config
-from rigol_oscilloscope_mcp.driver.scope import MEASUREMENT_KEYS, ScopeDriver
+from rigol_oscilloscope_mcp.driver.scope import (
+    DUAL_SOURCE_MEASUREMENTS,
+    MEASUREMENT_KEYS,
+    ScopeDriver,
+)
 from rigol_oscilloscope_mcp.service import (
     ConnectionManager,
     ConnectionStatus,
@@ -55,18 +59,13 @@ EXPECTED_MANUFACTURER_KEYWORD = "RIGOL"
 EXPECTED_SECTIONS = {"channels", "timebase", "trigger", "acquisition"}
 EXPECTED_CHANNELS = ("CH1", "CH2", "CH3", "CH4")
 
+# 単一ソース項目(33種)。遅延・位相の8種は channel_b が要るため別扱い。
 MEASUREMENT_NAMES = [
-    "frequency",
-    "period",
-    "vpp",
-    "vmax",
-    "vmin",
-    "vavg",
-    "rms",
-    "duty",
-    "rise_time",
-    "fall_time",
+    name
+    for name in MEASUREMENT_KEYS
+    if name not in DUAL_SOURCE_MEASUREMENTS
 ]
+DUAL_SOURCE_NAMES = sorted(DUAL_SOURCE_MEASUREMENTS)
 
 # 画面表示波形の点数(phase0実測: NORMalモードで1000点)
 MIN_WAVEFORM_POINTS = 1000
@@ -256,7 +255,11 @@ def test_measure_all_items_on_ch1(driver: ScopeDriver) -> None:
     started = time.perf_counter()
     result = measure(driver, "CH1", MEASUREMENT_NAMES)
     elapsed = time.perf_counter() - started
-    _report(f"[measure] 10項目所要 {elapsed:.3f}s (1項目あたり {elapsed / 10:.3f}s)")
+    count = len(MEASUREMENT_NAMES)
+    _report(
+        f"[measure] {count}項目所要 {elapsed:.3f}s "
+        f"(1項目あたり {elapsed / count:.3f}s)"
+    )
 
     assert result["channel"] == "CH1"
     values = result["values"]
@@ -706,3 +709,25 @@ def test_reference_state_all_slots(driver: ScopeDriver) -> None:
     drained = driver.session.drain_error_queue()
     _report(f"[reference] 読み取り後のエラーキュー: {drained}")
     assert drained == []
+
+
+def test_measure_two_source_items_on_ch1_ch2(driver: ScopeDriver) -> None:
+    """遅延・位相はソース2つを取る(ガイド3.17.2)。read-onlyで値だけ読む。
+
+    CH1/CH2 に相関のある信号が入っていない場合、機器は番兵値を返す。値そのもの
+    は検証せず、**8項目が例外なく往復すること**だけを見る。
+    """
+    result = measure(driver, "CH1", DUAL_SOURCE_NAMES, channel_b="CH2")
+
+    assert result["channel"] == "CH1"
+    assert result["channel_b"] == "CH2"
+    assert set(result["quality"]) == set(DUAL_SOURCE_NAMES)
+
+    for name in DUAL_SOURCE_NAMES:
+        key = MEASUREMENT_KEYS[name]
+        value = result["values"][key]
+        _report(
+            f"[measure2] {name} ({key}): value={value!r} "
+            f"quality={result['quality'][name]!r}"
+        )
+        assert value is None or isinstance(value, float), (key, value)

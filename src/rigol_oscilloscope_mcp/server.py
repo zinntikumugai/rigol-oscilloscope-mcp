@@ -322,14 +322,29 @@ def create_server(
     # -- 測定・データ取得 -------------------------------------------------
 
     @_register
-    def measure(channel: str, measurements: list[str]) -> dict:
-        """Measure the given channel.
-
-        Choose measurements from frequency / period / vpp / vmax / vmin / vavg /
-        rms / duty / rise_time / fall_time. Returned values use SI-suffixed keys
+    def measure(
+        channel: str, measurements: list[str], channel_b: str | None = None
+    ) -> dict:
+        """Measure the given channel. Returned values use SI-suffixed keys
         (frequency_hz, vpp_v, ...); do not trust a value whose quality is not valid.
+
+        Timing: frequency, period, rise_time, fall_time, pulse_width_pos,
+        pulse_width_neg, duty, duty_neg, time_at_vmax, time_at_vmin.
+        Amplitude: vpp, vmax, vmin, vtop, vbase, vamp, vupper, vmid, vlower,
+        vavg, rms, period_rms, ac_rms, overshoot, preshoot.
+        Area and slew rate: area, period_area, slew_rate_pos, slew_rate_neg.
+        Counts: pulses_pos, pulses_neg, edges_pos, edges_neg.
+        Two-source: delay_rise_rise, delay_rise_fall, delay_fall_rise,
+        delay_fall_fall, phase_rise_rise, phase_rise_fall, phase_fall_rise,
+        phase_fall_fall.
+
+        The two-source items compare channel against channel_b, so pass
+        channel_b for them and leave it out otherwise. Availability is
+        model-dependent (get_capabilities measurements).
         """
-        return service.measure(manager.require_scope(), channel, measurements)
+        return service.measure(
+            manager.require_scope(), channel, measurements, channel_b
+        )
 
     @_register
     def clear_measurements() -> dict:
@@ -473,22 +488,199 @@ def create_server(
 
     @_register
     def configure_trigger(
+        type: str | None = None,
         source: str | None = None,
         level_v: float | None = None,
         slope: str | None = None,
         sweep_mode: str | None = None,
+        holdoff_s: float | None = None,
+        settings: dict | None = None,
     ) -> dict:
-        """Configure the edge trigger. Omitted items are left unchanged.
+        """Configure the trigger. Omitted items are left unchanged.
 
-        source is "CH1" to "CH4", slope is rising / falling / either, and
-        sweep_mode is auto / normal / single. Specify at least one item to change.
+        The trigger decides *when* the scope captures, so use it to make the
+        instrument hunt for a problem instead of eyeballing waveforms: catch a
+        glitch, a missing response, a timing violation. Read the captured result
+        with measure / capture_waveform afterwards.
+
+        type selects what to hunt for (availability is model-dependent, see
+        get_capabilities):
+        - edge: a level crossing. The default and the usual starting point
+        - pulse: pulses whose width is out of range (glitches)
+        - slope: edges whose transition time is out of range
+        - timeout: no edge for a while (a dead or hung signal)
+        - duration: a state that lasts too long or not long enough
+        - runt: a pulse that fails to reach full amplitude (signal integrity)
+        - window: the signal leaving or entering a voltage band
+        - delay: the gap between edges on two sources being out of range
+        - setup_hold: setup or hold time violations between data and clock
+        - pattern: a logic combination across channels
+        - nth_edge: the Nth edge after an idle period
+
+        **Omit type to write into the trigger that is active right now** (the
+        current type is read back first). Passing settings that belong to a
+        different type is rejected before anything is sent.
+
+        source is "CH1"-"CH4", "EXT", "EXT5", "ACLINE" or "D0"-"D15";
+        sweep_mode is auto / normal / single; holdoff_s is the rearm dead time.
+        level_v and slope apply to the types that have a single source and level.
+
+        settings keys per type (all optional):
+        - edge: source, level_v, slope (rising/falling/either)
+        - pulse: source, level_v, polarity (positive/negative), when
+          (greater/less/between), upper_width_s, lower_width_s. Example:
+          {"polarity": "positive", "when": "less", "upper_width_s": 1e-7}
+        - slope: source, polarity, when, upper_time_s, lower_time_s, window
+          (a/b/ab), level_a_v, level_b_v
+        - timeout: source, level_v, slope, time_s
+        - duration: source, level_v, when (greater/less/between/outside),
+          upper_time_s, lower_time_s, and pattern — **a list with one entry per
+          analog channel**, each high / low / ignore, e.g.
+          ["low", "ignore", "high", "low"]
+        - runt: source, polarity, when (none/greater/less/between),
+          upper_width_s, lower_width_s, level_a_v, level_b_v
+        - window: source, slope (rising/falling/either), position
+          (exit/enter/time), time_s, level_a_v, level_b_v
+        - delay: source_a, slope_a (rising/falling), source_b, slope_b, when
+          (greater/less/between/outside), upper_time_s, lower_time_s,
+          level_a_v, level_b_v
+        - setup_hold: data_source, clock_source, slope, pattern (high/low),
+          when (setup/hold/both), setup_time_s, hold_time_s, data_level_v,
+          clock_level_v
+        - pattern: source, level_v, and pattern — **a list with one entry per
+          analog channel**, each high / low / ignore / rising / falling, e.g.
+          ["high", "low", "ignore", "ignore"]. Only one edge (rising or falling)
+          may appear in the list
+        - nth_edge: source, level_v, slope, idle_time_s, edge_number
+        - uart: source, level_v, polarity, when (start/error/check_error/data),
+          baud_bps, user_baud_bps, data_bits (5-8), stop_bits (1/1.5/2), parity
+          (even/odd/none), data
+        - i2c: clock_source, clock_level_v, data_source, data_level_v, when
+          (start/restart/stop/nack/address/data/address_data), address_bits
+          (7/8/10), address, direction (read/write/both), data_bytes (1-5), data
+        - spi: clock_source, clock_level_v, clock_slope, data_source,
+          data_level_v, cs_source, cs_level_v, cs_polarity (high/low), when
+          (cs/timeout), timeout_s, data_bits (4-32), data
+        - can: source, level_v, baud_bps, signal_type
+          (can_h/can_l/rx_tx/differential), when (start_of_frame / error_frame /
+          bit_error / …), sample_point_percent, extended_id, define (data/id),
+          data_bytes (1-8), data
+        - lin: source, level_v, standard (v1x/v2x/both), baud_bps,
+          sample_point_percent, when (sync_break/id/data/error/…), error_type
+          (sync/id/checksum), frame_id (0-63), data. **lin data reads back as a
+          binary mask string** ("01100100", or "XXXXXXXX" while unset) rather
+          than the integer the other protocols return
+
+        The serial types pair with configure_decode: trigger on the moment
+        (a NACK, an error frame, one address) and decode to read what happened
+        around it. They are separate subsystems, so configure them separately.
         """
         return control.configure_trigger(
             manager.require_scope(),
+            type=type,
             source=source,
             level_v=level_v,
             slope=slope,
             sweep_mode=sweep_mode,
+            holdoff_s=holdoff_s,
+            settings=settings,
+        )
+
+    # -- 測定の前提設定と統計(tools.md 14章 / Phase M4)---------------------
+
+    @_register
+    def configure_measurement(
+        source: str | None = None,
+        threshold_source: str | None = None,
+        threshold_type: str | None = None,
+        threshold_max: float | None = None,
+        threshold_mid: float | None = None,
+        threshold_min: float | None = None,
+        threshold_default: bool | None = None,
+        area: str | None = None,
+        region_ax_s: float | None = None,
+        region_bx_s: float | None = None,
+        region_linked: bool | None = None,
+        amp_type: str | None = None,
+        amp_top: str | None = None,
+        amp_base: str | None = None,
+        statistics_enabled: bool | None = None,
+        statistics_count: int | None = None,
+        statistics_reset: bool | None = None,
+        statistics_items: list[str] | None = None,
+    ) -> dict:
+        """Set how measurements are interpreted. Omitted items are left unchanged.
+
+        This does not change acquisition (vertical, horizontal, trigger) or any
+        output: it only changes how measure computes its numbers.
+
+        Threshold: threshold_type is percent / absolute; threshold_max, _mid and
+        _min are the reference levels (percent, or volts when the type is
+        absolute). threshold_default=true restores the device defaults and is
+        sent first, so it never overwrites levels given in the same call.
+        threshold_source is "CH1"-"CH4".
+
+        Measurement range: area is main / zoom / cursor. **zoom needs the
+        delayed sweep enabled first, otherwise the device rejects it.** With
+        cursor, region_ax_s and region_bx_s place the two cursors in seconds and
+        region_linked moves them together.
+
+        Amplitude method: amp_type is auto / manual; amp_top and amp_base are
+        histogram / maxmin and only apply to the manual method.
+
+        Statistics: statistics_enabled turns the statistics display on,
+        statistics_count is the sample count (2-100000), and statistics_items
+        enables statistics per measurement item — pass source in the same call,
+        it is required. statistics_reset clears the history and is sent last.
+        Read the results with get_measurement_statistics.
+
+        source is "CH1"-"CH4" or "D0"-"D15" and selects what measure reads by
+        default.
+        """
+        return control.configure_measurement(
+            manager.require_scope(),
+            source=source,
+            threshold_source=threshold_source,
+            threshold_type=threshold_type,
+            threshold_max=threshold_max,
+            threshold_mid=threshold_mid,
+            threshold_min=threshold_min,
+            threshold_default=threshold_default,
+            area=area,
+            region_ax_s=region_ax_s,
+            region_bx_s=region_bx_s,
+            region_linked=region_linked,
+            amp_type=amp_type,
+            amp_top=amp_top,
+            amp_base=amp_base,
+            statistics_enabled=statistics_enabled,
+            statistics_count=statistics_count,
+            statistics_reset=statistics_reset,
+            statistics_items=statistics_items,
+        )
+
+    @_register
+    def get_measurement_statistics(
+        channel: str,
+        measurements: list[str],
+        types: list[str] | None = None,
+        channel_b: str | None = None,
+    ) -> dict:
+        """Read statistics for measurement items: how much a value varies.
+
+        Use this instead of capturing waveforms when you want to prove that a
+        parameter drifts or occasionally goes out of range: deviation and the
+        min/max spread answer that without transferring any waveform.
+
+        types defaults to all of maximum / minimum / current / average /
+        deviation / count. measurements uses the same item names as measure, and
+        channel_b is required for the delay and phase items.
+
+        **Enable the items first** with configure_measurement statistics_items,
+        otherwise the device has nothing to report.
+        """
+        return service.get_measurement_statistics(
+            manager.require_scope(), channel, measurements, types, channel_b
         )
 
     # -- シリアルデコード(tools.md 6章)-------------------------------------

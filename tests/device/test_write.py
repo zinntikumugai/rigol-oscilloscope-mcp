@@ -35,7 +35,7 @@ from pathlib import Path
 import pytest
 
 from rigol_oscilloscope_mcp.config import Config
-from rigol_oscilloscope_mcp.driver.scope import ScopeDriver
+from rigol_oscilloscope_mcp.driver.scope import _TRIGGER_SUBTREES, ScopeDriver
 from rigol_oscilloscope_mcp.errors import ErrorCode, ScopeError
 from rigol_oscilloscope_mcp.safety import AuditLogger, ConfirmTokenStore
 from rigol_oscilloscope_mcp.service import (
@@ -162,7 +162,11 @@ requires_ref_save = pytest.mark.skipif(
 )
 
 #: `:SINGle` 直後に許容するトリガ状態(実測: WAIT。すぐトリガすると TD を経て STOP)
-SINGLE_STATUSES = ("WAIT", "TD")
+#: `:SINGle` 直後に取りうるトリガ状態。**STOP を含めるのは競合を避けるため** —
+#: 生きた信号(CH1のプローブ補償 1kHz)では単発取り込みが往復時間より速く完了し、
+#: 最初の読みが既に STOP になることがある(実測)。WAIT(待機)/ TD(トリガ済)/
+#: STOP(完了)のいずれも「単発取り込みに入った」ことを示すので受理する
+SINGLE_STATUSES = ("WAIT", "TD", "STOP")
 
 #: `:RUN` / `:STOP` の反映待ち。実測で `:RUN` 直後の1回目の `:TRIGger:STATus?` は
 #: まだ STOP を返し、約0.2秒後に TD へ変わる(機器側の再アーム待ち)。
@@ -393,7 +397,12 @@ def timebase_before(
 def trigger_before(
     request: pytest.FixtureRequest, control: ControlService, driver: ScopeDriver
 ) -> Iterator[dict]:
-    """トリガの現在値を取得し、teardownで必ず復元する(sourceは変更しない)。"""
+    """トリガの現在値を取得し、teardownで必ず復元する(sourceは変更しない)。
+
+    **種別(`type`)も復元する。** M5で `:TRIGger:MODE` を切り替えられるように
+    なったため、元の種別へ戻してからその配下を書き戻さないと、別のサブツリーに
+    書き込んでしまう。`configure_trigger` は `type` を先頭に送るので1往復で足りる。
+    """
     before = get_trigger_dict(driver)
     tag = request.node.name
     _report(f"[before:{tag}] trigger={before}")
@@ -404,9 +413,9 @@ def trigger_before(
         try:
             control.configure_trigger(
                 driver,
-                level_v=before["level_v"],
-                slope=before["slope"],
+                type=before["type"],
                 sweep_mode=before["sweep_mode"],
+                settings=before["settings"],
             )
         except Exception as exc:
             failure = exc
@@ -1652,8 +1661,17 @@ def test_configure_histogram_round_trip(
     outcome = driver.get_histogram_result()
     _report(f"[histogram] result={outcome}")
     assert outcome["raw"].startswith("[")
-    assert "warnings" not in outcome, "統計の解釈に失敗した項目がある"
     stats = outcome["stats"]
+    # **実機実測**: `:HISTogram:RESet` の直後でヒットが1つも溜まっていないと、
+    # 機器はシグマ由来の項目を `meanPlus2Sigma:*****` の形で返す(数値ではない)。
+    # パーサはこれを fail-open で warnings に載せる — 正しい挙動なので、
+    # **ヒット0のときだけ**警告を許す。ヒットがあるのに警告が出たら異常。
+    if stats.get("sum"):
+        assert "warnings" not in outcome, (
+            f"統計の解釈に失敗した項目がある: {outcome.get('warnings')}"
+        )
+    elif "warnings" in outcome:
+        _report(f"[histogram] ヒット0のため未確定の項目あり: {outcome['warnings']}")
     # SI接頭辞は換算済み(`30.37khits` → 30370.0 / `sum_unit="hits"`)。
     # reset直後はヒット数が少なく接頭辞が付かないこともあるため、単位は
     # 「付いていれば hits」で見る
@@ -1836,3 +1854,197 @@ def test_audit_log_records_every_write(audit_path: Path) -> None:
     for tool in CONDITIONAL_TOOLS:
         if tool in tools:
             assert tools[tool] >= 1
+
+
+# --------------------------------------------------------------------------
+# 測定の前提設定(Phase M4)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def measurement_before(
+    request: pytest.FixtureRequest, driver: ScopeDriver
+) -> Iterator[dict]:
+    """測定の前提設定を控え、teardownで必ず書き戻す。
+
+    しきい値は上限 > 中央 > 下限 の順序制約があり、片側だけを動かすと機器が
+    拒否しうる。`configure_measurement` は項目表の順に MAX → MID → MIN を
+    1回の呼び出しで送るため1往復で足りる。
+    """
+    before = driver.get_measurement_config()
+    tag = request.node.name
+    _report(f"[before:{tag}] measurement={before}")
+    try:
+        yield before
+    finally:
+        failure: Exception | None = None
+        try:
+            driver.configure_measurement(**before)
+        except Exception as exc:  # 復元は最後まで試みる
+            failure = exc
+
+        after = driver.get_measurement_config()
+        drift = _diff(before, after)
+        _report(f"[restore:{tag}] measurement 復元後={after}")
+        if drift:
+            _report(f"[restore:{tag}] **復元漏れ**: {drift}")
+        if failure is not None:
+            _report(f"[restore:{tag}] **復元コマンド失敗**: {failure!r}")
+        assert failure is None, f"測定の前提設定の復元に失敗: {failure!r}"
+        assert not drift, f"測定の前提設定が復元されていません: {drift}"
+
+
+def test_configure_measurement_set_and_readback(
+    control: ControlService, driver: ScopeDriver, measurement_before: dict
+) -> None:
+    """しきい値と振幅算出方式の往復。**area は触らない**。
+
+    `area="zoom"` は遅延掃引の有効化が前提で機器が拒否しうる(ガイド3.17.19)。
+    `area="cursor"` は画面にカーソルを出すため、復元漏れの影響が見えやすい。
+    どちらも本テストの目的(往復の確認)には不要なので `main` のまま動かさない。
+    """
+    result = control.configure_measurement(
+        driver,
+        threshold_type="percent",
+        threshold_max=88.0,
+        threshold_mid=48.0,
+        threshold_min=12.0,
+        amp_type="manual",
+        amp_top="maxmin",
+    )
+    _report(f"[measurement] applied={result['applied']}")
+
+    applied = result["applied"]
+    assert applied["threshold_type"] == "percent"
+    assert applied["amp_top"] == "maxmin"
+    # しきい値は機器がスナップしうるので requested との一致は求めない
+    assert isinstance(applied["threshold_max"], float)
+
+
+def test_measurement_statistics_round_trip(
+    control: ControlService, driver: ScopeDriver, measurement_before: dict
+) -> None:
+    """統計の有効化 → 読み出し。**V-5(応答形式)の実測を兼ねる**。
+
+    ガイド3.17.8 の Return Format は「科学表記の統計結果」で、Example は単一値
+    (`9.120000E-1`)。実機がその通りかをここで確かめる。
+    """
+    control.configure_measurement(
+        driver,
+        source="CH2",
+        statistics_enabled=True,
+        statistics_items=["vpp", "frequency"],
+        statistics_reset=True,
+    )
+    stats = driver.get_measurement_statistics("CH2", ["vpp", "frequency"])
+
+    for name, values in stats.items():
+        _report(f"[statistics] {name}: {values}")
+        assert set(values) == {
+            "maximum",
+            "minimum",
+            "current",
+            "average",
+            "deviation",
+            "count",
+        }
+        for kind, value in values.items():
+            assert value is None or isinstance(value, float), (name, kind, value)
+
+
+def test_configure_trigger_switches_type_and_restores(
+    control: ControlService, driver: ScopeDriver, trigger_before: dict
+) -> None:
+    """種別の切り替えと配下の設定の往復(Phase M5)。
+
+    パルス幅トリガを選ぶ。**取り込みを止めることも出力に触れることもない**。
+    復元は fixture が元の種別へ戻す。
+    """
+    result = control.configure_trigger(
+        driver,
+        type="pulse",
+        settings={"when": "less", "upper_width_s": 1e-6},
+    )
+    _report(f"[trigger] applied={result['applied']}")
+
+    assert result["applied"]["type"] == "pulse"
+    assert result["applied"]["when"] == "less"
+    assert result["trigger"]["type"] == "pulse"
+    # 他の種別のサブツリーは読んでいない(edge の項目が settings に無い)
+    assert "polarity" in result["trigger"]["settings"]
+
+
+def test_get_trigger_position_is_read_only(driver: ScopeDriver) -> None:
+    """`:TRIGger:POSition?`(ガイド3.27.7)。読み取りのみで副作用が無い。"""
+    position = driver.get_trigger_position()
+    _report(f"[trigger] position={position!r}")
+
+    assert position is None or isinstance(position, float)
+
+
+# 種別ごとの代表設定。**全16種を実機へ送る**(3種だけの確認では
+# pattern / duration / lin の応答形式の違いを取り逃がした)。
+TRIGGER_PROBES: dict[str, dict] = {
+    "edge": {"slope": "falling"},
+    "pulse": {"when": "less", "upper_width_s": 1e-6},
+    "slope": {"when": "greater", "lower_time_s": 2e-6, "window": "ab"},
+    "pattern": {"pattern": ["high", "low", "ignore", "ignore"]},
+    "duration": {"pattern": ["low", "ignore", "high", "low"], "when": "outside"},
+    "timeout": {"time_s": 5e-6},
+    "runt": {"polarity": "negative", "when": "greater"},
+    "window": {"position": "enter", "time_s": 4e-6, "slope": "either"},
+    "delay": {"when": "between", "lower_time_s": 1e-6},
+    "setup_hold": {"when": "both", "setup_time_s": 3e-6, "hold_time_s": 2e-6},
+    "nth_edge": {"edge_number": 5, "idle_time_s": 2e-6},
+    "uart": {"when": "data", "baud_bps": 115200, "data_bits": 7, "stop_bits": 2},
+    "i2c": {"when": "address", "address_bits": 10, "address": 300},
+    "spi": {"when": "timeout", "timeout_s": 2e-5, "data_bits": 12},
+    "can": {"when": "bit_error", "baud_bps": 250000, "sample_point_percent": 60},
+    "lin": {"when": "data", "standard": "v1x", "frame_id": 33, "data": 100},
+}
+
+
+@pytest.mark.parametrize("trigger_type", sorted(TRIGGER_PROBES))
+def test_configure_trigger_every_type_round_trips(
+    control: ControlService,
+    driver: ScopeDriver,
+    trigger_before: dict,
+    trigger_type: str,
+) -> None:
+    """**全16種**の往復。取り込みを止めることも出力に触れることもない。
+
+    復元は fixture が元の種別・設定へ戻す。**種別を切り替えるとトリガレベルが
+    サブツリー間で伝播する**ため、復元は種別を先に戻してから設定を書く
+    (`configure_trigger` が `type` を先頭に送る)。
+    """
+    settings = TRIGGER_PROBES[trigger_type]
+    result = control.configure_trigger(driver, type=trigger_type, settings=settings)
+    _report(f"[trigger:{trigger_type}] applied={result['applied']}")
+
+    assert result["applied"]["type"] == trigger_type
+    assert result["trigger"]["type"] == trigger_type
+    # 読み戻しはその種別のサブツリーだけ(他種別の項目が混ざらない)
+    allowed = {key for key, _, _ in _TRIGGER_SUBTREES[trigger_type][1]}
+    assert set(result["trigger"]["settings"]) <= allowed
+    _report(f"[trigger:{trigger_type}] settings={result['trigger']['settings']}")
+
+
+def test_configure_trigger_serial_type_and_restore(
+    control: ControlService, driver: ScopeDriver, trigger_before: dict
+) -> None:
+    """シリアルバストリガ(I2C)の往復(Phase M5)。
+
+    デコード(`configure_decode`)とは**別サブシステム**なので、綴りが違う点を
+    実機で確かめる — トリガ側のアドレス幅は `:TRIGger:IIC:AWIDth`(デコード側は
+    `:BUS<n>:IIC:ADDBits`)。取り込みを止めることも出力に触れることもない。
+    """
+    result = control.configure_trigger(
+        driver,
+        type="i2c",
+        settings={"when": "nack", "address_bits": 7, "address": 42},
+    )
+    _report(f"[trigger:i2c] applied={result['applied']}")
+
+    assert result["applied"]["type"] == "i2c"
+    assert result["applied"]["when"] == "nack"
+    assert result["trigger"]["settings"]["address"] == 42

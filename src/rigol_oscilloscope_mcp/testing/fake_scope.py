@@ -169,6 +169,39 @@ _MEASUREMENTS: tuple[tuple[str, str], ...] = (
     ("PDUTy", "5.002E-01"),  # 単位は比率
     ("RTIMe", "1.0E-06"),
     ("FTIMe", "1.0E-06"),
+    # M4 で公開した残り31項目(ガイド3.17.2 の <item> 全41トークン)。
+    # 値は同じ 1kHz / 3.268Vpp 補償信号から算術的に矛盾しない範囲で置いた。
+    ("NWIDth", "4.998E-04"),
+    ("PWIDth", "5.002E-04"),
+    ("NDUTy", "4.998E-01"),
+    ("TVMAX", "2.500E-04"),
+    ("TVMIN", "7.500E-04"),
+    ("VTOP", "3.100E+00"),
+    ("VBASe", "-2.000E-02"),
+    ("VAMP", "3.120E+00"),
+    ("VUPPer", "2.788E+00"),
+    ("VMID", "1.540E+00"),
+    ("VLOWer", "2.920E-01"),
+    ("PVRMs", "1.840E+00"),
+    ("ACRMs", "1.556E+00"),
+    ("OVERshoot", "1.282E-02"),
+    ("PREShoot", "0.000E+00"),
+    ("MARea", "8.170E-04"),
+    ("MPARea", "8.171E-07"),
+    ("PSLewrate", "3.120E+06"),
+    ("NSLewrate", "-3.120E+06"),
+    ("PPULses", "1.000E+01"),
+    ("NPULses", "1.000E+01"),
+    ("PEDGes", "1.000E+01"),
+    ("NEDGes", "1.000E+01"),
+    ("RRDelay", "1.000E-05"),
+    ("RFDelay", "2.000E-05"),
+    ("FRDelay", "-1.000E-05"),
+    ("FFDelay", "1.000E-05"),
+    ("RRPHase", "3.600E+00"),
+    ("RFPHase", "7.200E+00"),
+    ("FRPHase", "-3.600E+00"),
+    ("FFPHase", "3.600E+00"),
 )
 
 _MEASURE_VALUES: dict[str, str] = {}
@@ -196,7 +229,206 @@ _OPTION_TYPES = (
 _COUPLINGS = ("DC", "AC", "GND")
 _BWLIMITS = ("OFF", "20M", "100M", "250M")
 _IMPEDANCES = ("OMEG", "FIFTy")
-_TRIGGER_MODES = ("EDGE",)
+#: `:TRIGger:MODE` の値(ガイド3.27.1)。標準搭載11種のみ。
+#: **罠**: window は MODEが `WINDow`(単数)/ サブツリーは `:WINDows`(複数)、
+#: setup&hold は MODEが `SETup` / サブツリーは `:SHOLd`。
+_TRIGGER_MODES = (
+    "EDGE",
+    "PULSe",
+    "SLOPe",
+    "PATTern",
+    "DURation",
+    "TIMeout",
+    "RUNT",
+    "WINDow",
+    "DELay",
+    "SETup",
+    "NEDGe",
+    # シリアルバス。オプション必須の IIS / FLEXray / M1553 は載せない
+    "RS232",
+    "IIC",
+    "SPI",
+    "CAN",
+    "LIN",
+)
+_TRIGGER_SOURCES = tuple(f"CHANnel{n}" for n in range(1, 5)) + tuple(
+    f"D{n}" for n in range(16)
+)
+_POLARITIES = ("POSitive", "NEGative")
+#: サブツリーのニモニック → 属性表。`:TRIGger:MODE` の値とは別物なので分けている
+_TRIGGER_SUBTREE_PROPS: dict[str, tuple[tuple[str, str, object, object], ...]] = {
+    "EDGE": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        ("slope", "SLOPe", ("POSitive", "NEGative", "RFALl"), "POS"),
+    ),
+    "PULSe": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        ("polarity", "POLarity", _POLARITIES, "POS"),
+        ("when", "WHEN", ("GREater", "LESS", "GLESs"), "GRE"),
+        ("uwidth", "UWIDth", "nr3", 2.0e-6),
+        ("lwidth", "LWIDth", "nr3", 1.0e-6),
+    ),
+    "SLOPe": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("polarity", "POLarity", _POLARITIES, "POS"),
+        ("when", "WHEN", ("GREater", "LESS", "GLESs"), "GRE"),
+        ("tupper", "TUPPer", "nr3", 1.0e-6),
+        ("tlower", "TLOWer", "nr3", 1.0e-6),
+        ("window", "WINDow", ("TA", "TB", "TAB"), "TA"),
+        ("alevel", "ALEVel", "nr3", 0.1),
+        ("blevel", "BLEVel", "nr3", -0.1),
+    ),
+    "PATTern": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        # 実機はch別のカンマ区切りを返す(アナログ4 + デジタル/MATH分で24個)
+        ("pattern", "PATTern", "csv", "H,X,X,X" + ",X" * 20),
+    ),
+    "DURation": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        ("type", "TYPE", "csv", "L,X,X,X"),
+        ("when", "WHEN", ("GREater", "LESS", "GLESs", "UNGLess"), "GRE"),
+        ("tupper", "TUPPer", "nr3", 2.0e-6),
+        ("tlower", "TLOWer", "nr3", 1.0e-6),
+    ),
+    "TIMeout": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        ("slope", "SLOPe", ("POSitive", "NEGative", "RFALl"), "POS"),
+        ("time", "TIME", "nr3", 1.0e-6),
+    ),
+    "RUNT": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("polarity", "POLarity", _POLARITIES, "POS"),
+        ("when", "WHEN", ("NONE", "GREater", "LESS", "GLESs"), "NONE"),
+        ("wupper", "WUPPer", "nr3", 2.0e-6),
+        ("wlower", "WLOWer", "nr3", 1.0e-6),
+        ("alevel", "ALEVel", "nr3", 0.1),
+        ("blevel", "BLEVel", "nr3", -0.1),
+    ),
+    "WINDows": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("slope", "SLOPe", ("POSitive", "NEGative", "RFALl"), "POS"),
+        ("position", "POSition", ("EXIT", "ENTer", "TIME"), "EXIT"),
+        ("time", "TIME", "nr3", 1.0e-6),
+        ("alevel", "ALEVel", "nr3", 0.1),
+        ("blevel", "BLEVel", "nr3", -0.1),
+    ),
+    "DELay": (
+        ("sa", "SA", _TRIGGER_SOURCES, "CHAN1"),
+        ("aslop", "ASLop", _POLARITIES, "POS"),
+        ("sb", "SB", _TRIGGER_SOURCES, "CHAN2"),
+        ("bslop", "BSLop", _POLARITIES, "POS"),
+        ("type", "TYPE", ("GREater", "LESS", "GLESs", "GOUT"), "GRE"),
+        ("tupper", "TUPPer", "nr3", 2.0e-6),
+        ("tlower", "TLOWer", "nr3", 1.0e-6),
+        ("alevel", "ALEVel", "nr3", 0.0),
+        ("blevel", "BLEVel", "nr3", 0.0),
+    ),
+    "SHOLd": (
+        ("dsrc", "DSRC", _TRIGGER_SOURCES, "CHAN1"),
+        ("csrc", "CSRC", _TRIGGER_SOURCES, "CHAN2"),
+        ("slope", "SLOPe", _POLARITIES, "POS"),
+        ("pattern", "PATTern", ("H", "L"), "H"),
+        ("type", "TYPE", ("SETup", "HOLD", "SETHold"), "SET"),
+        ("stime", "STIMe", "nr3", 2.0e-6),
+        ("htime", "HTIMe", "nr3", 1.0e-6),
+        ("dlevel", "DLEVel", "nr3", 0.0),
+        ("clevel", "CLEVel", "nr3", 0.0),
+    ),
+    "NEDGe": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        ("slope", "SLOPe", _POLARITIES, "POS"),
+        ("idle", "IDLE", "nr3", 1.0e-6),
+        ("edge", "EDGE", ("int", 1, 65535), 1),
+    ),
+    # シリアルバス(ガイド3.27.20-24)。デコード側の :BUS<n> とは別サブシステム
+    "RS232": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        ("polarity", "POLarity", _POLARITIES, "POS"),
+        ("when", "WHEN", ("STARt", "ERRor", "CERRor", "DATA"), "STAR"),
+        ("baud", "BAUD", ("int", 1, 20_000_000), 9600),
+        ("buser", "BUSer", ("int", 1, 20_000_000), 9600),
+        ("width", "WIDTh", ("5", "6", "7", "8"), "8"),
+        ("stop", "STOP", ("1", "1.5", "2"), "1"),
+        ("parity", "PARity", ("EVEN", "ODD", "NONE"), "NONE"),
+        ("data", "DATA", ("int", 0, 255), 0),
+    ),
+    "IIC": (
+        ("scl", "SCL", _TRIGGER_SOURCES, "CHAN1"),
+        ("clevel", "CLEVel", "nr3", 0.0),
+        ("sda", "SDA", _TRIGGER_SOURCES, "CHAN2"),
+        ("dlevel", "DLEVel", "nr3", 0.0),
+        (
+            "when",
+            "WHEN",
+            ("STARt", "RESTart", "STOP", "NACKnowledge", "ADDRess", "DATA", "ADATa"),
+            "STAR",
+        ),
+        ("awidth", "AWIDth", ("7", "8", "10"), "7"),
+        ("address", "ADDRess", ("int", 0, 1023), 0),
+        ("direction", "DIRection", ("READ", "WRITe", "RWRite"), "READ"),
+        ("dbytes", "DBYTes", ("int", 1, 5), 1),
+        ("data", "DATA", ("int", 0, 2**40 - 1), 0),
+    ),
+    "SPI": (
+        ("clk", "CLK", _TRIGGER_SOURCES, "CHAN1"),
+        ("clevel", "CLEVel", "nr3", 0.0),
+        ("slope", "SLOPe", _POLARITIES, "POS"),
+        ("miso", "MISO", _TRIGGER_SOURCES, "CHAN2"),
+        ("dlevel", "DLEVel", "nr3", 0.0),
+        ("cs", "CS", _TRIGGER_SOURCES, "CHAN3"),
+        ("slevel", "SLEVel", "nr3", 0.0),
+        ("mode", "MODE", ("HIGH", "LOW"), "HIGH"),
+        ("when", "WHEN", ("CS", "TIMeout"), "CS"),
+        ("timeout", "TIMeout", "nr3", 1.0e-6),
+        ("width", "WIDTh", ("int", 4, 32), 8),
+        ("data", "DATA", ("int", 0, 2**32 - 1), 0),
+    ),
+    "CAN": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        ("baud", "BAUD", ("int", 10_000, 5_000_000), 1_000_000),
+        ("stype", "STYPe", ("H", "L", "RXTX", "DIFFerential"), "H"),
+        (
+            "when",
+            "WHEN",
+            (
+                "SOF", "EOF", "IDRemote", "OVERload", "IDFRame", "DATaframe",
+                "IDData", "ERFRame", "ERANswer", "ERCHeck", "ERFormat",
+                "ERRandom", "ERBit",
+            ),
+            "SOF",
+        ),
+        ("spoint", "SPOint", ("int", 10, 90), 50),
+        ("extended", "EXTended", "bool", False),
+        ("define", "DEFine", ("DATA", "ID"), "DATA"),
+        ("dwidth", "DWIDth", ("int", 1, 8), 1),
+        ("data", "DATA", ("int", 0, 2**64 - 1), 0),
+    ),
+    "LIN": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        ("standard", "STANdard", ("1X", "2X", "BOTH"), "2X"),
+        ("baud", "BAUD", ("int", 1_000, 20_000_000), 9600),
+        ("samplepoint", "SAMPlepoint", ("int", 10, 90), 50),
+        (
+            "when",
+            "WHEN",
+            ("SYNCbreak", "ID", "DATA", "IDData", "SLEep", "WAKeup", "ERRor"),
+            "SYNC",
+        ),
+        ("error", "ERRor", ("SYNC", "ID", "CHECk"), "SYNC"),
+        ("id", "ID", ("int", 0, 63), 0),
+        # 実機は2進マスクを返す(未設定ビットは X)
+        ("data", "DATA", "bitmask", "XXXXXXXX"),
+    ),
+}
 _SLOPES = ("POSitive", "NEGative", "RFALl")
 _SWEEPS = ("AUTO", "NORMal", "SINGle")
 _WAVEFORM_MODES = ("NORMal", "MAXimum", "RAW")
@@ -520,6 +752,43 @@ _DVM_PROPS: tuple[tuple[str, str, object, object], ...] = (
 _DVM_VALUES = {"ACRM": 0.35, "DC": 1.0, "DCRM": 1.06}
 
 _HISTOGRAM_TYPES = ("HORizontal", "VERTical")
+#: 測定の前提設定(ガイド3.17)。既定値はガイドの Default 欄に従う。
+_MEASURE_SOURCES = tuple(f"CHANnel{n}" for n in range(1, 5)) + tuple(
+    f"D{n}" for n in range(16)
+)
+_MEASURE_SETUP_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("source", "SOURce", _MEASURE_SOURCES, "CHAN1"),
+    (
+        "threshold_source",
+        "THReshold:SOURce",
+        tuple(f"CHANnel{n}" for n in range(1, 5)),
+        "CHAN1",
+    ),
+    ("threshold_type", "THReshold:TYPE", ("PERCent", "ABSolute"), "PERC"),
+    ("threshold_max", "SETup:MAX", "nr3", 90.0),
+    ("threshold_mid", "SETup:MID", "nr3", 50.0),
+    ("threshold_min", "SETup:MIN", "nr3", 10.0),
+    ("area", "AREA", ("MAIN", "ZOOM", "CURSor"), "MAIN"),
+    ("region_ax", "CREGion:CAX", "nr3", -2.0e-4),
+    ("region_bx", "CREGion:CBX", "nr3", 2.0e-4),
+    ("region_linked", "CREGion:CABX", "bool", False),
+    ("amp_type", "AMP:TYPE", ("AUTO", "MANual"), "MAN"),
+    ("amp_top", "AMP:MANual:TOP", ("HISTogram", "MAXMin"), "HIST"),
+    ("amp_base", "AMP:MANual:BASE", ("HISTogram", "MAXMin"), "HIST"),
+    ("statistics_enabled", "STATistic:DISPlay", "bool", False),
+    ("statistics_count", "STATistic:COUNt", ("int", 2, 100_000), 1000),
+)
+#: `:MEASure:STATistic:ITEM? <type>,<item>` の応答。実機は科学表記の単一値を返す
+#: (ガイド3.17.8 の Example)。種別ごとに固定の係数を掛けて区別できるようにする。
+_STATISTIC_TYPE_FACTORS: dict[str, float] = {
+    "MAXIMUM": 1.02,
+    "MINIMUM": 0.98,
+    "CURRENT": 1.0,
+    "AVERAGES": 1.0,
+    "DEVIATION": 0.001,
+    "CNT": 1.0,
+}
+
 _HISTOGRAM_PROPS: tuple[tuple[str, str, object, object], ...] = (
     ("enable", "ENABle", "bool", False),
     ("type", "TYPE", _HISTOGRAM_TYPES, "HOR"),
@@ -686,6 +955,11 @@ class FakeScope:
         self.counter: dict = {key: default for key, _, _, default in _COUNTER_PROPS}
         self.counter["total"] = _COUNTER_TOTAL
         self.dvm: dict = {key: default for key, _, _, default in _DVM_PROPS}
+        self.measure_setup: dict = {
+            key: default for key, _, _, default in _MEASURE_SETUP_PROPS
+        }
+        #: 統計を有効化した測定項目(`:MEASure:STATistic:ITEM <item>` で追加)
+        self.statistic_items: list[str] = []
         self.histogram: dict = {key: default for key, _, _, default in _HISTOGRAM_PROPS}
         self.histogram["hits"], self.histogram["peak_hits"] = _HISTOGRAM_HITS
         # リファレンス波形(10枠、3.20)。`saved` は `:REFerence:SAVE` の観測点で、
@@ -708,10 +982,14 @@ class FakeScope:
         self.timebase: dict[str, float] = {"scale": 2.0e-4, "offset": 0.0}
         self.trigger: dict[str, object] = {
             "mode": "EDGE",
-            "source": "CHAN1",
-            "level": 0.0,
-            "slope": "POS",
             "sweep": "AUTO",
+            "holdoff": 8.0e-9,
+            "position": 0.0,
+        }
+        #: 種別ごとのサブツリー状態(ニモニック → 属性辞書)
+        self.trigger_subtrees: dict[str, dict] = {
+            name: {key: default for key, _, _, default in props}
+            for name, props in _TRIGGER_SUBTREE_PROPS.items()
         }
         self.acquisition = "RUN"
         self.waveform: dict[str, object] = {
@@ -819,7 +1097,7 @@ class FakeScope:
                 rf":?{_mn('ACQuire')}:{_mn('MDEPth')}\?",
                 lambda m: MDEPTH.encode("ascii"),
             ),
-            # トリガ
+            # トリガ(共通)。種別ごとのサブツリーは _trigger_entries() が持つ
             (
                 rf"{trigger}:{_mn('MODE')}\?",
                 lambda m: str(self.trigger["mode"]).encode("ascii"),
@@ -831,36 +1109,24 @@ class FakeScope:
                 ),
             ),
             (
-                rf"{edge}:{_mn('SOURce')}\?",
-                lambda m: str(self.trigger["source"]).encode("ascii"),
-            ),
-            (
-                rf"{edge}:{_mn('SOURce')}\s+{_VALUE}",
-                lambda m: self._set_trigger("source", self._channel_token(m.group(1))),
-            ),
-            (
-                rf"{edge}:{_mn('LEVel')}\?",
-                lambda m: _nr3(float(self.trigger["level"])).encode("ascii"),
-            ),
-            (
-                rf"{edge}:{_mn('LEVel')}\s+{_VALUE}",
-                lambda m: self._set_trigger("level", self._float(m.group(1))),
-            ),
-            (
-                rf"{edge}:{_mn('SLOPe')}\?",
-                lambda m: str(self.trigger["slope"]).encode("ascii"),
-            ),
-            (
-                rf"{edge}:{_mn('SLOPe')}\s+{_VALUE}",
-                lambda m: self._set_trigger("slope", self._enum(m.group(1), _SLOPES)),
-            ),
-            (
                 rf"{trigger}:{_mn('SWEep')}\?",
                 lambda m: str(self.trigger["sweep"]).encode("ascii"),
             ),
             (
                 rf"{trigger}:{_mn('SWEep')}\s+{_VALUE}",
                 lambda m: self._set_trigger("sweep", self._enum(m.group(1), _SWEEPS)),
+            ),
+            (
+                rf"{trigger}:{_mn('HOLDoff')}\?",
+                lambda m: _nr3(float(self.trigger["holdoff"])).encode("ascii"),
+            ),
+            (
+                rf"{trigger}:{_mn('HOLDoff')}\s+{_VALUE}",
+                lambda m: self._set_trigger("holdoff", self._float(m.group(1))),
+            ),
+            (
+                rf"{trigger}:{_mn('POSition')}\?",
+                lambda m: _nr3(float(self.trigger["position"])).encode("ascii"),
             ),
             (
                 rf"{trigger}:{_mn('STATus')}\?",
@@ -874,7 +1140,8 @@ class FakeScope:
             (rf":?{_mn('AUToset')}", lambda m: self._set_acquisition("RUN")),
             # 測定
             (
-                rf":?{_mn('MEASure')}:{_mn('ITEM')}\?\s+(\w+)\s*,\s*{_VALUE}",
+                rf":?{_mn('MEASure')}:{_mn('ITEM')}\?\s+(\w+)\s*,\s*([^\s,]+)"
+                rf"(?:\s*,\s*([^\s,]+))?",
                 self._measure_item,
             ),
             # 実機仕様: 有効化済みの全測定項目をResultビューから消す(引数なし)。
@@ -950,6 +1217,8 @@ class FakeScope:
         entries += self._math_entries()
         entries += self._cursor_entries()
         entries += self._meter_entries()
+        entries += self._trigger_entries()
+        entries += self._measure_setup_entries()
         entries += self._histogram_entries()
         entries += self._reference_entries()
         return tuple(
@@ -1260,6 +1529,76 @@ class FakeScope:
             (rf"{dvm}:{_mn('CURRent')}\?", lambda m: self._dvm_current()),
         ]
         return entries
+
+    def _trigger_entries(self) -> list[tuple[str, Callable]]:
+        """トリガ種別ごとのサブツリー(ガイド3.27.8-3.27.19)。
+
+        表から機械生成する。手書きで足すと種別の数だけ線形に増えるため、
+        バス側(`_BUS_PROTOCOL_PROPS`)と同じ方式にしている。
+
+        表に無いサブツリー(`:TRIGger:VIDeo` / シリアル系 / オプション系)は
+        どのパターンにも一致せず、実機同様に沈黙する。
+        """
+        trigger = rf":?{_mn('TRIGger')}"
+        entries: list[tuple[str, Callable]] = []
+        for name, props in _TRIGGER_SUBTREE_PROPS.items():
+            head = rf"{trigger}:{_mn(name)}"
+            entries += self._prop_entries(head, props, self.trigger_subtrees[name])
+        return entries
+
+    def _measure_setup_entries(self) -> list[tuple[str, Callable]]:
+        """測定の前提設定と統計のディスパッチ表(ガイド3.17)。
+
+        `:MEASure:TYPE` / `:CATegory` / `:AMSource` / `:INDicator` は画面の分類・
+        表示のみでスコープ外のため未実装 = 沈黙(実機の未定義ヘッダと同じ扱い)。
+        """
+        measure = rf":?{_mn('MEASure')}"
+        entries = self._prop_entries(measure, _MEASURE_SETUP_PROPS, self.measure_setup)
+        stat = rf"{measure}:{_mn('STATistic')}"
+        entries += [
+            (
+                rf"{measure}:{_mn('THReshold')}:{_mn('DEFault')}",
+                lambda m: self._measure_threshold_default(),
+            ),
+            (rf"{stat}:{_mn('RESet')}", lambda m: self.statistic_items.clear()),
+            (
+                rf"{stat}:{_mn('ITEM')}\?\s+(\w+)\s*,\s*(\w+)"
+                rf"(?:\s*,\s*[^\s,]+)?(?:\s*,\s*[^\s,]+)?",
+                self._statistic_item_query,
+            ),
+            (
+                rf"{stat}:{_mn('ITEM')}\s+(\w+)"
+                rf"(?:\s*,\s*[^\s,]+)?(?:\s*,\s*[^\s,]+)?",
+                self._statistic_item_enable,
+            ),
+        ]
+        return entries
+
+    def _measure_threshold_default(self) -> None:
+        """ガイド3.17.18: しきい値を既定へ戻す(パーセント既定 90/50/10)。"""
+        self.measure_setup["threshold_max"] = 90.0
+        self.measure_setup["threshold_mid"] = 50.0
+        self.measure_setup["threshold_min"] = 10.0
+
+    def _statistic_item_enable(self, match: re.Match[str]) -> None:
+        item = match.group(1).strip().upper()
+        if item not in _MEASURE_VALUES:
+            raise self._silent(OUT_OF_RANGE)
+        if item not in self.statistic_items:
+            self.statistic_items.append(item)
+
+    def _statistic_item_query(self, match: re.Match[str]) -> bytes:
+        kind = match.group(1).strip().upper()
+        item = match.group(2).strip().upper()
+        factor = None
+        for name, value in _STATISTIC_TYPE_FACTORS.items():
+            if len(kind) >= 3 and name.startswith(kind):
+                factor = value
+                break
+        base = _MEASURE_VALUES.get(item)
+        if factor is None or base is None:
+            raise self._silent(OUT_OF_RANGE)
+        return _nr3(float(base) * factor).encode("ascii")
 
     def _histogram_entries(self) -> list[tuple[str, Callable]]:
         """ヒストグラムのディスパッチ表(`:HISTogram:SAVE:CSV` はスコープ外)。"""
@@ -1637,6 +1976,15 @@ class FakeScope:
             value = self._int(token)
         elif kind == "str":  # 文字列属性(:REFerence:LABel:CONTent)は素通し
             value = token
+        elif kind == "csv":
+            # ch別のカンマ区切り(:TRIGger:PATTern:PATTern / :DURation:TYPE)。
+            # **実機は書いた分だけ先頭を差し替え、残りは保持する**
+            parts = [p.strip().upper() for p in token.split(",") if p.strip()]
+            current = str(state[key]).split(",")
+            value = ",".join(parts + current[len(parts):])
+        elif kind == "bitmask":
+            # :TRIGger:LIN:DATA は整数で書き、2進マスクで読み戻る(実機実測)
+            value = format(self._int(token), "08b")
         elif isinstance(kind, tuple) and kind[0] == "int":
             _, low, high = kind
             value = self._int(token)
@@ -1741,6 +2089,9 @@ class FakeScope:
     def _measure_item(self, match: re.Match[str]) -> bytes:
         item = match.group(1).strip().upper()
         self._channel_token(match.group(2))
+        # 遅延・位相は第2ソースを取る(ガイド3.17.2 の <item>[,<src>[,<src>]])
+        if match.group(3) is not None:
+            self._channel_token(match.group(3))
         value = _MEASURE_VALUES.get(item)
         if value is None:
             # phase0実測: VAVerage は受理されず -222 が積まれる

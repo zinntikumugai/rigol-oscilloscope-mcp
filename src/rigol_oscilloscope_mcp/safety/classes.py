@@ -56,6 +56,11 @@ TOOL_CLASSES: dict[str, OperationClass] = {
     "measure": OperationClass.READ_ONLY,
     # Resultビュー表示のみの変更で再測定により可逆(issue #16)
     "clear_measurements": OperationClass.SAFE_WRITE,
+    # 測定の前提設定(Phase M4)。取り込み条件にも出力にも触れず、測定値の
+    # 解釈のしかた(しきい値・測定区間・振幅算出方式・統計)だけを変えるため
+    # configure_histogram / configure_cursor と同じ SAFE_WRITE。
+    "configure_measurement": OperationClass.SAFE_WRITE,
+    "get_measurement_statistics": OperationClass.READ_ONLY,
     "capture_waveform": OperationClass.READ_ONLY,
     "analyze_waveform": OperationClass.READ_ONLY,
     "capture_screenshot": OperationClass.READ_ONLY,

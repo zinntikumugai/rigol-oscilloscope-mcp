@@ -21,7 +21,7 @@ from rigol_oscilloscope_mcp.server import PACKAGE_LOGGER, _checked_tool, create_
 #: 登録Tool総数(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6
 #: + Phase M3: 2)。
 #: Tool一覧の総数はここが唯一の規範とし、フェーズ別テストは自分の集合だけを見る。
-EXPECTED_TOOL_COUNT = 38
+EXPECTED_TOOL_COUNT = 40
 
 
 @pytest.fixture

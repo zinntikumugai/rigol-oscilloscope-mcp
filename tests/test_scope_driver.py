@@ -681,43 +681,46 @@ def test_set_timebase_position(driver: ScopeDriver) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_set_trigger_edge_all_fields(driver: ScopeDriver, scope: FakeScope) -> None:
-    state = driver.set_trigger_edge(
-        source="CH2", level_v=1.25, slope="falling", sweep_mode="normal"
+def test_configure_trigger_edge_all_fields(driver: ScopeDriver, scope: FakeScope) -> None:
+    applied = driver.configure_trigger(
+        type="edge", source="CH2", level_v=1.25, slope="falling", sweep_mode="normal"
     )
 
-    assert state.source == "CH2"
-    assert state.level_v == pytest.approx(1.25)
-    assert state.slope == "falling"
-    assert state.sweep_mode == "normal"
+    assert applied["source"] == "CH2"
+    assert applied["level_v"] == pytest.approx(1.25)
+    assert applied["slope"] == "falling"
+    assert applied["sweep_mode"] == "normal"
     assert ":TRIGger:MODE EDGE" in scope.command_log
     assert ":TRIGger:EDGE:SOURce CHANnel2" in scope.command_log
     assert ":TRIGger:EDGE:SLOPe NEGative" in scope.command_log
     assert ":TRIGger:SWEep NORMal" in scope.command_log
 
 
-def test_set_trigger_edge_omits_unspecified(driver: ScopeDriver, scope: FakeScope) -> None:
-    """未指定の項目には**書き込まない**(最後の read-back での問い合わせは除く)。"""
-    driver.set_trigger_edge(level_v=0.5)
+def test_configure_trigger_omits_unspecified(driver: ScopeDriver, scope: FakeScope) -> None:
+    """未指定の項目には**書き込まない**(最後の read-back での問い合わせは除く)。
+
+    `type` を省略しているので `:TRIGger:MODE` も送らない(今の種別へ書く)。
+    """
+    driver.configure_trigger(level_v=0.5)
 
     writes = [c for c in scope.command_log if "?" not in c]
-    assert writes == [":TRIGger:MODE EDGE", ":TRIGger:EDGE:LEVel 0.5"]
-    assert scope.trigger["source"] == "CHAN1"
-    assert scope.trigger["slope"] == "POS"
+    assert writes == [":TRIGger:EDGE:LEVel 0.5"]
+    assert scope.trigger_subtrees["EDGE"]["source"] == "CHAN1"
+    assert scope.trigger_subtrees["EDGE"]["slope"] == "POS"
     assert scope.trigger["sweep"] == "AUTO"
 
 
-def test_set_trigger_edge_rejects_bad_slope(driver: ScopeDriver, scope: FakeScope) -> None:
+def test_configure_trigger_rejects_bad_slope(driver: ScopeDriver, scope: FakeScope) -> None:
     with pytest.raises(ScopeError) as excinfo:
-        driver.set_trigger_edge(slope="sideways")
+        driver.configure_trigger(type="edge", slope="sideways")
 
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
     assert scope.command_log == []
 
 
-def test_set_trigger_edge_rejects_bad_source(driver: ScopeDriver, scope: FakeScope) -> None:
+def test_configure_trigger_rejects_bad_source(driver: ScopeDriver, scope: FakeScope) -> None:
     with pytest.raises(ScopeError) as excinfo:
-        driver.set_trigger_edge(source="CH9")
+        driver.configure_trigger(type="edge", source="CH9")
 
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
     assert scope.command_log == []
@@ -831,20 +834,21 @@ def test_read_back_source_is_writable(driver: ScopeDriver, raw: str) -> None:
     driver._trigger_source(driver._normalize_source(raw))
 
 
-def test_set_trigger_edge_roundtrips_channel_source(
+def test_configure_trigger_roundtrips_channel_source(
     driver: ScopeDriver, scope: FakeScope
 ) -> None:
     """get_trigger が返した source をそのまま書き戻せる(FakeScopeはCH系のみ受理)。"""
     state = driver.get_trigger()
 
-    assert driver.set_trigger_edge(source=state.source).source == state.source
+    applied = driver.configure_trigger(source=state.source)
+    assert applied["source"] == state.source
     assert ":TRIGger:EDGE:SOURce CHANnel1" in scope.command_log
 
 
-def test_set_trigger_edge_sends_ext_source(driver: ScopeDriver, scope: FakeScope) -> None:
+def test_configure_trigger_sends_ext_source(driver: ScopeDriver, scope: FakeScope) -> None:
     """EXT はチャンネル数検証を通さず、正規化形のまま送る。"""
     with pytest.raises(ScopeError):  # FakeScope は EXT 書き込みを受理しない
-        driver.set_trigger_edge(source="ext")
+        driver.configure_trigger(source="ext")
 
     assert ":TRIGger:EDGE:SOURce EXT" in scope.command_log
 
@@ -3624,3 +3628,595 @@ def test_reference_actions_unsupported_profile_send_nothing(
 
         assert exc.value.code == ErrorCode.UNSUPPORTED_FEATURE
         assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# 測定項目の全面拡張(M4)
+# --------------------------------------------------------------------------
+
+
+def test_measurement_keys_cover_all_41_guide_items() -> None:
+    """ガイド3.17.2 の <item> は41トークン。全てに意味的名を与える。"""
+    from rigol_oscilloscope_mcp.driver.scope import MEASUREMENT_KEYS
+
+    assert len(MEASUREMENT_KEYS) == 41
+    # SI単位付きキーは重複しない(返却dictのキーになるため)
+    assert len(set(MEASUREMENT_KEYS.values())) == 41
+
+
+def test_mho98_declares_every_measurement_item(driver: ScopeDriver) -> None:
+    from rigol_oscilloscope_mcp.driver.scope import MEASUREMENT_KEYS
+
+    items = driver.profile.dialect["measurement_items"]
+    assert sorted(items) == sorted(MEASUREMENT_KEYS)
+
+
+@pytest.mark.parametrize(
+    ("name", "mnemonic", "key"),
+    [
+        ("vtop", "VTOP", "vtop_v"),
+        ("overshoot", "OVERshoot", "overshoot_ratio"),
+        ("area", "MARea", "area_vs"),
+        ("pulse_width_pos", "PWIDth", "pulse_width_pos_s"),
+        ("slew_rate_pos", "PSLewrate", "slew_rate_pos_v_per_s"),
+        ("pulses_pos", "PPULses", "pulses_pos_count"),
+        ("ac_rms", "ACRMs", "ac_rms_v"),
+    ],
+)
+def test_measure_new_items_send_guide_mnemonics(
+    driver: ScopeDriver, scope: FakeScope, name: str, mnemonic: str, key: str
+) -> None:
+    results = driver.measure("CH1", [name])
+
+    assert results[0].key == key
+    assert sent(scope, ":MEAS") == [f":MEASure:ITEM? {mnemonic},CHANnel1"]
+
+
+def test_measure_dual_source_item_sends_both_sources(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """遅延・位相はソース2つ(ガイド3.17.2 の <src>[,<src>])。"""
+    driver.measure("CH1", ["delay_rise_rise"], channel_b="CH2")
+
+    assert sent(scope, ":MEAS") == [":MEASure:ITEM? RRDelay,CHANnel1,CHANnel2"]
+
+
+def test_measure_dual_source_item_requires_channel_b(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """第2ソース省略時は機器の「最後に選んだソース」に依存するため拒否する。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.measure("CH1", ["phase_rise_rise"])
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_measure_rejects_channel_b_without_dual_source_item(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.measure("CH1", ["vpp"], channel_b="CH2")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_measure_single_source_items_ignore_second_source(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """単一ソース項目には第2ソースを付けない(混在指定でも)。"""
+    driver.measure("CH1", ["vpp", "delay_fall_fall"], channel_b="CH3")
+
+    assert sent(scope, ":MEAS") == [
+        ":MEASure:ITEM? VPP,CHANnel1",
+        ":MEASure:ITEM? FFDelay,CHANnel1,CHANnel3",
+    ]
+
+
+# --------------------------------------------------------------------------
+# 測定の前提設定と統計(M4)
+# --------------------------------------------------------------------------
+
+
+def test_configure_measurement_sends_items_in_table_order(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """送信順は表の並びに固定する。
+
+    - `threshold_default`(既定へ戻す)は**先頭**。同じ呼び出しのしきい値を潰さない
+    - `threshold_type` は `threshold_max/mid/min` より前(値域が type に依存する)
+    - `area` は `region_*` より前(区間の指定先を決める)
+    - `amp_type` は `amp_top/base` より前
+    - `statistics_reset`(履歴クリア)は**末尾**
+    """
+    driver.configure_measurement(
+        statistics_reset=True,
+        region_ax_s=-1e-5,
+        threshold_type="absolute",
+        threshold_max=2.0,
+        area="cursor",
+        amp_top="maxmin",
+        amp_type="manual",
+        threshold_default=True,
+    )
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":MEASure")]
+    assert writes == [
+        ":MEASure:THReshold:DEFault",
+        ":MEASure:THReshold:TYPE ABSolute",
+        ":MEASure:SETup:MAX 2",
+        ":MEASure:AREA CURSor",
+        ":MEASure:CREGion:CAX -1e-05",
+        ":MEASure:AMP:TYPE MAN",
+        ":MEASure:AMP:MANual:TOP MAXMin",
+        ":MEASure:STATistic:RESet",
+    ]
+
+
+def test_configure_measurement_reads_back_each_item(driver: ScopeDriver) -> None:
+    applied = driver.configure_measurement(area="zoom", statistics_count=500)
+
+    assert applied["area"] == "zoom"
+    assert applied["statistics_count"] == 500
+
+
+def test_configure_measurement_without_items_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_measurement()
+
+    assert scope.command_log == []
+
+
+def test_configure_measurement_rejects_unknown_enum(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_measurement(area="nope")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_measurement_enables_statistics_items(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """統計は項目ごとに有効化が要る(ガイド3.17.8 の set 形)。"""
+    driver.configure_measurement(source="CH2", statistics_items=["vpp", "frequency"])
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":MEASure")]
+    assert writes == [
+        ":MEASure:SOURce CHANnel2",
+        ":MEASure:STATistic:ITEM VPP,CHANnel2",
+        ":MEASure:STATistic:ITEM FREQuency,CHANnel2",
+    ]
+
+
+def test_configure_measurement_statistics_items_require_source(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """ソース省略時は機器の「最後に選んだソース」依存になるため拒否する。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_measurement(statistics_items=["vpp"])
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_measurement_unsupported_on_generic(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """方言未宣言の機種では1コマンドも送らない。"""
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.configure_measurement(area="main")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_get_measurement_statistics_queries_each_type(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    results = driver.get_measurement_statistics(
+        "CH1", ["vpp"], types=["maximum", "deviation"]
+    )
+
+    assert [c for c in scope.command_log if c.startswith(":MEASure")] == [
+        ":MEASure:STATistic:ITEM? MAXimum,VPP,CHANnel1",
+        ":MEASure:STATistic:ITEM? DEViation,VPP,CHANnel1",
+    ]
+    assert set(results["vpp"]) == {"maximum", "deviation"}
+
+
+def test_get_measurement_statistics_defaults_to_all_types(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    results = driver.get_measurement_statistics("CH1", ["frequency"])
+
+    assert set(results["frequency"]) == {
+        "maximum",
+        "minimum",
+        "current",
+        "average",
+        "deviation",
+        "count",
+    }
+
+
+def test_get_measurement_statistics_dual_source_needs_channel_b(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_measurement_statistics("CH1", ["delay_rise_rise"])
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# トリガ種別の開放(M5)
+# --------------------------------------------------------------------------
+
+
+def test_configure_trigger_sends_mode_first(driver: ScopeDriver, scope: FakeScope) -> None:
+    """種別を指定したら `:TRIGger:MODE` を先頭に送る(サブツリーを切り替えてから書く)。"""
+    driver.configure_trigger(
+        type="pulse", settings={"polarity": "positive", "upper_width_s": 1e-6}
+    )
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [
+        ":TRIGger:MODE PULSe",
+        ":TRIGger:PULSe:POLarity POSitive",
+        ":TRIGger:PULSe:UWIDth 1e-06",
+    ]
+
+
+def test_configure_trigger_window_mode_token_is_singular(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """**罠**: MODEは `WINDow`(単数)だがサブツリーは `:WINDows`(複数)。"""
+    driver.configure_trigger(type="window", settings={"position": "enter"})
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [":TRIGger:MODE WINDow", ":TRIGger:WINDows:POSition ENTer"]
+
+
+def test_configure_trigger_setup_hold_mode_token_differs_from_subtree(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """**罠**: MODEは `SETup` だがサブツリーは `:SHOLd`。"""
+    driver.configure_trigger(type="setup_hold", settings={"pattern": "high"})
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [":TRIGger:MODE SETup", ":TRIGger:SHOLd:PATTern H"]
+
+
+def test_configure_trigger_without_type_reads_current_mode(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`type` 省略時は `:TRIGger:MODE?` を1本読んでから書き込み先を決める。"""
+    driver.configure_trigger(type="pulse")
+    scope.command_log.clear()
+
+    driver.configure_trigger(settings={"polarity": "negative"})
+
+    assert ":TRIGger:MODE?" in scope.command_log
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [":TRIGger:PULSe:POLarity NEGative"]
+
+
+def test_configure_trigger_rejects_settings_from_another_subtree(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_trigger(type="pulse", settings={"position": "enter"})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert not [c for c in scope.command_log if "?" not in c]
+
+
+def test_configure_trigger_edge_keeps_the_legacy_arguments(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """既存の呼び出し(source / level_v / slope / sweep_mode)はそのまま通る。"""
+    driver.configure_trigger(
+        type="edge", source="CH2", level_v=0.5, slope="falling", sweep_mode="normal"
+    )
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [
+        ":TRIGger:MODE EDGE",
+        ":TRIGger:EDGE:SOURce CHANnel2",
+        ":TRIGger:EDGE:LEVel 0.5",
+        ":TRIGger:EDGE:SLOPe NEGative",
+        ":TRIGger:SWEep NORMal",
+    ]
+
+
+def test_configure_trigger_holdoff_is_a_common_setting(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_trigger(holdoff_s=1e-6)
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [":TRIGger:HOLDoff 1e-06"]
+
+
+def test_get_trigger_reports_the_active_type_and_settings(driver: ScopeDriver) -> None:
+    driver.configure_trigger(type="timeout", settings={"time_s": 2e-6})
+
+    state = driver.get_trigger()
+
+    assert state.type == "timeout"
+    assert state.settings["time_s"] == pytest.approx(2e-6)
+    # 共通名の項目は最上位にも出す(既存の返却形を保つ)
+    assert state.source is not None
+
+
+def test_get_trigger_does_not_touch_other_subtrees(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_trigger(type="pulse")
+    scope.command_log.clear()
+
+    driver.get_trigger()
+
+    assert not any(":TRIGger:EDGE" in c for c in scope.command_log)
+
+
+def test_configure_trigger_unsupported_without_profile_dialect(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """トリガ種別の方言が未宣言の機種では送信ゼロ。"""
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.configure_trigger(type="pulse")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_window_slope_uses_the_spelling_the_device_accepts(driver: ScopeDriver) -> None:
+    """**実機実測(V-9 決着)**: ガイドの Range欄 `RFALI` は誤植。
+
+    `:TRIGger:WINDows:SLOPe RFALl`(Remarks欄の綴り)は受理され、`RFALI` は
+    `-222,"Data out of range"` で拒否された。他のトリガ(EDGE / TIMeout)と
+    同じ `RFALl` が正しい。
+    """
+    slopes = driver.profile.dialect["trigger_window_slopes"]
+
+    assert slopes == {"rising": "POSitive", "falling": "NEGative", "either": "RFALl"}
+
+
+# --------------------------------------------------------------------------
+# シリアルバストリガ(M5後半)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("trigger_type", "mode_token", "prefix", "settings", "expected"),
+    [
+        (
+            "uart",
+            "RS232",
+            ":TRIGger:RS232",
+            {"when": "error", "baud_bps": 115200, "data_bits": 8, "stop_bits": 1.5},
+            [
+                ":TRIGger:RS232:WHEN ERRor",
+                ":TRIGger:RS232:BAUD 115200",
+                ":TRIGger:RS232:WIDTh 8",
+                ":TRIGger:RS232:STOP 1.5",
+            ],
+        ),
+        (
+            "i2c",
+            "IIC",
+            ":TRIGger:IIC",
+            {"when": "nack", "address_bits": 7, "address": 42, "direction": "write"},
+            [
+                ":TRIGger:IIC:WHEN NACKnowledge",
+                ":TRIGger:IIC:AWIDth 7",
+                ":TRIGger:IIC:ADDRess 42",
+                ":TRIGger:IIC:DIRection WRITe",
+            ],
+        ),
+        (
+            "spi",
+            "SPI",
+            ":TRIGger:SPI",
+            {"when": "timeout", "timeout_s": 1e-5, "data_bits": 16},
+            [
+                ":TRIGger:SPI:WHEN TIMeout",
+                ":TRIGger:SPI:TIMeout 1e-05",
+                ":TRIGger:SPI:WIDTh 16",
+            ],
+        ),
+        (
+            "can",
+            "CAN",
+            ":TRIGger:CAN",
+            {"when": "error_frame", "baud_bps": 500000, "sample_point_percent": 75},
+            [
+                ":TRIGger:CAN:BAUD 500000",
+                ":TRIGger:CAN:WHEN ERFRame",
+                ":TRIGger:CAN:SPOint 75",
+            ],
+        ),
+        (
+            "lin",
+            "LIN",
+            ":TRIGger:LIN",
+            {"when": "error", "error_type": "checksum", "frame_id": 7},
+            [
+                ":TRIGger:LIN:WHEN ERRor",
+                ":TRIGger:LIN:ERRor CHECk",
+                ":TRIGger:LIN:ID 7",
+            ],
+        ),
+    ],
+)
+def test_configure_trigger_serial_types(
+    driver: ScopeDriver,
+    scope: FakeScope,
+    trigger_type: str,
+    mode_token: str,
+    prefix: str,
+    settings: dict,
+    expected: list[str],
+) -> None:
+    """シリアルバストリガ5種。**送信順は項目表の並び**。"""
+    driver.configure_trigger(type=trigger_type, settings=settings)
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [f":TRIGger:MODE {mode_token}", *expected]
+
+
+def test_configure_trigger_spi_exposes_one_alias_per_line(driver: ScopeDriver) -> None:
+    """SPIは `CLK`/`SCL` と `MISO`/`SDA` が同義。片方だけ公開する。"""
+    from rigol_oscilloscope_mcp.driver.scope import _TRIGGER_SUBTREES
+
+    _, items = _TRIGGER_SUBTREES["spi"]
+    paths = [path for _, path, _ in items]
+
+    assert ":CLK" in paths and ":SCL" not in paths
+    assert ":MISO" in paths and ":SDA" not in paths
+
+
+def test_serial_trigger_types_are_declared_only_on_mho98(driver: ScopeDriver) -> None:
+    declared = driver.profile.dialect["trigger_types"]
+
+    assert {"uart", "i2c", "spi", "can", "lin"} <= set(declared)
+    assert declared["uart"] == "RS232"
+
+
+def test_configure_trigger_serial_unsupported_on_dho(scope: FakeScope) -> None:
+    """DHO系は実機未検証なので edge のみ。送信ゼロで UNSUPPORTED_FEATURE。"""
+    dho = make_driver(scope, "dho800")
+
+    with pytest.raises(ScopeError) as excinfo:
+        dho.configure_trigger(type="can")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert not [c for c in scope.command_log if "?" not in c]
+
+
+def test_configure_measurement_sends_integral_thresholds_without_decimal_point(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """**実機実測**: `:MEASure:SETup:MAX 88.0` は黙って100へ張り付く。
+
+    ガイド3.17.9-11 の型は Integer で、percentモードでは小数形を機器が
+    誤解釈する(エラーは積まれない)。absoluteモードでは小数が必要なので、
+    「整数値のときだけ小数点を落とす」形にする(absoluteでも整数形は通る)。
+    """
+    driver.configure_measurement(threshold_max=88.0, threshold_mid=48, threshold_min=0.5)
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":MEASure")]
+    assert writes == [
+        ":MEASure:SETup:MAX 88",
+        ":MEASure:SETup:MID 48",
+        ":MEASure:SETup:MIN 0.5",
+    ]
+
+
+def test_amp_type_uses_the_short_form(driver: ScopeDriver, scope: FakeScope) -> None:
+    """**実機実測**: `:MEASure:AMP:TYPE MANual` は `-222` で拒否され、`MAN` が通る。
+
+    `VAVerage` が不可で `VAVG` が通るのと同じ癖。`AMP:MANual:TOP` / `BASE` は
+    長形を受理するので、短形が要るのは `AMP:TYPE` だけ。
+    """
+    driver.configure_measurement(amp_type="manual", amp_top="maxmin")
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":MEASure")]
+    assert writes == [":MEASure:AMP:TYPE MAN", ":MEASure:AMP:MANual:TOP MAXMin"]
+
+
+def test_get_trigger_position_reads_without_writing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    position = driver.get_trigger_position()
+
+    assert position is None or isinstance(position, float)
+    assert scope.command_log == [":TRIGger:POSition?"]
+
+
+# --------------------------------------------------------------------------
+# 実機で判明したトリガの応答形式(M5)
+# --------------------------------------------------------------------------
+
+
+def test_pattern_trigger_takes_a_per_channel_list(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """**実機実測**: `:TRIGger:PATTern:PATTern` はch別の**リスト**を取る。
+
+    ガイド3.27.12.1 の構文は `<pch1>[,<pch2>[,<pch3>[,<pch4>]]]` で、
+    CH1〜CH4 のパターンを一度に指定する。単一の列挙値ではない。
+    """
+    applied = driver.configure_trigger(
+        type="pattern", settings={"pattern": ["high", "low", "ignore", "ignore"]}
+    )
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [":TRIGger:MODE PATTern", ":TRIGger:PATTern:PATTern H,L,X,X"]
+    assert applied["pattern"] == ["high", "low", "ignore", "ignore"]
+
+
+def test_duration_trigger_takes_a_per_channel_list(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`:TRIGger:DURation:TYPE` も同じ形(値域は H/L/X の3種)。"""
+    driver.configure_trigger(
+        type="duration", settings={"pattern": ["low", "ignore", "high", "low"]}
+    )
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [":TRIGger:MODE DURation", ":TRIGger:DURation:TYPE L,X,H,L"]
+
+
+def test_pattern_trigger_rejects_a_scalar(driver: ScopeDriver, scope: FakeScope) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_trigger(type="pattern", settings={"pattern": "high"})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert not [c for c in scope.command_log if "?" not in c]
+
+
+def test_pattern_trigger_rejects_more_than_the_analog_channels(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_trigger(
+            type="pattern", settings={"pattern": ["high"] * 5}
+        )
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert not [c for c in scope.command_log if "?" not in c]
+
+
+def test_lin_data_reads_back_as_a_bit_mask(driver: ScopeDriver, scope: FakeScope) -> None:
+    """**実機実測**: `:TRIGger:LIN:DATA?` は2進のビットマスク文字列を返す。
+
+    書き込みは整数(`100`)だが、読み戻しは `'01100100'`。未設定のビットは `X`
+    (don't care)で `'XXXXXXXX'` が返る。ガイドは「整数を返す」と書いているが
+    実機は違う。**全て0/1なら整数へ、Xを含むならマスク文字列のまま返す。**
+    """
+    applied = driver.configure_trigger(type="lin", settings={"data": 100})
+
+    assert ":TRIGger:LIN:DATA 100" in scope.command_log
+    assert applied["data"] in (100, "01100100")
+
+
+def test_get_measurement_statistics_rejects_channel_b_without_dual_items(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`measure` と対称にする(Copilotレビュー指摘)。
+
+    2ソース項目が1つも無いのに `channel_b` を渡すのは取り違えなので拒否する。
+    """
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_measurement_statistics("CH1", ["vpp"], channel_b="CH2")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []

@@ -152,11 +152,16 @@ API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。「500 mV」「20 us」等の�
 
 引数: `scale_s_per_div`(必須)、`position_s`(任意)
 
-### `configure_trigger` — SAFE_WRITE / Phase 2
+### `configure_trigger` — SAFE_WRITE / Phase 2(種別の拡張は Phase M5)
 
-MVPはEdge Triggerのみ。
+トリガは**いつ取り込むか**を決める。AIから見た価値は「波形を眺めて異常を探す」代わりに**機器のハードウェアに探させる**点にあるため、種別の選択がそのまま調査能力になる。詳細な種別一覧と設定キーは**15章**。
 
-引数: `type`(現状 `"edge"` 固定)、`source`(`"CH1"`等)、`level_v`、`slope`(`"rising"` / `"falling"` / `"either"`)、`sweep_mode`(`"auto"` / `"normal"` / `"single"`)
+引数: `type`、`source`、`level_v`、`slope`、`sweep_mode`(`"auto"` / `"normal"` / `"single"`)、`holdoff_s`、`settings`(種別固有。15章)
+
+- **`type` を省略すると「今アクティブなトリガ」へ書く。** `:TRIGger:MODE?` を1本先読みして書き込み先を決める(M2のカーソルで確立した原則)。**MVPの「常に `:TRIGger:MODE EDGE` を送る」挙動からは変わっている**
+- `type` を指定した場合は `:TRIGger:MODE` を**先頭**に送ってから配下を書く
+- **別の種別に属する `settings` キーは送信前に拒否**する(`INVALID_PARAMETER`、送信ゼロ)
+- `source` / `level_v` / `slope` はサブツリーの項目キーと同名なので、`settings` へ入れても同じ結果になる(既存の呼び出しとの互換のため引数としても残している)
 
 ---
 
@@ -182,11 +187,24 @@ Auto Setupは利用者の設定を大きく上書きするため、confirmトー
 
 | 名前 | 型 | 説明 |
 |---|---|---|
-| `channel` | string | 必須 |
-| `measurements` | string[] | 必須。`frequency`, `period`, `vpp`, `vmax`, `vmin`, `vavg`, `rms`, `duty`, `rise_time`, `fall_time` |
+| `channel` | string | 必須。単一ソース項目のソース、2ソース項目のソースA |
+| `measurements` | string[] | 必須。下表の意味的名(MHO98は**全41項目**) |
+| `channel_b` | string | 2ソース項目(遅延・位相)のソースB。**それらを指定したときは必須**、それ以外では指定不可 |
 
-- 意味的測定名 → SCPIニモニックの変換はプロファイルの対応表で行う。プロファイルに無い項目は送信せず `UNSUPPORTED_FEATURE`(不正ニモニックはタイムアウト+キュー汚染のコストがあるため。[device-profiles.md](device-profiles.md) 4.2)
-- 返却キーはSI単位付き: `frequency_hz`, `vpp_v`, `rise_time_s`, `duty_ratio`(dutyは比率。MHO98実測 0.5002)
+測定項目(ガイド3.17.2 の `<item>` 41トークンに1対1で対応):
+
+| 分類 | 項目 |
+|---|---|
+| 時間・周期 | `frequency` / `period` / `rise_time` / `fall_time` / `pulse_width_pos` / `pulse_width_neg` / `duty` / `duty_neg` / `time_at_vmax` / `time_at_vmin` |
+| 振幅・電圧 | `vpp` / `vmax` / `vmin` / `vtop` / `vbase` / `vamp` / `vupper` / `vmid` / `vlower` / `vavg` / `rms` / `period_rms` / `ac_rms` / `overshoot` / `preshoot` |
+| 面積・スルーレート | `area` / `period_area` / `slew_rate_pos` / `slew_rate_neg` |
+| カウント | `pulses_pos` / `pulses_neg` / `edges_pos` / `edges_neg` |
+| **位相・遅延(2ソース)** | `delay_rise_rise` / `delay_rise_fall` / `delay_fall_rise` / `delay_fall_fall` / `phase_rise_rise` / `phase_rise_fall` / `phase_fall_rise` / `phase_fall_fall` |
+
+- 意味的測定名 → SCPIニモニックの変換はプロファイルの対応表で行う。プロファイルに無い項目は送信せず `UNSUPPORTED_FEATURE`(不正ニモニックはタイムアウト+キュー汚染のコストがあるため。[device-profiles.md](device-profiles.md) 4.2)。**41項目を宣言しているのは `mho98`(verified)のみ。DHO系は実機未検証のためガイド解読済みの10項目に留める**
+- 返却キーはSI単位付き: `frequency_hz`, `vpp_v`, `rise_time_s`, `duty_ratio`(dutyは比率。MHO98実測 0.5002)、`area_vs`, `slew_rate_pos_v_per_s`, `pulses_pos_count`, `phase_rise_rise_deg` など
+- **2ソース項目で `channel_b` を省略することは許さない。** ガイド3.17.2 の Remark によれば機器は省略時に「最後に選んだソース」(`:MEASure:SOURce` / `:SETup:PSA` / `:SETup:DSA`)を使うため、呼び出し側から結果が予測できなくなる。送信前に `INVALID_PARAMETER` で拒否する。逆に2ソース項目を1つも指定していないのに `channel_b` を渡した場合も拒否する(取り違えの検出)
+- `channel_b` を使ったときだけ返却に `channel_b` が入る
 - 可能な範囲で測定品質(`valid` / `overflow` / `no_signal` / `unstable` / `unknown`)を付与し、無効値を正常値としてLLMに解釈させない
 
 ### `clear_measurements` — SAFE_WRITE / Phase 4
@@ -507,9 +525,11 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `get_histogram_result` | READ_ONLY | M2 |
 | `configure_reference` | SAFE_WRITE | M3 |
 | `get_reference_state` | READ_ONLY | M3 |
+| `configure_measurement` | SAFE_WRITE | M4 |
+| `get_measurement_statistics` | READ_ONLY | M4 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は38(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
+登録Tool数は40(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
 
 将来(Phase 4の残り): `:PERiod` / `:VOLTage:HIGH`/`:LOW`(恒久スキップ。`frequency_hz`/`amplitude_vpp`+`offset_v`で表現可能なため)、DHOファミリの `:SOURce`(番号なし・DGモジュール)対応、Logic Analyzer。
 
@@ -845,7 +865,7 @@ MATH演算の現在設定を読む。**書き込みは一切行わず**、表示
   ```
 
   `:MATH<n>:SOURce` は `REF1`〜`REF10` を受理する(ガイド3.16.3)ため、この経路なら差分そのものを転送できる。目視だけで足りるなら `capture_screenshot` でも良い
-- **意図的にスキップ**: `:REFerence:CURRent`(→ [roadmap.md](roadmap.md) 2.5.3)
+- **意図的にスキップ**: `:REFerence:CURRent`(→ [roadmap.md](roadmap.md) 3章「実装しないと決めたもの」)
 
 ### `get_reference_state` — READ_ONLY / Phase M3
 
@@ -874,3 +894,124 @@ MATH演算の現在設定を読む。**書き込みは一切行わず**、表示
 - **全枠読みは実機で安全**(10枠とも正常応答し、エラーキューは終始 `0,"No error"`。沈黙も応答のずれも無し → [verification/mho98-m3.md](verification/mho98-m3.md) 1章)
 - **色の応答はガイドの記載と違う**: ガイド3.20.7 は緑を `GRE` と書くが、**実機は `GREE` を返す**。工場出荷状態の枠4・枠9が緑なので、短形/長形の2形しか見ない実装では**未操作の実機でこのToolが丸ごと落ちる**。列挙値の照合は短形式以上・長形式以下の任意の略形を受理する(曖昧なら推測せず `SCPI_ERROR`)→ [verification/mho98-m3.md](verification/mho98-m3.md) 4章
 - **プロファイルゲート**: `ref_channels` が未宣言(または0)なら、`ref` 省略時も**1枠だけ問い合わせて** `UNSUPPORTED_FEATURE` を返させる(空の `channels` を「正常」に見せない)
+
+---
+
+## 14. 測定の前提設定と統計(Phase M4)
+
+**本章は章番号を末尾に置いている。** コード内コメントやテストが既存の章番号を参照しているため、機能章の途中へ挿入して既存章を繰り下げることはしない(位置づけとしては5章と同列の機能章)。
+
+`measure`(5章)が**何を測るか**を選ぶのに対し、本章の2本は**どう解釈するか**(しきい値・測定区間・振幅算出方式)と**どれだけばらつくか**(統計)を扱う。取り込み条件(垂直・水平・トリガ)にも出力にも触れない。
+
+### `configure_measurement` — SAFE_WRITE / Phase M4
+
+測定の前提設定を変える。未指定の項目は変更しない(1項目も指定しなければ `INVALID_PARAMETER`)。
+
+引数:
+
+| 名前 | 型 | 説明 |
+|---|---|---|
+| `source` | string | 既定の測定ソース。`"CH1"`-`"CH4"` / `"D0"`-`"D15"`(ガイド3.17.1) |
+| `threshold_source` | string | しきい値の基準ch。`"CH1"`-`"CH4"`(3.17.16) |
+| `threshold_type` | string | `percent` / `absolute`(3.17.17) |
+| `threshold_max` / `threshold_mid` / `threshold_min` | number | 上限・中央・下限。`percent` なら%、`absolute` ならV(3.17.9-11) |
+| `threshold_default` | bool | 既定へ戻す(3.17.18)。**送信順の先頭** |
+| `area` | string | 測定範囲。`main` / `zoom` / `cursor`(3.17.19) |
+| `region_ax_s` / `region_bx_s` | number | `area="cursor"` のときのカーソル位置(秒。3.17.21/22) |
+| `region_linked` | bool | カーソルA/Bを連動させる(3.17.23) |
+| `amp_type` | string | 振幅算出方式。`auto` / `manual`(3.17.28) |
+| `amp_top` / `amp_base` | string | `manual` のときのTop/Base算出。`histogram` / `maxmin`(3.17.29/30) |
+| `statistics_enabled` | bool | 統計表示のON/OFF(3.17.6) |
+| `statistics_count` | int | 統計のサンプル数。2〜100000(3.17.5) |
+| `statistics_items` | string[] | 統計を有効化する測定項目(3.17.8 の set 形)。**`source` の同時指定が必須** |
+| `statistics_reset` | bool | 履歴をクリアして取り直す(3.17.7)。**送信順の末尾** |
+
+返却: `requested` / `applied` / `changed`(0.3節の共通規約)。
+
+動作・規範:
+
+- **送信順を項目表で固定している。** `threshold_default`(既定へ戻す)を先頭に置くのは、同じ呼び出しで指定されたしきい値を後から潰さないため(M3の `:REFerence:RESet` と同じ原則)。`threshold_type` は `SETup:MAX/MID/MIN` より前(値域がtypeに依存する)、`area` は `CREGion:*` より前(区間の指定先を決める)、`amp_type` は `AMP:MANual:TOP/BASE` より前。`statistics_reset` は末尾(設定を変えてから取り直す)。**この順序を後から「単純化」してはならない**
+- **`area="zoom"` は遅延掃引の有効化が前提**(ガイド3.17.19 Remarks)。遅延掃引はまだ未実装で、**実測では `:MEASure:AREA ZOOM` はエラーを積まずに無言で無視される**(読み戻しは直前の値のまま)。`applied` に反映されないことで検出できる
+- **`statistics_items` は `source` の同時指定を必須にしている。** ガイド3.17.8 の Remark によれば機器は省略時に「最後に選んだソース」を使い、呼び出し側から結果が予測できなくなるため
+- **プロファイルゲート**: `measure_areas` / `measure_threshold_types` / `measure_amp_types` / `measure_amp_methods` が未宣言の機種では送信ゼロで `UNSUPPORTED_FEATURE`。宣言しているのは `mho98` のみ
+- **意図的にスキップ**(ガイド3.17にあるが実装しない): `:MEASure:TYPE`(3.17.20)/ `:MEASure:CATegory`(3.17.33)/ `:MEASure:AMSource`(3.17.4)/ `:MEASure:INDicator`(3.17.24)— いずれも本体画面の分類・表示のみで測定値に影響しない。`:MEASure:SETup:PSA`・`PSB`・`DSA`・`DSB`(3.17.12-15)も不要 — `measure` / `get_measurement_statistics` が2ソースをコマンド引数で直接渡すため
+
+### `get_measurement_statistics` — READ_ONLY / Phase M4
+
+測定項目ごとの統計値(最大 / 最小 / 現在 / 平均 / 標準偏差 / 回数)を読む。**波形を1点も転送せずに「ばらつき」を数値で得る**のが用途で、「たまに出る異常」の存在証明に使える。
+
+引数:
+
+| 名前 | 型 | 説明 |
+|---|---|---|
+| `channel` | string | 必須。ソース(2ソース項目のソースA) |
+| `measurements` | string[] | 必須。`measure` と同じ意味的名 |
+| `types` | string[] | `maximum` / `minimum` / `current` / `average` / `deviation` / `count`。省略時は全6種 |
+| `channel_b` | string | 2ソース項目(遅延・位相)のソースB。それらを指定したときは必須 |
+
+返却: `channel` / `statistics`(意味的名 → `{統計種別: 値}`)/ `warnings`。`channel_b` は使ったときだけ入る。
+
+動作・規範:
+
+- **`<type>` は1つずつ指定する形式**(ガイド3.17.8)なので、項目数 × 種別数のクエリを送る。応答は科学表記の単一値
+- **統計は項目ごとの有効化が前提**。先に `configure_measurement` の `statistics_items` で有効化する
+- 番兵値(±9.9E37 相当)は `null` に変換し、その項目の全種別が `null` なら `warnings` に載せる
+
+---
+
+## 15. トリガ種別(Phase M5)
+
+MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標準搭載の11種**を `configure_trigger` の `type` + `settings` で開放している(オプション必須の IIS / FlexRay / MIL-STD-1553 と、用途が限定的な Video は対象外)。
+
+新Toolは増やしていない。種別ごとの引数差は `configure_decode` と同じ `settings` オブジェクトで吸収する。
+
+### 種別と設定キー
+
+| `type` | 捕まえられる現象 | `settings` のキー |
+|---|---|---|
+| `edge` | しきい値の交差(基本) | `source` / `level_v` / `slope`(rising/falling/either) |
+| `pulse` | 幅が範囲外のパルス(**グリッチ**) | `source` / `level_v` / `polarity`(positive/negative)/ `when`(greater/less/between)/ `upper_width_s` / `lower_width_s` |
+| `slope` | 遷移時間が範囲外のエッジ | `source` / `polarity` / `when` / `upper_time_s` / `lower_time_s` / `window`(a/b/ab)/ `level_a_v` / `level_b_v` |
+| `timeout` | 一定時間エッジが来ない(**無応答・ハング**) | `source` / `level_v` / `slope` / `time_s` |
+| `duration` | 状態の継続時間が範囲外 | `source` / `level_v` / **`pattern`(ch別のリスト。`["low","ignore","high","low"]`)** / `when`(greater/less/between/outside)/ `upper_time_s` / `lower_time_s` |
+| `runt` | 振幅が足りないパルス(**信号品質**) | `source` / `polarity` / `when`(none/greater/less/between)/ `upper_width_s` / `lower_width_s` / `level_a_v` / `level_b_v` |
+| `window` | 電圧帯からの逸脱・進入 | `source` / `slope` / `position`(exit/enter/time)/ `time_s` / `level_a_v` / `level_b_v` |
+| `delay` | 2ソースのエッジ間時間が範囲外 | `source_a` / `slope_a` / `source_b` / `slope_b` / `when`(greater/less/between/outside)/ `upper_time_s` / `lower_time_s` / `level_a_v` / `level_b_v` |
+| `setup_hold` | **セットアップ/ホールド違反** | `data_source` / `clock_source` / `slope` / `pattern`(high/low)/ `when`(setup/hold/both)/ `setup_time_s` / `hold_time_s` / `data_level_v` / `clock_level_v` |
+| `pattern` | 複数chの論理状態の組み合わせ | `source` / `level_v` / **`pattern`(ch別のリスト。`["high","low","ignore","ignore"]`)** |
+| `nth_edge` | アイドル後のN番目のエッジ | `source` / `level_v` / `slope` / `idle_time_s` / `edge_number`(1〜65535) |
+| `uart` | RS232/UARTの**エラーフレーム・特定データ** | `source` / `level_v` / `polarity` / `when`(start/error/check_error/data)/ `baud_bps` / `user_baud_bps` / `data_bits`(5-8)/ `stop_bits`(1/1.5/2)/ `parity`(even/odd/none)/ `data` |
+| `i2c` | I2Cの**NACK・特定アドレス/データ** | `clock_source` / `clock_level_v` / `data_source` / `data_level_v` / `when`(start/restart/stop/nack/address/data/address_data)/ `address_bits`(7/8/10)/ `address` / `direction`(read/write/both)/ `data_bytes`(1-5)/ `data` |
+| `spi` | SPIの**特定コマンド・データ値** | `clock_source` / `clock_level_v` / `clock_slope` / `data_source` / `data_level_v` / `cs_source` / `cs_level_v` / `cs_polarity`(high/low)/ `when`(cs/timeout)/ `timeout_s` / `data_bits`(4-32)/ `data` |
+| `can` | CANの**エラーフレーム・特定ID** | `source` / `level_v` / `baud_bps` / `signal_type`(can_h/can_l/rx_tx/differential)/ `when`(13種)/ `sample_point_percent` / `extended_id` / `define`(data/id)/ `data_bytes`(1-8)/ `data` |
+| `lin` | LINの**エラー・特定フレーム** | `source` / `level_v` / `standard`(v1x/v2x/both)/ `baud_bps` / `sample_point_percent` / `when`(7種)/ `error_type`(sync/id/checksum)/ `frame_id`(0-63)/ `data` |
+
+**シリアルバストリガは `configure_decode`(6章)と対になる。** デコードは「読んで表にする」、トリガは「条件に合った瞬間に取り込む」で、**別サブシステム**(`:BUS<n>` と `:TRIGger`)。綴りも値域も別に確認してある — 例えば I2C のアドレス幅はデコード側が `:BUS<n>:IIC:ADDBits`、トリガ側が `:TRIGger:IIC:AWIDth`。
+
+典型的な使い方: `configure_trigger(type="i2c", settings={"when": "nack"})` で NACK の瞬間だけ捕まえ、`configure_decode(protocol="i2c", event_table=True)` + `get_decode_result` でその前後のトランザクションを読む。
+
+共通設定(種別に依らない): `sweep_mode`、`holdoff_s`(再アームまでの不感時間)。
+
+### `get_trigger` の返却
+
+- `type` — 現在の種別。**プロファイル未宣言の種別(オプション等)では機器の生トークンをそのまま返し、配下には1本も問い合わせない**(`get_decode_result` と同じ fail-safe)
+- `source` / `level_v` / `slope` — **現在の種別のサブツリーに同名の項目があるときだけ**入る。2ソース・2レベルの種別(`delay` / `setup_hold` / `slope` / `runt` / `window`)では `null` になり、値は `settings` 側にある
+- `settings` — 現在の種別のサブツリー項目一式
+- `sweep_mode` / `status` — 従来どおり
+
+**他の種別のサブツリーは1本も問い合わせない。**
+
+### 実装上の注意(ガイドの罠)
+
+1. **`:TRIGger:MODE` のトークンとサブツリー名が一致しない種別が2つある。**
+   - `window`: MODEは **`WINDow`(単数)**、サブツリーは **`:TRIGger:WINDows`(複数)**
+   - `setup_hold`: MODEは **`SETup`**、サブツリーは **`:TRIGger:SHOLd`**
+2. **`when` の値域は種別ごとに違う。** 共有の対応表にすると値域外のトークンを送ってしまうため、プロファイルの方言キーを種別ごとに分けている(`trigger_pulse_when` / `trigger_duration_when` / `trigger_runt_when` / `trigger_delay_types`)
+3. **同じ `POSitive` / `NEGative` でも意味が違う。** `polarity` はパルスの正負、`slope` はエッジの向き。方言も `trigger_polarities` と `trigger_edge_slopes` に分けている
+4. **`window` の両エッジはガイドの Range欄が誤植。** 3.27.16.2 の Range欄は `RFALI`(大文字I)だが**実機は `-222` で拒否する**。Remarks欄の `RFALl`(小文字L)が正しく、他のトリガ(EDGE / TIMeout)と同じ綴り([verification/mho98-m4-m5.md](verification/mho98-m4-m5.md) で決着)
+5. **`pattern` トリガと `duration` トリガの `pattern` は「ch別のリスト」**(ガイド3.27.12.1 / 3.27.13.2 の `<pch1>[,<pch2>[,<pch3>[,<pch4>]]]`)。単一の列挙値ではない。アナログch数までのリストを渡す。**読み戻しは機器が24個返す**ことがある(デジタル/MATH分)が、書けるのはアナログch分だけなのでそこまでに切っている
+6. **`:TRIGger:LIN:DATA?` は2進のビットマスク文字列を返す**(`'01100100'`。未設定ビットは `X` で `'XXXXXXXX'`)。ガイドは「整数を返す」と書いているが実機は違う。**全て0/1なら整数へ、`X` を含むならマスク文字列のまま**返す。他プロトコル(CAN等)の `:DATA?` は素の整数
+7. **種別を切り替えるとトリガレベルがサブツリー間で伝播する**(実測: window の `level_a_v` を触ったあと edge に戻すと `level_v` が変わっていた)。復元するときは**元の種別へ戻したうえでレベルも明示的に書き戻す**
+8. **SPIは `CLK`/`SCL` と `MISO`/`SDA` が同義の別名**(ガイドの説明文が同一)。片方(`:CLK` / `:MISO`)だけを公開している — 両方出すと同じ設定に2つの入口ができる
+9. **CURRbit / CODE(データのビット単位マスク)は意図的に未対応。** 「桁を選ぶ → その桁の値を 0/1/任意 に設定」という状態を持つ2コマンドの対で、デコードの `bit_sources` と同じくリスト値のキーが要る。`data` で「この値のとき」は表現できるため、必要になってから足す
+10. **プロファイルゲートは「宣言された種別」で行う。** モジュールの項目表にあるだけでは足りない — 実機未検証の機種へ `:TRIGger:MODE PULSe` を送ってしまう。DHO系プロファイルは `edge` のみ宣言している

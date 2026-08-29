@@ -239,9 +239,12 @@ def test_acquire_fixed_queries(scope: FakeScope) -> None:
 
 
 def test_trigger_queries(scope: FakeScope) -> None:
+    """トリガのNR3は**指数1桁**(`E+0`)。MHO98実測の quirk
+    (`nr3_single_digit_exponent`)で、他のサブシステムと同じ宣言表経由になった。
+    """
     assert scope.handle(":TRIGger:MODE?") == b"EDGE"
     assert scope.handle(":TRIGger:EDGE:SOURce?") == b"CHAN1"
-    assert scope.handle(":TRIGger:EDGE:LEVel?") == b"0.000000E+00"
+    assert scope.handle(":TRIGger:EDGE:LEVel?") == b"0.000000E+0"
     assert scope.handle(":TRIGger:EDGE:SLOPe?") == b"POS"
     assert scope.handle(":TRIGger:SWEep?") == b"AUTO"
     assert scope.handle(":TRIGger:STATus?") == b"TD"
@@ -252,11 +255,33 @@ def test_trigger_writes(scope: FakeScope) -> None:
     assert scope.handle(":TRIGger:EDGE:SOURce CHANnel2") is None
     assert scope.handle(":TRIG:EDGE:SOUR?") == b"CHAN2"
     scope.handle(":TRIGger:EDGE:LEVel 2.0")
-    assert scope.handle(":TRIGger:EDGE:LEVel?") == b"2.000000E+00"
+    assert scope.handle(":TRIGger:EDGE:LEVel?") == b"2.000000E+0"
     scope.handle(":TRIGger:EDGE:SLOPe NEGative")
     assert scope.handle(":TRIG:EDGE:SLOP?") == b"NEG"
     scope.handle(":TRIGger:SWEep NORMal")
     assert scope.handle(":TRIG:SWE?") == b"NORM"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_trigger_subtrees_are_independent(scope: FakeScope) -> None:
+    """種別ごとにサブツリーの状態を分けて持つ(実機と同じく切り替えても残る)。"""
+    scope.handle(":TRIGger:MODE PULSe")
+    scope.handle(":TRIGger:PULSe:POLarity NEGative")
+    scope.handle(":TRIGger:MODE EDGE")
+
+    assert scope.handle(":TRIGger:PULSe:POLarity?") == b"NEG"
+    assert scope.handle(":TRIGger:EDGE:SLOPe?") == b"POS"
+    assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
+
+
+def test_window_and_setup_hold_subtree_names_differ_from_mode(scope: FakeScope) -> None:
+    """**罠**: MODEは `WINDow` / `SETup` だがサブツリーは `:WINDows` / `:SHOLd`。"""
+    assert scope.handle(":TRIGger:MODE WINDow") is None
+    assert scope.handle(":TRIGger:MODE?") == b"WIND"
+    assert scope.handle(":TRIGger:WINDows:POSition?") == b"EXIT"
+
+    assert scope.handle(":TRIGger:MODE SETup") is None
+    assert scope.handle(":TRIGger:SHOLd:PATTern?") == b"H"
     assert scope.handle(":SYSTem:ERRor?") == NO_ERROR.encode()
 
 

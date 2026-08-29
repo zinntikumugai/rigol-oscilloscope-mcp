@@ -105,7 +105,7 @@ yorigin = offset_v / yincrement
 - 一方で `:CHANnel<n>:COUPling` / `:PROBe` は表示OFFでも適用される
 - read-back(`applied`)で検出できる: requested と applied が食い違う
 
-実機writeスイートは、この挙動を踏まえて「垂直軸の検証前に `enabled=True` を先に送り、復元は最後に `enabled` を戻す」という順序にしてある。`configure_channel` 側で自動的に表示をONにするかは要検討([roadmap.md](../roadmap.md) 4章)。
+実機writeスイートは、この挙動を踏まえて「垂直軸の検証前に `enabled=True` を先に送り、復元は最後に `enabled` を戻す」という順序にしてある。`configure_channel` 側で自動的に表示をONにするかは要検討([roadmap.md](../roadmap.md) 5章)。
 
 ### 3.4 `:RUN` 直後の `:TRIGger:STATus?` は約0.2秒 STOP のまま
 
@@ -115,7 +115,7 @@ yorigin = offset_v / yincrement
 
 ## 4. 未検証のまま残る項目
 
-MVP完了時点で実機確認できていない項目。[roadmap.md](../roadmap.md) 4章に引き継ぐ。
+MVP完了時点で実機確認できていない項目。[roadmap.md](../roadmap.md) 5章に引き継ぐ。
 
 - 50Ω入力インピーダンス(`FIFT`)— 耐圧が低く誤接続時に機器を壊すため、意図的に実機へ送っていない(FakeScopeでの検証のみ)
 - `autoset`(`:AUToscale`)の書き込み — 利用者の設定を破壊するため実機未実施(FakeScopeでの検証のみ)

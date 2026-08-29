@@ -44,7 +44,7 @@ def test_models_are_frozen_dataclasses(model: type) -> None:
         ),
         (
             TriggerState,
-            ["type", "source", "level_v", "slope", "sweep_mode", "status"],
+            ["type", "source", "level_v", "slope", "sweep_mode", "status", "settings"],
         ),
         (MeasurementResult, ["name", "key", "value", "quality"]),
     ],
@@ -98,8 +98,20 @@ def test_trigger_state_construction() -> None:
         slope="rising",
         sweep_mode="auto",
         status="TD",
+        settings={"source": "CH1", "level_v": 1.5, "slope": "rising"},
     )
     assert trig.status == "TD"
+    # 2ソース・2レベルの種別では最上位が None になり、値は settings にある
+    delay = TriggerState(
+        type="delay",
+        source=None,
+        level_v=None,
+        slope=None,
+        sweep_mode="auto",
+        status="TD",
+        settings={"source_a": "CH1", "source_b": "CH2"},
+    )
+    assert delay.settings["source_b"] == "CH2"
 
 
 def test_measurement_result_allows_none_value() -> None:

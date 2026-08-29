@@ -3,7 +3,7 @@
 **対象:** RIGOL MHO98(ファームウェア 00.01.00、LAN SCPI :5555)。IP・シリアルは記録しない
 **実施日:** 2026-08-27
 **状態:** **完了**((a)〜(f) を全て実測で確定。実機テスト(`-m device` / `-m device_write`)のpytest実行も完了 — 下記「実機テストの実行結果」)
-**規範:** [tools.md](../tools.md) 11章 / [roadmap.md](../roadmap.md) 2.5.1
+**規範:** [tools.md](../tools.md) 11章(M1の完了記録は [roadmap.md](../roadmap.md) 末尾のコメント 2.5.1)
 **前提:** MHO900-BND適用済み。手順規律は [mho98-afg.md](mho98-afg.md) と同じ(1コマンド → 応答5s timeout → `:SYSTem:ERRor?` → 記録。**沈黙したら空行付き再接続 → `*IDN?` で復旧確認 → エラーキューをドレイン**)
 **安全条件:** write項目は全て「現在値取得 → set → readback → finally で復元」。MATHは表示・解析層のみの操作で出力を伴わない
 

@@ -88,7 +88,7 @@ Time,Tx/Rx,Data,Error,
 
 ## 5. パラレルデコードの `:PARallel:WIDTh` が拒否される原因(2026-08-28)
 
-**長らく残っていた「復元fixtureが `:BUS1:PARallel:WIDTh 1` で `-200,"Command execute failed"` を受ける」問題([mho98-m2.md](mho98-m2.md) 7.1、[roadmap.md](../roadmap.md) 2.1)の原因を切り分けた。**
+**長らく残っていた「復元fixtureが `:BUS1:PARallel:WIDTh 1` で `-200,"Command execute failed"` を受ける」問題([mho98-m2.md](mho98-m2.md) 7.1、[roadmap.md](../roadmap.md) 6章)の原因を切り分けた。**
 
 実測(状態を変えながら全て試行。毎回エラーキューを空にしてから1コマンド):
 
@@ -117,7 +117,7 @@ Time,Tx/Rx,Data,Error,
 
 **ガイドの Remark どおりで、条件は `:PARallel:BUS USER` ただ1つ。** 拒否は沈黙を伴わず、エラーキューに積まれるだけである。
 
-### 実装(修正済み・[roadmap.md](../roadmap.md) 2.1)
+### 実装(修正済み・[roadmap.md](../roadmap.md) 6章)
 
 - **`settings.parallel` に `bus` を追加した。** 値域はガイド3.4.10.1 逐語の11トークン(`d7_d0` / `d15_d8` / `d15_d0` / `d0_d7` / `d8_d15` / `d0_d15` / `ch1`〜`ch4` / `user`。デジタルグループは**先に書かれた側がMSB**)。プロトコル名 → ニモニックの対応と違い、この値域は機種依存の方言ではないので `driver/decode.py` の変換表が持つ(プロファイルの追加宣言は無し)
 - **`configure_decode` の送信順を「表の並び」に固定した**(従来は呼び出し側の `settings` のキー順だった)。表では `bus` が `bus_width` より前にあるので、`{"bus": "user", "bus_width": 4}` が**1回の呼び出しで**通る

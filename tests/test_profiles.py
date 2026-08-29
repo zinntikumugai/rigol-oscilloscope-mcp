@@ -237,24 +237,15 @@ def test_mho98_inherits_generic_and_overrides() -> None:
 
     # 継承: genericのdialectキーはすべて見える
     assert set(generic.dialect) <= set(mho98.dialect)
-    # 深いマージ: measurement_items は共通5項目 + 固有5項目 = 10項目
-    assert len(mho98.dialect["measurement_items"]) == 10
+    # 深いマージ: genericの5項目はそのまま見え、mho98はガイド3.17.2 の全41項目
+    assert len(mho98.dialect["measurement_items"]) == 41
     for name, mnemonic in generic.dialect["measurement_items"].items():
         assert mho98.dialect["measurement_items"][name] == mnemonic
     # リストは置換(マージではない)
-    assert len(mho98.capabilities["measurements"]) == 10
-    assert mho98.capabilities["measurements"] == [
-        "frequency",
-        "period",
-        "vpp",
-        "vmax",
-        "vmin",
-        "vavg",
-        "rms",
-        "duty",
-        "rise_time",
-        "fall_time",
-    ]
+    assert len(mho98.capabilities["measurements"]) == 41
+    assert sorted(mho98.capabilities["measurements"]) == sorted(
+        mho98.dialect["measurement_items"]
+    )
 
 
 # --- ガイドベースプロファイル: DHO800 / DHO900 --------------------------------
@@ -281,8 +272,18 @@ def test_load_dho800_profile_fields() -> None:
     assert p.capabilities["impedance_50ohm"] is False
     assert p.capabilities["waveform_download"] is True
     assert p.capabilities["screenshot"] is True
-    assert p.capabilities["measurements"] == load_profile("mho98").capabilities[
-        "measurements"
+    # DHOは実機未検証なのでM4の41項目拡張の対象外。ガイド解読済みの10項目のみ
+    assert p.capabilities["measurements"] == [
+        "frequency",
+        "period",
+        "vpp",
+        "vmax",
+        "vmin",
+        "vavg",
+        "rms",
+        "duty",
+        "rise_time",
+        "fall_time",
     ]
     assert p.dialect["waveform_preamble"] == {"yreference": 128}
     assert len(p.limits["probe_ratio"]) == 24
@@ -612,3 +613,41 @@ def test_missing_blocks_default_to_empty_dict(tmp_path: Path) -> None:
     assert p.limits == {}
     assert p.measurement_mnemonic("vpp") is None
     assert p.supports("screenshot") is False
+
+
+def test_m4_measurement_expansion_is_mho98_only() -> None:
+    """41項目への拡張はMHO98(verified)限定。DHO系は実機未検証なので広げない。
+
+    プロファイル宣言の不在がそのままゲートになる(AGENTS.md ルール2)。
+    """
+    from rigol_oscilloscope_mcp.driver.scope import MEASUREMENT_KEYS
+
+    assert sorted(load_profile("mho98").dialect["measurement_items"]) == sorted(
+        MEASUREMENT_KEYS
+    )
+    for name in ("rigol-generic", "dho800", "dho900", "dho1000", "dho4000"):
+        items = load_profile(name).dialect["measurement_items"]
+        assert len(items) < 41, f"{name} に未検証の測定項目が混入している"
+        assert "delay_rise_rise" not in items
+
+
+def test_device_profiles_doc_matches_the_verified_dialect() -> None:
+    """`docs/device-profiles.md` の記述とプロファイル実体を突き合わせる。
+
+    実機検証で綴りが変わった2件(Copilotレビューで文書側の取り残しを指摘された)
+    が、また乖離しないよう機械的に固定する。
+    """
+    from pathlib import Path
+
+    doc = Path(__file__).resolve().parents[1] / "docs" / "device-profiles.md"
+    text = doc.read_text(encoding="utf-8")
+    dialect = load_profile("mho98").dialect
+
+    # `:MEASure:AMP:TYPE` は短形のみ(長形は実機が -222 で拒否)
+    assert dialect["measure_amp_types"]["manual"] == "MAN"
+    assert "`manual` → `MAN`(短形)" in text
+    assert "`manual` → `MANual`" not in text
+
+    # `:TRIGger:WINDows:SLOPe` は両エッジも宣言済み(ガイドのRange欄が誤植)
+    assert dialect["trigger_window_slopes"]["either"] == "RFALl"
+    assert "両エッジは宣言しない" not in text

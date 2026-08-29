@@ -66,9 +66,19 @@ def _invalid(message: str, detail: dict) -> ScopeError:
     return ScopeError(ErrorCode.INVALID_PARAMETER, message, detail)
 
 
-def _specified(values: dict) -> dict:
-    """`None` でない項目だけを、宣言順のまま取り出す。"""
-    return {key: value for key, value in values.items() if value is not None}
+def _specified(values: dict, actions: tuple[str, ...] = ()) -> dict:
+    """`None` でない項目だけを、宣言順のまま取り出す。
+
+    `actions` に挙げたキーは**一発動作**(`threshold_default` / `statistics_reset`
+    / `settings` 等)で、`False` や空のリスト・辞書には意味が無い。それらを
+    「変更する項目を指定した」と数えると、1コマンドも送らないまま成功が返り
+    呼び出し側が「適用された」と誤解する。
+    """
+    return {
+        key: value
+        for key, value in values.items()
+        if value is not None and (key not in actions or value)
+    }
 
 
 #: `get_math_config` の返却のうち、設定ではなく測定結果として毎回変わりうるキー。
@@ -225,40 +235,57 @@ class ControlService:
         self,
         driver: ScopeDriver,
         *,
+        type: str | None = None,
         source: str | None = None,
         level_v: float | None = None,
         slope: str | None = None,
         sweep_mode: str | None = None,
+        holdoff_s: float | None = None,
+        settings: dict | None = None,
     ) -> dict:
-        """エッジトリガを設定する(SAFE_WRITE)。未指定の項目は変更しない。
+        """トリガを設定する(SAFE_WRITE)。未指定の項目は変更しない。
 
-        ドライバが一括で設定・read-backするため、`applied` はその結果から抽出する
-        (項目ごとに read-back を送らない)。
+        `type` 省略時はドライバが `:TRIGger:MODE?` を読み、**今の種別のサブツリー**
+        へ書く。`applied` はドライバの返り値をそのまま透過する(種別ごとに項目が
+        違うため、`TriggerState` のフィールドから引き直すことはできない)。
         """
         requested = _specified(
             {
+                "type": type,
                 "source": source,
                 "level_v": level_v,
                 "slope": slope,
                 "sweep_mode": sweep_mode,
-            }
+                "holdoff_s": holdoff_s,
+                "settings": settings,
+            },
+            actions=("settings",),
         )
         if not requested:
             raise _invalid(
-                "No item to change was specified "
-                "(specify at least one of source / level_v / slope / sweep_mode)",
+                "No item to change was specified (specify at least one of "
+                "type / source / level_v / slope / sweep_mode / holdoff_s / settings)",
                 {},
             )
 
         with self._audited("configure_trigger", requested) as record:
             before = get_trigger_dict(driver)
             record.before(before)
-            after = asdict(driver.set_trigger_edge(**requested))
+            applied = driver.configure_trigger(
+                type=type,
+                source=source,
+                level_v=level_v,
+                slope=slope,
+                sweep_mode=sweep_mode,
+                holdoff_s=holdoff_s,
+                settings=settings,
+            )
+            after = get_trigger_dict(driver)
             record.after(after)
 
         return {
             "requested": requested,
-            "applied": {key: after[key] for key in requested},
+            "applied": applied,
             "changed": before != after,
             "trigger": after,
         }
@@ -662,7 +689,8 @@ class ControlService:
             "top_v": top_v,
             "reset": reset,
         }
-        requested = _specified(items)
+        # `reset` は一発動作なので False には意味が無い(送信ゼロの成功を防ぐ)
+        requested = _specified(items, actions=("reset",))
         if not requested:
             raise _invalid(
                 "No item to change was specified "
@@ -680,6 +708,86 @@ class ControlService:
                 driver.reset_histogram()
                 applied["reset"] = True
             after = driver.get_histogram_config()
+            record.after(after)
+
+        return {
+            "requested": requested,
+            "applied": applied,
+            "changed": before != after,
+        }
+
+    # -- 測定の前提設定(Phase M4)-----------------------------------------
+
+    def configure_measurement(
+        self,
+        driver: ScopeDriver,
+        *,
+        source: str | None = None,
+        threshold_source: str | None = None,
+        threshold_type: str | None = None,
+        threshold_max: float | None = None,
+        threshold_mid: float | None = None,
+        threshold_min: float | None = None,
+        threshold_default: bool | None = None,
+        area: str | None = None,
+        region_ax_s: float | None = None,
+        region_bx_s: float | None = None,
+        region_linked: bool | None = None,
+        amp_type: str | None = None,
+        amp_top: str | None = None,
+        amp_base: str | None = None,
+        statistics_enabled: bool | None = None,
+        statistics_count: int | None = None,
+        statistics_reset: bool | None = None,
+        statistics_items: list[str] | None = None,
+    ) -> dict:
+        """測定の前提設定を変える(SAFE_WRITE)。未指定の項目は変更しない。
+
+        承認を要求しない根拠は configure_histogram と同じ — 取り込み条件(垂直・
+        水平・トリガ)にも出力にも触れず、測定値の**解釈のしかた**だけを変える。
+
+        送信順はドライバの項目表が持つ(`threshold_default` が先頭、
+        `statistics_reset` が末尾)。`changed` の判定は設定だけで行う。
+        """
+        items = {
+            "source": source,
+            "threshold_source": threshold_source,
+            "threshold_type": threshold_type,
+            "threshold_max": threshold_max,
+            "threshold_mid": threshold_mid,
+            "threshold_min": threshold_min,
+            "threshold_default": threshold_default,
+            "area": area,
+            "region_ax_s": region_ax_s,
+            "region_bx_s": region_bx_s,
+            "region_linked": region_linked,
+            "amp_type": amp_type,
+            "amp_top": amp_top,
+            "amp_base": amp_base,
+            "statistics_enabled": statistics_enabled,
+            "statistics_count": statistics_count,
+            "statistics_reset": statistics_reset,
+            "statistics_items": statistics_items,
+        }
+        # `statistics_enabled` は**設定**なので False も有効。一発動作
+        # (`threshold_default` / `statistics_reset`)と空の `statistics_items`
+        # だけを「指定なし」として扱う
+        requested = _specified(
+            items,
+            actions=("threshold_default", "statistics_reset", "statistics_items"),
+        )
+        if not requested:
+            raise _invalid(
+                "No item to change was specified "
+                f"(specify at least one of {' / '.join(items)})",
+                {},
+            )
+
+        with self._audited("configure_measurement", requested) as record:
+            before = driver.get_measurement_config()
+            record.before(before)
+            applied = driver.configure_measurement(**items)
+            after = driver.get_measurement_config()
             record.after(after)
 
         return {
@@ -730,7 +838,9 @@ class ControlService:
             "save": save,
             "reset": reset,
         }
-        requested = _specified(items)
+        actions = ("save", "reset")
+        # 一発動作は True のときだけ意味を持つ(送信ゼロの成功を防ぐ)
+        requested = _specified(items, actions=actions)
         if not requested:
             raise _invalid(
                 "No item to change was specified "
@@ -738,7 +848,6 @@ class ControlService:
                 {"ref": ref},
             )
 
-        actions = ("save", "reset")
         settings = {
             key: value for key, value in requested.items() if key not in actions
         }

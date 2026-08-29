@@ -21,8 +21,14 @@ capabilities:
   frequency_counter: true # ガイド3.7(:COUNter)
   dvm: true # ガイド3.10(:DVM)
   histogram: true # ガイド3.11(:HISTogram。SAVE:CSVを除く)
-  measurements:
-    [frequency, period, vpp, vmax, vmin, vavg, rms, duty, rise_time, fall_time]
+  measurements: [
+     frequency, period, rise_time, fall_time, pulse_width_pos, pulse_width_neg, duty,
+    duty_neg, time_at_vmax, time_at_vmin, vpp, vmax, vmin, vtop, vbase, vamp, vupper,
+    vmid, vlower, vavg, rms, period_rms, ac_rms, overshoot, preshoot, area, period_area,
+    slew_rate_pos, slew_rate_neg, pulses_pos, pulses_neg, edges_pos, edges_neg,
+    delay_rise_rise, delay_rise_fall, delay_fall_rise, delay_fall_fall, phase_rise_rise,
+    phase_rise_fall, phase_fall_rise, phase_fall_fall
+  ]
 
 dialect:
   screenshot_command: ":DISPlay:DATA?"
@@ -40,14 +46,230 @@ dialect:
   measurement_items:
     frequency: FREQuency
     period: PERiod
+    rise_time: RTIMe
+    fall_time: FTIMe
+    pulse_width_pos: PWIDth
+    pulse_width_neg: NWIDth
+    duty: PDUTy # 返却単位は比率(0.5002 = 50.02%)
+    duty_neg: NDUTy # 比率
+    time_at_vmax: TVMAX
+    time_at_vmin: TVMIN
     vpp: VPP
     vmax: VMAX
     vmin: VMIN
+    vtop: VTOP
+    vbase: VBASe
+    vamp: VAMP
+    vupper: VUPPer
+    vmid: VMID
+    vlower: VLOWer
     vavg: VAVG # VAVerage は不可(実測)
     rms: VRMS
-    duty: PDUTy # 返却単位は比率(0.5002 = 50.02%)
-    rise_time: RTIMe
-    fall_time: FTIMe
+    period_rms: PVRMs
+    ac_rms: ACRMs
+    overshoot: OVERshoot # 比率
+    preshoot: PREShoot # 比率
+    area: MARea # 単位 V*s(ガイド Other Parameters)
+    period_area: MPARea # 単位 V*s
+    slew_rate_pos: PSLewrate # 単位 V/s
+    slew_rate_neg: NSLewrate # 単位 V/s
+    pulses_pos: PPULses # 整数カウント
+    pulses_neg: NPULses
+    edges_pos: PEDGes
+    edges_neg: NEDGes
+    delay_rise_rise: RRDelay # ここから8項目は**2ソース必須**(ガイド3.17.2)
+    delay_rise_fall: RFDelay
+    delay_fall_rise: FRDelay
+    delay_fall_fall: FFDelay
+    phase_rise_rise: RRPHase
+    phase_rise_fall: RFPHase
+    phase_fall_rise: FRPHase
+    phase_fall_fall: FFPHase
+  # トリガ種別(ガイド3.27.1 の :TRIGger:MODE の値)。標準搭載のみ宣言する。
+  # **video はロードマップで低優先、iis / flexray / m1553 はライセンス必須の
+  # ため意図的に不在** — 不在がそのままゲート(4.2の原則)。
+  # シリアル系(rs232 / iic / spi / can / lin)はM5後半で追加する。
+  #
+  # **罠**: MODEのトークンとサブツリー名が一致しない種別が2つある。
+  #   window     → MODEは WINDow(単数)/ サブツリーは :TRIGger:WINDows(複数)
+  #   setup_hold → MODEは SETup     / サブツリーは :TRIGger:SHOLd
+  trigger_types:
+    edge: EDGE
+    pulse: PULSe
+    slope: SLOPe
+    pattern: PATTern
+    duration: DURation
+    timeout: TIMeout
+    runt: RUNT
+    window: WINDow
+    delay: DELay
+    setup_hold: SETup
+    nth_edge: NEDGe
+    # シリアルバス(ガイド3.27.20-24)。デコード側の :BUS<n>:MODE とは
+    # **別サブシステム**。トリガは機器がハードウェアで条件判定する
+    uart: RS232
+    i2c: IIC
+    spi: SPI
+    can: CAN
+    lin: LIN
+  # シリアルバストリガの列挙(ガイド3.27.20-24)。デコード側(:BUS<n>)とは
+  # **別サブシステム**なので値も別に宣言する(綴りが違うものがある)
+  trigger_rs232_when: # 3.27.20.4
+    start: STARt
+    error: ERRor
+    check_error: CERRor
+    data: DATA
+  trigger_parities: # 3.27.20.9
+    even: EVEN
+    odd: ODD
+    none: NONE
+  trigger_iic_when: # 3.27.21.5
+    start: STARt
+    restart: RESTart
+    stop: STOP
+    nack: NACKnowledge
+    address: ADDRess
+    data: DATA
+    address_data: ADATa
+  trigger_iic_directions: # 3.27.21.8
+    read: READ
+    write: WRITe
+    both: RWRite
+  trigger_spi_when: # 3.27.22.8
+    cs: CS
+    timeout: TIMeout
+  trigger_spi_cs_modes: # 3.27.22.11
+    high: HIGH
+    low: LOW
+  trigger_can_signal_types: # 3.27.23.3
+    can_h: H
+    can_l: L
+    rx_tx: RXTX
+    differential: DIFFerential
+  trigger_can_when: # 3.27.23.4
+    start_of_frame: SOF
+    end_of_frame: EOF
+    remote_id: IDRemote
+    overload: OVERload
+    id_frame: IDFRame
+    data_frame: DATaframe
+    id_and_data: IDData
+    error_frame: ERFRame
+    answer_error: ERANswer
+    check_error: ERCHeck
+    format_error: ERFormat
+    random_error: ERRandom
+    bit_error: ERBit
+  trigger_can_defines: # 3.27.23.7(Range欄に FALSe/TRUE も並ぶが意味不明のため未宣言)
+    data: DATA
+    id: ID
+  trigger_lin_standards: # 3.27.24.3
+    v1x: 1X
+    v2x: 2X
+    both: BOTH
+  trigger_lin_when: # 3.27.24.6
+    sync_break: SYNCbreak
+    id: ID
+    data: DATA
+    id_and_data: IDData
+    sleep: SLEep
+    wakeup: WAKeup
+    error: ERRor
+  trigger_lin_errors: # 3.27.24.7
+    sync: SYNC
+    id: ID
+    checksum: CHECk
+  # スロープ・極性(ガイド3.27.8.2 / 3.27.14.2 ほか)
+  trigger_slopes:
+    rising: POSitive
+    falling: NEGative
+    either: RFALl
+  # **同じ POSitive/NEGative でも意味が違うので表を分ける。**
+  # polarity はパルスの正負(正パルス / 負パルス)、slope はエッジの向き
+  trigger_polarities: # 3.27.9.2 / 3.27.10.2 / 3.27.15.2
+    positive: POSitive
+    negative: NEGative
+  trigger_edge_slopes: # 3.27.17.2 / 3.27.18.3 / 3.27.19.2(両エッジは持たない)
+    rising: POSitive
+    falling: NEGative
+  # **実機で決着(2026-08-29)**。3.27.16.2 の Range欄 `RFALI`(大文字I)は
+  # **誤植** — 実機は `-222` で拒否する。Remarks欄の `RFALl`(小文字L)が正しく、
+  # 他のトリガ(EDGE / TIMeout)と同じ綴り。記録: verification/mho98-m4-m5.md
+  trigger_window_slopes:
+    rising: POSitive
+    falling: NEGative
+    either: RFALl
+  # 条件(WHEN)。**種別ごとに値域が違うので表を分ける**(共有すると値域外を送る)
+  trigger_pulse_when: # 3.27.9.3 / 3.27.10.3
+    greater: GREater
+    less: LESS
+    between: GLESs
+  trigger_duration_when: # 3.27.13.3
+    greater: GREater
+    less: LESS
+    between: GLESs
+    outside: UNGLess
+  trigger_runt_when: # 3.27.15.3
+    none: NONE
+    greater: GREater
+    less: LESS
+    between: GLESs
+  trigger_delay_types: # 3.27.17.5
+    greater: GREater
+    less: LESS
+    between: GLESs
+    outside: GOUT
+  trigger_slope_windows: # 3.27.10.6
+    a: TA
+    b: TB
+    ab: TAB
+  trigger_pattern_levels: # 3.27.12.1
+    high: H
+    low: L
+    ignore: X
+    rising: R
+    falling: F
+  trigger_duration_types: # 3.27.13.2
+    high: H
+    low: L
+    ignore: X
+  trigger_window_positions: # 3.27.16.3
+    exit: EXIT
+    enter: ENTer
+    time: TIME
+  trigger_shold_types: # 3.27.18.5
+    setup: SETup
+    hold: HOLD
+    both: SETHold
+  trigger_shold_patterns: # 3.27.18.4
+    high: H
+    low: L
+  # 測定の前提設定と統計(ガイド3.17.6/3.17.8/3.17.17/3.17.19/3.17.28-30)。
+  # 未宣言なら configure_measurement / get_measurement_statistics は送信ゼロで
+  # UNSUPPORTED_FEATURE。DHO系は実機未検証のため意図的に不在。
+  measure_areas: # ガイド3.17.19
+    main: MAIN
+    zoom: ZOOM # 遅延掃引を先に有効化しないと機器が拒否する(同節Remark)
+    cursor: CURSor
+  measure_threshold_types: # ガイド3.17.17
+    percent: PERCent
+    absolute: ABSolute
+  measure_amp_types: # ガイド3.17.28
+    auto: AUTO
+    # **実機実測**: 長形 `MANual` は -222 で拒否され、短形 `MAN` が通る
+    # (`VAVerage` 不可 / `VAVG` 可 と同じ癖)。`AMP:MANual:TOP` / `BASE` は
+    # 長形を受理するので、短形が要るのは `AMP:TYPE` だけ
+    manual: MAN
+  measure_amp_methods: # ガイド3.17.29/3.17.30(TOP / BASE 共通の値域)
+    histogram: HISTogram
+    maxmin: MAXMin
+  measure_statistic_types: # ガイド3.17.8 の <type>
+    maximum: MAXimum
+    minimum: MINimum
+    current: CURRent
+    average: AVERages
+    deviation: DEViation
+    count: CNT
   # シリアルデコード(:BUS<n>:MODE の値)。標準搭載6種のみ。
   # i2s(IIS)/ flexray / m1553(AERO)/ CAN-FD はライセンスオプション必須の
   # ため意図的に不在 — **不在がそのままゲート**(4.2の原則)。
