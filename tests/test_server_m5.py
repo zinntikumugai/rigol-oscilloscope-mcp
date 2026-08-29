@@ -37,6 +37,11 @@ TRIGGER_TYPES = (
     "delay",
     "setup_hold",
     "nth_edge",
+    "uart",
+    "i2c",
+    "spi",
+    "can",
+    "lin",
 )
 
 
@@ -187,3 +192,25 @@ def test_legacy_edge_call_still_works(server) -> None:
         "level_v": pytest.approx(0.5),
         "slope": "falling",
     }
+
+
+def test_serial_trigger_round_trip(server) -> None:
+    """シリアルバストリガ。デコード(`configure_decode`)と対で使う。"""
+    connected(server)
+
+    result = data(
+        server,
+        "configure_trigger",
+        {"type": "i2c", "settings": {"when": "nack", "address": 42}},
+    )
+
+    assert result["applied"]["type"] == "i2c"
+    assert result["applied"]["when"] == "nack"
+    assert result["trigger"]["settings"]["address"] == 42
+
+
+def test_configure_trigger_documents_the_decode_pairing(server) -> None:
+    """トリガとデコードが別サブシステムであることを説明文に残す。"""
+    description = descriptions(server)["configure_trigger"]
+
+    assert "configure_decode" in description or "decode" in description

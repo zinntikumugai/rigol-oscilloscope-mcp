@@ -980,6 +980,15 @@ MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標
 | `setup_hold` | **セットアップ/ホールド違反** | `data_source` / `clock_source` / `slope` / `pattern`(high/low)/ `when`(setup/hold/both)/ `setup_time_s` / `hold_time_s` / `data_level_v` / `clock_level_v` |
 | `pattern` | 複数chの論理状態の組み合わせ | `source` / `level_v` / `pattern`(high/low/ignore/rising/falling) |
 | `nth_edge` | アイドル後のN番目のエッジ | `source` / `level_v` / `slope` / `idle_time_s` / `edge_number`(1〜65535) |
+| `uart` | RS232/UARTの**エラーフレーム・特定データ** | `source` / `level_v` / `polarity` / `when`(start/error/check_error/data)/ `baud_bps` / `user_baud_bps` / `data_bits`(5-8)/ `stop_bits`(1/1.5/2)/ `parity`(even/odd/none)/ `data` |
+| `i2c` | I2Cの**NACK・特定アドレス/データ** | `clock_source` / `clock_level_v` / `data_source` / `data_level_v` / `when`(start/restart/stop/nack/address/data/address_data)/ `address_bits`(7/8/10)/ `address` / `direction`(read/write/both)/ `data_bytes`(1-5)/ `data` |
+| `spi` | SPIの**特定コマンド・データ値** | `clock_source` / `clock_level_v` / `clock_slope` / `data_source` / `data_level_v` / `cs_source` / `cs_level_v` / `cs_polarity`(high/low)/ `when`(cs/timeout)/ `timeout_s` / `data_bits`(4-32)/ `data` |
+| `can` | CANの**エラーフレーム・特定ID** | `source` / `level_v` / `baud_bps` / `signal_type`(can_h/can_l/rx_tx/differential)/ `when`(13種)/ `sample_point_percent` / `extended_id` / `define`(data/id)/ `data_bytes`(1-8)/ `data` |
+| `lin` | LINの**エラー・特定フレーム** | `source` / `level_v` / `standard`(v1x/v2x/both)/ `baud_bps` / `sample_point_percent` / `when`(7種)/ `error_type`(sync/id/checksum)/ `frame_id`(0-63)/ `data` |
+
+**シリアルバストリガは `configure_decode`(6章)と対になる。** デコードは「読んで表にする」、トリガは「条件に合った瞬間に取り込む」で、**別サブシステム**(`:BUS<n>` と `:TRIGger`)。綴りも値域も別に確認してある — 例えば I2C のアドレス幅はデコード側が `:BUS<n>:IIC:ADDBits`、トリガ側が `:TRIGger:IIC:AWIDth`。
+
+典型的な使い方: `configure_trigger(type="i2c", settings={"when": "nack"})` で NACK の瞬間だけ捕まえ、`configure_decode(protocol="i2c", event_table=True)` + `get_decode_result` でその前後のトランザクションを読む。
 
 共通設定(種別に依らない): `sweep_mode`、`holdoff_s`(再アームまでの不感時間)。
 
@@ -1000,4 +1009,6 @@ MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標
 2. **`when` の値域は種別ごとに違う。** 共有の対応表にすると値域外のトークンを送ってしまうため、プロファイルの方言キーを種別ごとに分けている(`trigger_pulse_when` / `trigger_duration_when` / `trigger_runt_when` / `trigger_delay_types`)
 3. **同じ `POSitive` / `NEGative` でも意味が違う。** `polarity` はパルスの正負、`slope` はエッジの向き。方言も `trigger_polarities` と `trigger_edge_slopes` に分けている
 4. **`window` の両エッジは未対応。** ガイド3.27.16.2 の Range欄は `RFALI`(大文字I)、Remarks欄は `RFALl`(小文字L)で綴りが割れている。**実機で確定するまで宣言しない**(AGENTS.mdルール2)
-5. **プロファイルゲートは「宣言された種別」で行う。** モジュールの項目表にあるだけでは足りない — 実機未検証の機種へ `:TRIGger:MODE PULSe` を送ってしまう。DHO系プロファイルは `edge` のみ宣言している
+5. **SPIは `CLK`/`SCL` と `MISO`/`SDA` が同義の別名**(ガイドの説明文が同一)。片方(`:CLK` / `:MISO`)だけを公開している — 両方出すと同じ設定に2つの入口ができる
+6. **CURRbit / CODE(データのビット単位マスク)は意図的に未対応。** 「桁を選ぶ → その桁の値を 0/1/任意 に設定」という状態を持つ2コマンドの対で、デコードの `bit_sources` と同じくリスト値のキーが要る。`data` で「この値のとき」は表現できるため、必要になってから足す
+7. **プロファイルゲートは「宣言された種別」で行う。** モジュールの項目表にあるだけでは足りない — 実機未検証の機種へ `:TRIGger:MODE PULSe` を送ってしまう。DHO系プロファイルは `edge` のみ宣言している

@@ -1967,3 +1967,24 @@ def test_get_trigger_position_is_read_only(driver: ScopeDriver) -> None:
     _report(f"[trigger] position={position!r}")
 
     assert position is None or isinstance(position, float)
+
+
+def test_configure_trigger_serial_type_and_restore(
+    control: ControlService, driver: ScopeDriver, trigger_before: dict
+) -> None:
+    """シリアルバストリガ(I2C)の往復(Phase M5)。
+
+    デコード(`configure_decode`)とは**別サブシステム**なので、綴りが違う点を
+    実機で確かめる — トリガ側のアドレス幅は `:TRIGger:IIC:AWIDth`(デコード側は
+    `:BUS<n>:IIC:ADDBits`)。取り込みを止めることも出力に触れることもない。
+    """
+    result = control.configure_trigger(
+        driver,
+        type="i2c",
+        settings={"when": "nack", "address_bits": 7, "address": 42},
+    )
+    _report(f"[trigger:i2c] applied={result['applied']}")
+
+    assert result["applied"]["type"] == "i2c"
+    assert result["applied"]["when"] == "nack"
+    assert result["trigger"]["settings"]["address"] == 42

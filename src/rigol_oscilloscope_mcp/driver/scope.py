@@ -249,6 +249,79 @@ _TRIGGER_NEDGE_ITEMS: tuple[tuple[str, str, object], ...] = (
     ("idle_time_s", ":IDLE", "number"),
     ("edge_number", ":EDGE", ("int", 1, 65535)),
 )
+#: --- シリアルバストリガ(ガイド3.27.20-24)------------------------------
+#: デコード側(`:BUS<n>`)とは**別サブシステム**。デコードは「読んで表にする」、
+#: トリガは「条件に合った瞬間に取り込む」で、綴りも値域も別に確認している。
+#:
+#: **CURRbit / CODE(データのビット単位マスク)は意図的に未対応。**
+#: `<CURRbit で桁を選ぶ → CODE でその桁の値を 0/1/任意 に設定>` という状態を
+#: 持つ2コマンドの対で、decode の `bit_sources` と同じくリスト値のキーが要る。
+#: `data` で「この値のとき」は表現できるため、必要になってから足す。
+_TRIGGER_RS232_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("polarity", ":POLarity", ("enum", "trigger_polarities", "the RS232 polarity")),
+    ("when", ":WHEN", ("enum", "trigger_rs232_when", "the RS232 trigger condition")),
+    ("baud_bps", ":BAUD", ("int", 1, 20_000_000)),
+    ("user_baud_bps", ":BUSer", ("int", 1, 20_000_000)),
+    ("data_bits", ":WIDTh", ("choice", (5, 6, 7, 8))),
+    ("stop_bits", ":STOP", ("choice", (1, 1.5, 2))),
+    ("parity", ":PARity", ("enum", "trigger_parities", "the RS232 parity")),
+    ("data", ":DATA", ("int", 0, 255)),
+)
+_TRIGGER_IIC_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("clock_source", ":SCL", "tsource"),
+    ("clock_level_v", ":CLEVel", "number"),
+    ("data_source", ":SDA", "tsource"),
+    ("data_level_v", ":DLEVel", "number"),
+    ("when", ":WHEN", ("enum", "trigger_iic_when", "the I2C trigger condition")),
+    ("address_bits", ":AWIDth", ("choice", (7, 8, 10))),
+    ("address", ":ADDRess", ("int", 0, 1023)),
+    ("direction", ":DIRection", ("enum", "trigger_iic_directions", "the I2C direction")),
+    ("data_bytes", ":DBYTes", ("int", 1, 5)),
+    ("data", ":DATA", ("int", 0, 2**40 - 1)),
+)
+#: SPIは `CLK`/`SCL` と `MISO`/`SDA` が**同義の別名**(ガイドの説明文が同一)。
+#: 片方だけ公開する — 両方出すと同じ設定に2つの入口ができて混乱する
+_TRIGGER_SPI_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("clock_source", ":CLK", "tsource"),
+    ("clock_level_v", ":CLEVel", "number"),
+    ("clock_slope", ":SLOPe", ("enum", "trigger_edge_slopes", "the SPI clock edge")),
+    ("data_source", ":MISO", "tsource"),
+    ("data_level_v", ":DLEVel", "number"),
+    ("cs_source", ":CS", "tsource"),
+    ("cs_level_v", ":SLEVel", "number"),
+    ("cs_polarity", ":MODE", ("enum", "trigger_spi_cs_modes", "the chip select polarity")),
+    ("when", ":WHEN", ("enum", "trigger_spi_when", "how a frame is delimited")),
+    ("timeout_s", ":TIMeout", "number"),
+    ("data_bits", ":WIDTh", ("int", 4, 32)),
+    ("data", ":DATA", ("int", 0, 2**32 - 1)),
+)
+_TRIGGER_CAN_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("baud_bps", ":BAUD", ("int", 10_000, 5_000_000)),
+    ("signal_type", ":STYPe", ("enum", "trigger_can_signal_types", "the CAN signal type")),
+    ("when", ":WHEN", ("enum", "trigger_can_when", "the CAN trigger condition")),
+    ("sample_point_percent", ":SPOint", ("int", 10, 90)),
+    ("extended_id", ":EXTended", "bool"),
+    ("define", ":DEFine", ("enum", "trigger_can_defines", "what the data condition matches")),
+    ("data_bytes", ":DWIDth", ("int", 1, 8)),
+    ("data", ":DATA", ("int", 0, 2**64 - 1)),
+)
+_TRIGGER_LIN_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("standard", ":STANdard", ("enum", "trigger_lin_standards", "the LIN standard")),
+    ("baud_bps", ":BAUD", ("int", 1_000, 20_000_000)),
+    ("sample_point_percent", ":SAMPlepoint", ("int", 10, 90)),
+    ("when", ":WHEN", ("enum", "trigger_lin_when", "the LIN trigger condition")),
+    ("error_type", ":ERRor", ("enum", "trigger_lin_errors", "which LIN error is caught")),
+    ("frame_id", ":ID", ("int", 0, 63)),
+    # ガイドの値域は "Refer to Remarks" で具体値が無い。機器のエラーキュー確認に
+    # 委ね、ホスト側では広めに取る
+    ("data", ":DATA", ("int", 0, 2**64 - 1)),
+)
 #: 種別 → (SCPI接頭辞, 項目表)。**この表に無い種別は扱わない**(不在がゲート)
 _TRIGGER_SUBTREES: dict[str, tuple[str, tuple[tuple[str, str, object], ...]]] = {
     "edge": (":TRIGger:EDGE", _TRIGGER_EDGE_ITEMS),
@@ -262,6 +335,11 @@ _TRIGGER_SUBTREES: dict[str, tuple[str, tuple[tuple[str, str, object], ...]]] = 
     "delay": (":TRIGger:DELay", _TRIGGER_DELAY_ITEMS),
     "setup_hold": (":TRIGger:SHOLd", _TRIGGER_SHOLD_ITEMS),
     "nth_edge": (":TRIGger:NEDGe", _TRIGGER_NEDGE_ITEMS),
+    "uart": (":TRIGger:RS232", _TRIGGER_RS232_ITEMS),
+    "i2c": (":TRIGger:IIC", _TRIGGER_IIC_ITEMS),
+    "spi": (":TRIGger:SPI", _TRIGGER_SPI_ITEMS),
+    "can": (":TRIGger:CAN", _TRIGGER_CAN_ITEMS),
+    "lin": (":TRIGger:LIN", _TRIGGER_LIN_ITEMS),
 }
 #: 種別に依らない共通設定(サブツリーを持たない)
 _TRIGGER_COMMON_ITEMS: tuple[tuple[str, str, object], ...] = (
@@ -542,6 +620,19 @@ def math_source_number(value: object) -> int | None:
     """
     match = _MATH_SOURCE_RE.match(value.strip()) if isinstance(value, str) else None
     return int(match.group(1)) if match else None
+
+
+def _choice_token(value: object, key: str, allowed: tuple) -> str:
+    """飛び飛びの数値選択肢を送信形へ。整数は小数点を落とす(`1.0` → `1`)。"""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise _invalid(f"{key} is not a number: {value!r}", {"key": key, "value": value})
+    if not any(abs(float(value) - float(option)) < 1e-12 for option in allowed):
+        raise _invalid(
+            f"{key} must be one of {list(allowed)}: {value!r}",
+            {"key": key, "value": value, "allowed": list(allowed)},
+        )
+    number = float(value)
+    return str(int(number)) if number.is_integer() else str(number)
 
 
 def _invalid(message: str, detail: dict) -> ScopeError:
@@ -2377,6 +2468,14 @@ class ScopeDriver:
             # 読み戻しは引用符無しの `TESTLBL`。つまりこの strip は**現状不要**
             # だが、他機種・他ファームで引用符が付く可能性に対して無害なので残す
             return _reference_label, (lambda text: text.strip().strip('"'))
+        if isinstance(kind, tuple) and kind[0] == "choice":
+            # 飛び飛びの数値選択肢(RS232のストップビット 1/1.5/2 など)。
+            # decode.py の `_choice` と同じ考え方を項目表からも使えるようにする
+            allowed = kind[1]
+            return (
+                (lambda value, key: _choice_token(value, key, allowed)),
+                parse_nr3,
+            )
         if isinstance(kind, tuple) and kind[0] == "int":
             _, low, high = kind
             return (

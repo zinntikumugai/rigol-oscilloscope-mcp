@@ -3982,3 +3982,115 @@ def test_window_slope_does_not_declare_the_ambiguous_token(driver: ScopeDriver) 
     slopes = driver.profile.dialect["trigger_window_slopes"]
 
     assert set(slopes) == {"rising", "falling"}
+
+
+# --------------------------------------------------------------------------
+# シリアルバストリガ(M5後半)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("trigger_type", "mode_token", "prefix", "settings", "expected"),
+    [
+        (
+            "uart",
+            "RS232",
+            ":TRIGger:RS232",
+            {"when": "error", "baud_bps": 115200, "data_bits": 8, "stop_bits": 1.5},
+            [
+                ":TRIGger:RS232:WHEN ERRor",
+                ":TRIGger:RS232:BAUD 115200",
+                ":TRIGger:RS232:WIDTh 8",
+                ":TRIGger:RS232:STOP 1.5",
+            ],
+        ),
+        (
+            "i2c",
+            "IIC",
+            ":TRIGger:IIC",
+            {"when": "nack", "address_bits": 7, "address": 42, "direction": "write"},
+            [
+                ":TRIGger:IIC:WHEN NACKnowledge",
+                ":TRIGger:IIC:AWIDth 7",
+                ":TRIGger:IIC:ADDRess 42",
+                ":TRIGger:IIC:DIRection WRITe",
+            ],
+        ),
+        (
+            "spi",
+            "SPI",
+            ":TRIGger:SPI",
+            {"when": "timeout", "timeout_s": 1e-5, "data_bits": 16},
+            [
+                ":TRIGger:SPI:WHEN TIMeout",
+                ":TRIGger:SPI:TIMeout 1e-05",
+                ":TRIGger:SPI:WIDTh 16",
+            ],
+        ),
+        (
+            "can",
+            "CAN",
+            ":TRIGger:CAN",
+            {"when": "error_frame", "baud_bps": 500000, "sample_point_percent": 75},
+            [
+                ":TRIGger:CAN:BAUD 500000",
+                ":TRIGger:CAN:WHEN ERFRame",
+                ":TRIGger:CAN:SPOint 75",
+            ],
+        ),
+        (
+            "lin",
+            "LIN",
+            ":TRIGger:LIN",
+            {"when": "error", "error_type": "checksum", "frame_id": 7},
+            [
+                ":TRIGger:LIN:WHEN ERRor",
+                ":TRIGger:LIN:ERRor CHECk",
+                ":TRIGger:LIN:ID 7",
+            ],
+        ),
+    ],
+)
+def test_configure_trigger_serial_types(
+    driver: ScopeDriver,
+    scope: FakeScope,
+    trigger_type: str,
+    mode_token: str,
+    prefix: str,
+    settings: dict,
+    expected: list[str],
+) -> None:
+    """シリアルバストリガ5種。**送信順は項目表の並び**。"""
+    driver.configure_trigger(type=trigger_type, settings=settings)
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TRIGger")]
+    assert writes == [f":TRIGger:MODE {mode_token}", *expected]
+
+
+def test_configure_trigger_spi_exposes_one_alias_per_line(driver: ScopeDriver) -> None:
+    """SPIは `CLK`/`SCL` と `MISO`/`SDA` が同義。片方だけ公開する。"""
+    from rigol_oscilloscope_mcp.driver.scope import _TRIGGER_SUBTREES
+
+    _, items = _TRIGGER_SUBTREES["spi"]
+    paths = [path for _, path, _ in items]
+
+    assert ":CLK" in paths and ":SCL" not in paths
+    assert ":MISO" in paths and ":SDA" not in paths
+
+
+def test_serial_trigger_types_are_declared_only_on_mho98(driver: ScopeDriver) -> None:
+    declared = driver.profile.dialect["trigger_types"]
+
+    assert {"uart", "i2c", "spi", "can", "lin"} <= set(declared)
+    assert declared["uart"] == "RS232"
+
+
+def test_configure_trigger_serial_unsupported_on_dho(scope: FakeScope) -> None:
+    """DHO系は実機未検証なので edge のみ。送信ゼロで UNSUPPORTED_FEATURE。"""
+    dho = make_driver(scope, "dho800")
+
+    with pytest.raises(ScopeError) as excinfo:
+        dho.configure_trigger(type="can")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert not [c for c in scope.command_log if "?" not in c]

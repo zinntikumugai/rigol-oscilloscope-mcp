@@ -547,6 +547,26 @@ def create_server(
           clock_level_v
         - pattern: source, level_v, pattern (high/low/ignore/rising/falling)
         - nth_edge: source, level_v, slope, idle_time_s, edge_number
+        - uart: source, level_v, polarity, when (start/error/check_error/data),
+          baud_bps, user_baud_bps, data_bits (5-8), stop_bits (1/1.5/2), parity
+          (even/odd/none), data
+        - i2c: clock_source, clock_level_v, data_source, data_level_v, when
+          (start/restart/stop/nack/address/data/address_data), address_bits
+          (7/8/10), address, direction (read/write/both), data_bytes (1-5), data
+        - spi: clock_source, clock_level_v, clock_slope, data_source,
+          data_level_v, cs_source, cs_level_v, cs_polarity (high/low), when
+          (cs/timeout), timeout_s, data_bits (4-32), data
+        - can: source, level_v, baud_bps, signal_type
+          (can_h/can_l/rx_tx/differential), when (start_of_frame / error_frame /
+          bit_error / …), sample_point_percent, extended_id, define (data/id),
+          data_bytes (1-8), data
+        - lin: source, level_v, standard (v1x/v2x/both), baud_bps,
+          sample_point_percent, when (sync_break/id/data/error/…), error_type
+          (sync/id/checksum), frame_id (0-63), data
+
+        The serial types pair with configure_decode: trigger on the moment
+        (a NACK, an error frame, one address) and decode to read what happened
+        around it. They are separate subsystems, so configure them separately.
         """
         return control.configure_trigger(
             manager.require_scope(),

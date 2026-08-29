@@ -105,6 +105,80 @@ dialect:
     delay: DELay
     setup_hold: SETup
     nth_edge: NEDGe
+    # シリアルバス(ガイド3.27.20-24)。デコード側の :BUS<n>:MODE とは
+    # **別サブシステム**。トリガは機器がハードウェアで条件判定する
+    uart: RS232
+    i2c: IIC
+    spi: SPI
+    can: CAN
+    lin: LIN
+  # シリアルバストリガの列挙(ガイド3.27.20-24)。デコード側(:BUS<n>)とは
+  # **別サブシステム**なので値も別に宣言する(綴りが違うものがある)
+  trigger_rs232_when: # 3.27.20.4
+    start: STARt
+    error: ERRor
+    check_error: CERRor
+    data: DATA
+  trigger_parities: # 3.27.20.9
+    even: EVEN
+    odd: ODD
+    none: NONE
+  trigger_iic_when: # 3.27.21.5
+    start: STARt
+    restart: RESTart
+    stop: STOP
+    nack: NACKnowledge
+    address: ADDRess
+    data: DATA
+    address_data: ADATa
+  trigger_iic_directions: # 3.27.21.8
+    read: READ
+    write: WRITe
+    both: RWRite
+  trigger_spi_when: # 3.27.22.8
+    cs: CS
+    timeout: TIMeout
+  trigger_spi_cs_modes: # 3.27.22.11
+    high: HIGH
+    low: LOW
+  trigger_can_signal_types: # 3.27.23.3
+    can_h: H
+    can_l: L
+    rx_tx: RXTX
+    differential: DIFFerential
+  trigger_can_when: # 3.27.23.4
+    start_of_frame: SOF
+    end_of_frame: EOF
+    remote_id: IDRemote
+    overload: OVERload
+    id_frame: IDFRame
+    data_frame: DATaframe
+    id_and_data: IDData
+    error_frame: ERFRame
+    answer_error: ERANswer
+    check_error: ERCHeck
+    format_error: ERFormat
+    random_error: ERRandom
+    bit_error: ERBit
+  trigger_can_defines: # 3.27.23.7(Range欄に FALSe/TRUE も並ぶが意味不明のため未宣言)
+    data: DATA
+    id: ID
+  trigger_lin_standards: # 3.27.24.3
+    v1x: 1X
+    v2x: 2X
+    both: BOTH
+  trigger_lin_when: # 3.27.24.6
+    sync_break: SYNCbreak
+    id: ID
+    data: DATA
+    id_and_data: IDData
+    sleep: SLEep
+    wakeup: WAKeup
+    error: ERRor
+  trigger_lin_errors: # 3.27.24.7
+    sync: SYNC
+    id: ID
+    checksum: CHECk
   # スロープ・極性(ガイド3.27.8.2 / 3.27.14.2 ほか)
   trigger_slopes:
     rising: POSitive
