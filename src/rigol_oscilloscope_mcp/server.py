@@ -139,20 +139,34 @@ def _tool_result(fn: Callable[..., Any]) -> Callable[..., Any]:
 _CONFIRM_REQUIRED = (OperationClass.RESTRICTED_WRITE, OperationClass.DANGEROUS_WRITE)
 
 
-def unlocked_sleep(lock: Any) -> Callable[[float], None]:
+def unlocked_sleep(
+    lock: Any, current_scope: Callable[[], object]
+) -> Callable[[float], None]:
     """眠る間だけ機器ロックを手放す sleep を返す(`single` / `force_trigger` の wait_s)。
 
     Tool本体は `_locked` の下で動くので、ポーリングの合間に眠る間もロックを
     握ったままだと、待機中は `stop` や `force_trigger` を割り込ませられない。
     SCPIの送受信そのものは常にロック下で行われ、直列化は崩れない。
+
+    手放している間に `connect` / `disconnect` で接続が差し替わりうる。ロックを
+    取り直したら `current_scope()` が眠る前と同じドライバかを確かめ、違えば
+    古いドライバで読み続けずに DEVICE_DISCONNECTED で打ち切る。
     """
 
     def sleep(seconds: float) -> None:
+        before = current_scope()
         lock.release()
         try:
             time.sleep(seconds)
         finally:
             lock.acquire()
+        if current_scope() is not before:
+            raise ScopeError(
+                ErrorCode.DEVICE_DISCONNECTED,
+                "The connection was closed or replaced while waiting; "
+                "the wait was abandoned. Check the state with get_acquisition_state.",
+                {"connected": current_scope() is not None},
+            )
 
     return sleep
 
@@ -245,7 +259,11 @@ def create_server(
     )
     # confirmトークンはサーバー(=セッション)寿命で共有する。世代バインドは
     # 呼び出しごとに manager.generation を渡すことで効かせる(Requirements.md 6.2)
-    control = ControlService(ConfirmTokenStore(), audit, sleep=unlocked_sleep(manager.lock))
+    control = ControlService(
+        ConfirmTokenStore(),
+        audit,
+        sleep=unlocked_sleep(manager.lock, lambda: manager.current_scope),
+    )
 
     server = FastMCP(SERVER_NAME, instructions=INSTRUCTIONS)
     _register = _checked_tool(server, manager.lock)

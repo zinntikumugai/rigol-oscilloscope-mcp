@@ -172,7 +172,7 @@ API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。「500 mV」「20 us」等の�
 
 波形取り込みの開始 / 停止 / シングルショット。返却は `result` / `trigger_status`。
 
-**`single` の `wait_s`(Phase M6・issue #53):** 指定すると `:TRIGger:STATus?` を0.1秒間隔でポーリングし、`STOP` を観測するか `wait_s` が尽きるまで待つ。返却に `completed`(STOP を観測したか)が加わる。時間切れはエラーにしない(`completed: false`)。値域は 0 < `wait_s` ≤ 60(送信前に検証)。**ポーリングの合間に眠る間は機器ロックを手放す**ので、待機中でも別の呼び出し(`stop` / `force_trigger` / 読み取り)が割り込める(SCPIの送受信自体は常にロック下で直列化)。
+**`single` の `wait_s`(Phase M6・issue #53):** 指定すると `:TRIGger:STATus?` を0.1秒間隔でポーリングし、`STOP` を観測するか `wait_s` が尽きるまで待つ。返却に `completed`(STOP を観測したか)が加わる。時間切れはエラーにしない(`completed: false`)。値域は 0 < `wait_s` ≤ 60(送信前に検証)。**ポーリングの合間に眠る間は機器ロックを手放す**ので、待機中でも別の呼び出し(`stop` / `force_trigger` / 読み取り)が割り込める(SCPIの送受信自体は常にロック下で直列化)。待機中に `connect` / `disconnect` で接続が差し替わったら、古い接続で読み続けずに `DEVICE_DISCONNECTED` で打ち切る。
 
 - **`*OPC?` は完了待ちに使えない**(実機実測): `:SINGle` 直後、トリガ待ち(`WAIT`)のままでも即 `1` を返す。取り込みの完了は `STOP` の観測でしか分からない
 - **`:SINGle` は掃引モードを `SINGle` に書き換える**(実機実測)。連続取り込みへ戻すときは `configure_trigger(sweep_mode=...)` + `run`

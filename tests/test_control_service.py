@@ -867,7 +867,9 @@ def test_wait_releases_the_device_lock_between_polls(
     from rigol_oscilloscope_mcp.server import unlocked_sleep
 
     lock = threading.RLock()
-    service = ControlService(store, AuditLogger(audit_path), sleep=unlocked_sleep(lock))
+    service = ControlService(
+        store, AuditLogger(audit_path), sleep=unlocked_sleep(lock, lambda: driver)
+    )
     results: dict = {}
 
     def waiter() -> None:
@@ -885,6 +887,43 @@ def test_wait_releases_the_device_lock_between_polls(
     assert time.monotonic() - started < 1.0
     assert results["single"]["completed"] is True
     assert results["single"]["trigger_status"] == "STOP"
+
+
+def test_wait_aborts_when_the_connection_is_replaced(
+    store: ConfirmTokenStore, audit_path: Path, driver: ScopeDriver
+) -> None:
+    """待機中に connect / disconnect で接続が差し替わったら、古いドライバで
+    読み続けずに DEVICE_DISCONNECTED で打ち切る(Copilotレビュー指摘)。"""
+    import threading
+    import time
+
+    from rigol_oscilloscope_mcp.server import unlocked_sleep
+
+    lock = threading.RLock()
+    holder = {"scope": driver}
+    service = ControlService(
+        store, AuditLogger(audit_path), sleep=unlocked_sleep(lock, lambda: holder["scope"])
+    )
+    errors: list[ScopeError] = []
+
+    def waiter() -> None:
+        with lock:
+            try:
+                service.single(driver, wait_s=5.0)
+            except ScopeError as exc:
+                errors.append(exc)
+
+    thread = threading.Thread(target=waiter)
+    started = time.monotonic()
+    thread.start()
+    time.sleep(0.15)
+    with lock:
+        holder["scope"] = None  # disconnect 相当
+    thread.join(timeout=5)
+
+    assert time.monotonic() - started < 1.0
+    assert [e.code for e in errors] == [ErrorCode.DEVICE_DISCONNECTED]
+    assert operations(audit_path)[-1]["result"] != "success"
 
 
 @pytest.mark.parametrize("wait_s", [0, -1, 61, "1", True])
