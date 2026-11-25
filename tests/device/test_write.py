@@ -2070,21 +2070,21 @@ def acquisition_before(
     try:
         yield before
     finally:
-        failure: Exception | None = None
-        try:
-            driver.configure_acquisition(
-                mode="high_resolution", adc_bits=before["adc_bits"]
-            )
-            driver.configure_acquisition(
-                mode=before["mode"], averages=before["averages"]
-            )
-        except Exception as exc:  # 復元は最後まで試みる
-            failure = exc
+        failures: list[Exception] = []
+        # 2段は独立に試みる(1段目が失敗しても元のモードへは必ず戻す)
+        for step in (
+            {"mode": "high_resolution", "adc_bits": before["adc_bits"]},
+            {"mode": before["mode"], "averages": before["averages"]},
+        ):
+            try:
+                driver.configure_acquisition(**step)
+            except Exception as exc:  # 復元は最後まで試みる
+                failures.append(exc)
 
         after = driver.get_acquisition_config()
         drift = _diff(before, after)
         _report(f"[restore:{tag}] acquisition 復元後={after}")
-        assert failure is None, f"取得モードの復元に失敗: {failure!r}"
+        assert not failures, f"取得モードの復元に失敗: {failures!r}"
         assert not drift, f"取得モードが復元されていません: {drift}"
 
 
