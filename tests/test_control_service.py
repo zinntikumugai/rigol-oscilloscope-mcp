@@ -797,7 +797,12 @@ def test_force_trigger_completes_a_waiting_single(
 
     result = service.force_trigger(driver, wait_s=1.0)
 
-    assert result == {"result": "ok", "trigger_status": "STOP", "completed": True}
+    assert result == {
+        "result": "ok",
+        "trigger_status": "STOP",
+        "completed": True,
+        "interrupted": False,
+    }
     assert ":TFORce" in scope.command_log
 
 
@@ -807,7 +812,12 @@ def test_single_wait_reports_not_completed_on_timeout(
     """トリガが来なければ wait_s で打ち切り、completed=False を返す(例外にしない)。"""
     result = service.single(driver, wait_s=0.2)
 
-    assert result == {"result": "ok", "trigger_status": "WAIT", "completed": False}
+    assert result == {
+        "result": "ok",
+        "trigger_status": "WAIT",
+        "completed": False,
+        "interrupted": False,
+    }
     # ポーリングした(1回で諦めていない)
     assert scope.command_log.count(":TRIGger:STATus?") >= 2
 
@@ -924,6 +934,41 @@ def test_wait_aborts_when_the_connection_is_replaced(
     assert time.monotonic() - started < 1.0
     assert [e.code for e in errors] == [ErrorCode.DEVICE_DISCONNECTED]
     assert operations(audit_path)[-1]["result"] != "success"
+
+
+def test_wait_reports_an_interrupting_acquisition_operation(
+    store: ConfirmTokenStore, audit_path: Path, driver: ScopeDriver
+) -> None:
+    """待機中に別の取り込み操作(stop / run / single / force_trigger)が入ったら、
+    それが終わらせた STOP を自分の完了と取り違えないよう interrupted で知らせる。"""
+    import threading
+    import time
+
+    from rigol_oscilloscope_mcp.server import unlocked_sleep
+
+    lock = threading.RLock()
+    service = ControlService(
+        store, AuditLogger(audit_path), sleep=unlocked_sleep(lock, lambda: driver)
+    )
+    results: dict = {}
+
+    def waiter() -> None:
+        with lock:
+            results["single"] = service.single(driver, wait_s=5.0)
+
+    thread = threading.Thread(target=waiter)
+    thread.start()
+    time.sleep(0.15)
+    with lock:
+        service.stop(driver)  # 別のToolからの割り込み
+    thread.join(timeout=5)
+
+    assert results["single"] == {
+        "result": "ok",
+        "trigger_status": "STOP",
+        "completed": True,
+        "interrupted": True,
+    }
 
 
 @pytest.mark.parametrize("wait_s", [0, -1, 61, "1", True])

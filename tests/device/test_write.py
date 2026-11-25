@@ -2178,4 +2178,9 @@ def test_force_trigger_finishes_a_waiting_single(
 
     forced = control.force_trigger(driver, wait_s=2.0)
     _report(f"[force] force_trigger(wait_s=2.0)={forced}")
-    assert forced == {"result": "ok", "trigger_status": "STOP", "completed": True}
+    assert forced == {
+        "result": "ok",
+        "trigger_status": "STOP",
+        "completed": True,
+        "interrupted": False,
+    }

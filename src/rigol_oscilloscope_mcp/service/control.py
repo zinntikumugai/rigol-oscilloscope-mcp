@@ -152,6 +152,9 @@ class ControlService:
         # 取り込み完了待ち(wait_s)のポーリング間に眠る関数。サーバーは機器ロックを
         # 眠る間だけ手放す版を渡す(待機中に stop / force_trigger を割り込ませるため)
         self._sleep = sleep
+        # 取り込み操作(run / stop / single / force_trigger / autoset)の通し番号。
+        # 待機中にロックを手放している間に別の操作が入ったかを見分ける
+        self._acquisition_epoch = 0
 
     # -- 設定変更 ---------------------------------------------------------
 
@@ -987,6 +990,9 @@ class ControlService:
             if self._audit.enabled:
                 record.before({"trigger_status": driver.get_trigger_status()})
             action()
+            self._acquisition_epoch += 1
+            mine = self._acquisition_epoch
+            interrupted = False
             status = driver.get_trigger_status()
             if wait_s is not None:
                 deadline = time.monotonic() + wait_s
@@ -997,11 +1003,17 @@ class ControlService:
                     # 残り時間を超えて眠らない(短い wait_s を間隔で超過しない)
                     self._sleep(min(_WAIT_POLL_S, remaining))
                     status = driver.get_trigger_status()
+                    # 眠っている間に別の取り込み操作が入った。以後の STOP は
+                    # その操作の結果かもしれないので、待つのをやめて知らせる
+                    if self._acquisition_epoch != mine:
+                        interrupted = True
+                        break
             record.after({"trigger_status": status})
 
         result: dict = {"result": "ok", "trigger_status": status}
         if wait_s is not None:
             result["completed"] = status == STOPPED_TRIGGER_STATUS
+            result["interrupted"] = interrupted
         return result
 
     def autoset(
@@ -1035,6 +1047,7 @@ class ControlService:
                     }
                 )
             driver.autoset()
+            self._acquisition_epoch += 1
             state = get_state(driver, AUTOSET_SECTIONS)
             record.after(
                 {"timebase": state["timebase"], "trigger": state["trigger"]}

@@ -119,7 +119,12 @@ def test_single_then_force_trigger_completes(server) -> None:
     forced = data(server, "force_trigger", {"wait_s": 1.0})
 
     assert waiting == {"result": "ok", "trigger_status": "WAIT"}
-    assert forced == {"result": "ok", "trigger_status": "STOP", "completed": True}
+    assert forced == {
+        "result": "ok",
+        "trigger_status": "STOP",
+        "completed": True,
+        "interrupted": False,
+    }
 
 
 def test_single_wait_times_out_without_error(server) -> None:

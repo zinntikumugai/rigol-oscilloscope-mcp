@@ -1422,6 +1422,9 @@ def create_server(
         to wait until the capture finishes: completed is true once the scope
         reports "STOP", false if wait_s ran out first (not an error). If it
         never triggers, call force_trigger to capture anyway.
+        Other calls (stop, force_trigger, reads) can run while this waits; if
+        one of them stops or restarts the acquisition, the wait ends with
+        interrupted=true, so the STOP may not be this capture's own trigger.
         """
         return control.single(manager.require_scope(), wait_s)
 
