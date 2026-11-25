@@ -72,6 +72,8 @@
 | `trigger_window_slopes` | `:TRIGger:WINDows:SLOPe` の値 | mho98: `rising` / `falling` / `either`(`RFALl`)の3値。**ガイドの Range欄 `RFALI`(大文字I)は誤植** — 実機は `-222` で拒否し、Remarks欄の `RFALl`(小文字L)を受理する([verification/mho98-m4-m5.md](verification/mho98-m4-m5.md) で決着) |
 | `trigger_pulse_when` / `trigger_duration_when` / `trigger_runt_when` / `trigger_delay_types` | 条件(WHEN)の値。**種別ごとに値域が違うので表を分ける**(共有すると値域外を送る) | mho98: 3〜4値(ガイド3.27.9.3 / 3.27.13.3 / 3.27.15.3 / 3.27.17.5) |
 | `trigger_slope_windows` / `trigger_pattern_levels` / `trigger_duration_types` / `trigger_window_positions` / `trigger_shold_types` / `trigger_shold_patterns` | 各種別固有の列挙 | mho98のみ宣言 |
+| `acquire_types` | `:ACQuire:TYPE` の値(`normal` / `peak` / `average` / `high_resolution`)。**未宣言 = `configure_acquisition` が送信ゼロで `UNSUPPORTED_FEATURE`、`get_acquisition_state` も設定クエリを送らない** | mho98: 4種(ガイド3.3.3。応答は短形 `NORM` / `PEAK` / `AVER` / `HRES`)。DHO系は実機未検証のため不在 |
+| `acquire_bits` | `:ACQuire:BITS` の選択肢(リスト)。未宣言なら `adc_bits` を扱わない | mho98: `[14, 16]`(3.3.5)。**high_resolution モード以外では書き込みが `-200`**(実機実測)。DHO800/900 には無い(`:ACQuire:HRESolution` が別綴り) |
 | `measure_areas` | `:MEASure:AREA` の値(`main` / `zoom` / `cursor`)。未宣言 = `configure_measurement` が送信ゼロで `UNSUPPORTED_FEATURE` | mho98: 3種(ガイド3.17.19)。**DHO系は実機未検証のため意図的に不在** |
 | `measure_threshold_types` | `:MEASure:THReshold:TYPE` の値 | mho98: `percent` → `PERCent` / `absolute` → `ABSolute`(3.17.17) |
 | `measure_amp_types` | `:MEASure:AMP:TYPE` の値 | mho98: `auto` → `AUTO` / **`manual` → `MAN`(短形)**(3.17.28)。**長形 `MANual` は実機が `-222` で拒否する**(`VAVerage` 不可 / `VAVG` 可 と同じ癖)。`:AMP:MANual:TOP` / `BASE` は長形を受理するので、短形が要るのは TYPE だけ |

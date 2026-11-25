@@ -247,6 +247,17 @@ dialect:
   # 測定の前提設定と統計(ガイド3.17.6/3.17.8/3.17.17/3.17.19/3.17.28-30)。
   # 未宣言なら configure_measurement / get_measurement_statistics は送信ゼロで
   # UNSUPPORTED_FEATURE。DHO系は実機未検証のため意図的に不在。
+  # 取得モード(ガイド3.3。issue #52)。未宣言なら configure_acquisition は送信
+  # ゼロで UNSUPPORTED_FEATURE、get_acquisition_state は設定クエリを送らない。
+  # 3項目とも実機で読み取り応答を確認済み(firmware 00.01.00)。DHO系は未検証
+  acquire_types: # ガイド3.3.3。応答は短形(NORM / PEAK / AVER / HRES)
+    normal: NORMal
+    peak: PEAK
+    average: AVERages
+    high_resolution: HRESolution
+  # ADC分解能(ガイド3.3.5)。high_resolution モードでだけ効く(他モードは12bit)。
+  # DHO800/900 には無い(:ACQuire:HRESolution が別綴りで在る)ため方言化
+  acquire_bits: [14, 16]
   measure_areas: # ガイド3.17.19
     main: MAIN
     zoom: ZOOM # 遅延掃引を先に有効化しないと機器が拒否する(同節Remark)

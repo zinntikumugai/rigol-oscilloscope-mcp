@@ -140,6 +140,15 @@ _MEASURE_THRESHOLD_DEFAULT = ":MEASure:THReshold:DEFault"
 _MEASURE_STATISTIC_RESET = ":MEASure:STATistic:RESet"
 _MEASURE_STATISTIC_ITEM = ":MEASure:STATistic:ITEM"
 
+#: 取得モード(ガイド3.3。issue #52)
+_ACQUIRE_PREFIX = ":ACQuire"
+#: 平均回数の値域(ガイド3.3.1: 2^1〜2^16)。**実機実測**: 2のべき乗以外は
+#: `-200` で拒否される(ガイドの「切り下げ」は前面パネルのテンキー入力の話)
+_ACQUIRE_AVERAGES = ("pow2", 2, 65536)
+#: `:ACQuire:BITS` を受理するモード。**実機実測**: 他のモードでは同じ値の
+#: 書き込みでも `-200`(読み取りはどのモードでも通る)
+_ACQUIRE_BITS_MODE = "high_resolution"
+
 # 機器が「測定不能」を示すために返す番兵値(±9.9E37 前後)
 INVALID_MEASUREMENT = 9.0e37
 
@@ -668,6 +677,23 @@ def _choice_token(value: object, key: str, allowed: tuple) -> str:
         )
     number = float(value)
     return str(int(number)) if number.is_integer() else str(number)
+
+
+def _pow2_token(value: object, key: str, low: int, high: int) -> str:
+    """`low`〜`high` の2のべき乗だけを受理する(`:ACQuire:AVERages`)。"""
+    token = _math_int(value, key, low, high)
+    number = int(token)
+    if number & (number - 1):
+        raise _invalid(
+            f"{key} must be a power of 2 between {low} and {high}: {value!r}",
+            {"key": key, "value": value},
+        )
+    return token
+
+
+def _acquire_value(key: str, value: object) -> object:
+    """`:BITS?` の読み戻し(`"choice"` 種別は浮動小数で返る)を整数へ揃える。"""
+    return int(value) if key == "adc_bits" and isinstance(value, float) else value
 
 
 def _invalid(message: str, detail: dict) -> ScopeError:
@@ -1443,6 +1469,74 @@ class ScopeDriver:
             f":TIMebase:MAIN:OFFSet {format_number(position_s)}", ":TIMebase:MAIN:OFFSet?"
         )
         return parse_nr3(readback)
+
+    # -- 取得モード(issue #52)------------------------------------------
+
+    def _acquire_items(self) -> tuple[tuple[str, str, object], ...]:
+        """取得モードの項目表。**この並びがそのまま送信順**(モードを先に決める)。
+
+        `acquire_types` の宣言がゲート(未宣言なら送信前に UNSUPPORTED_FEATURE)。
+        `:BITS` は機種差があるため `acquire_bits` を宣言した機種だけ載せる。
+        """
+        self._afg_enum("acquire_types", "the acquisition mode")
+        items: list[tuple[str, str, object]] = [
+            ("mode", ":TYPE", ("enum", "acquire_types", "the acquisition mode")),
+            ("averages", ":AVERages", _ACQUIRE_AVERAGES),
+        ]
+        bits = self.profile.dialect.get("acquire_bits")
+        if isinstance(bits, list) and bits:
+            items.append(("adc_bits", ":BITS", ("choice", tuple(bits))))
+        return tuple(items)
+
+    def configure_acquisition(
+        self,
+        *,
+        mode: str | None = None,
+        averages: int | None = None,
+        adc_bits: int | None = None,
+    ) -> dict:
+        """取得モード・平均回数・ADC分解能を設定する。None の項目は変更しない。
+
+        検証は全て送信前に済ませる。1つでも不正なら1コマンドも送らない。
+        """
+        items = self._acquire_items()
+        if adc_bits is not None and all(key != "adc_bits" for key, _, _ in items):
+            raise _unsupported(
+                "this model's profile does not declare the ADC resolution setting",
+                {"dialect": "acquire_bits", "profile": self.profile.name},
+            )
+        values = {"mode": mode, "averages": averages, "adc_bits": adc_bits}
+        plan = self._command_plan(_ACQUIRE_PREFIX, 0, items, values)
+        if adc_bits is not None:
+            # モードを同時指定しなければ現在値を1回だけ読む(BITSより先に送る
+            # 表の並びなので、同時指定ならそちらが効く)
+            effective = mode if mode is not None else self._acquire_mode()
+            if effective != _ACQUIRE_BITS_MODE:
+                raise _invalid(
+                    f"adc_bits can only be set in {_ACQUIRE_BITS_MODE} mode "
+                    f"(the device rejects it in {effective!r} mode); "
+                    f'pass mode="{_ACQUIRE_BITS_MODE}" in the same call',
+                    {"adc_bits": adc_bits, "mode": effective},
+                )
+        return {
+            key: _acquire_value(key, from_scpi(self.session.set_and_verify(set_cmd, query)))
+            for key, set_cmd, query, from_scpi in plan
+        }
+
+    def _acquire_mode(self) -> str:
+        _, from_scpi = self._afg_enum("acquire_types", "the acquisition mode")
+        return from_scpi(self.session.query(f"{_ACQUIRE_PREFIX}:TYPE?"))
+
+    def get_acquisition_config(self) -> dict:
+        """取得モードの設定を読む。**未宣言の機種では1クエリも送らず空dict**。"""
+        if not isinstance(self.profile.dialect.get("acquire_types"), dict):
+            return {}
+        config: dict[str, object] = {}
+        for key, path, kind in self._acquire_items():
+            _, from_scpi = self._converter(kind, 0)
+            raw = self.session.query(f"{_ACQUIRE_PREFIX}{path}?")
+            config[key] = _acquire_value(key, from_scpi(raw))
+        return config
 
     # -- トリガ -----------------------------------------------------------
 
@@ -2551,6 +2645,12 @@ class ScopeDriver:
             return (
                 (lambda value, key: _choice_token(value, key, allowed)),
                 parse_nr3,
+            )
+        if isinstance(kind, tuple) and kind[0] == "pow2":
+            _, low, high = kind
+            return (
+                (lambda value, key: _pow2_token(value, key, low, high)),
+                (lambda text: int(parse_nr3(text))),
             )
         if isinstance(kind, tuple) and kind[0] == "int":
             _, low, high = kind

@@ -60,6 +60,7 @@ TOOL_CLASSES: dict[str, OperationClass] = {
     # 解釈のしかた(しきい値・測定区間・振幅算出方式・統計)だけを変えるため
     # configure_histogram / configure_cursor と同じ SAFE_WRITE。
     "configure_measurement": OperationClass.SAFE_WRITE,
+    "configure_acquisition": OperationClass.SAFE_WRITE,
     "get_measurement_statistics": OperationClass.READ_ONLY,
     "capture_waveform": OperationClass.READ_ONLY,
     "analyze_waveform": OperationClass.READ_ONLY,

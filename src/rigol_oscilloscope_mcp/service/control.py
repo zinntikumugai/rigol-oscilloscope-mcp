@@ -231,6 +231,32 @@ class ControlService:
 
         return {"requested": requested, "applied": applied, "changed": before != after}
 
+    def configure_acquisition(
+        self,
+        driver: ScopeDriver,
+        *,
+        mode: str | None = None,
+        averages: int | None = None,
+        adc_bits: int | None = None,
+    ) -> dict:
+        """取得モードを設定する(SAFE_WRITE。issue #52)。未指定の項目は変更しない。"""
+        requested = _specified({"mode": mode, "averages": averages, "adc_bits": adc_bits})
+        if not requested:
+            raise _invalid(
+                "No item to change was specified "
+                "(specify at least one of mode / averages / adc_bits)",
+                {},
+            )
+
+        with self._audited("configure_acquisition", requested) as record:
+            before = driver.get_acquisition_config()
+            record.before(before)
+            applied = driver.configure_acquisition(**requested)
+            after = driver.get_acquisition_config()
+            record.after(after)
+
+        return {"requested": requested, "applied": applied, "changed": before != after}
+
     def configure_trigger(
         self,
         driver: ScopeDriver,

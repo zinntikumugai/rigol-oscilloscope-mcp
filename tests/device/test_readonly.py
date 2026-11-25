@@ -731,3 +731,15 @@ def test_measure_two_source_items_on_ch1_ch2(driver: ScopeDriver) -> None:
             f"quality={result['quality'][name]!r}"
         )
         assert value is None or isinstance(value, float), (key, value)
+
+
+def test_acquisition_config_answers(driver: ScopeDriver) -> None:
+    """取得モードの読み取り(issue #52)。応答は短形(`NORM` 等)で返る。"""
+    config = driver.get_acquisition_config()
+    _report(f"[acquisition] config={config}")
+
+    assert set(config) == {"mode", "averages", "adc_bits"}
+    assert config["mode"] in ("normal", "peak", "average", "high_resolution")
+    assert 2 <= config["averages"] <= 65536
+    assert config["adc_bits"] in (14, 16)
+    assert driver.session.drain_error_queue() == []

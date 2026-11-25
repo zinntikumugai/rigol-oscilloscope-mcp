@@ -2048,3 +2048,71 @@ def test_configure_trigger_serial_type_and_restore(
     assert result["applied"]["type"] == "i2c"
     assert result["applied"]["when"] == "nack"
     assert result["trigger"]["settings"]["address"] == 42
+
+
+# --------------------------------------------------------------------------
+# 取得モード(issue #52)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def acquisition_before(
+    request: pytest.FixtureRequest, driver: ScopeDriver
+) -> Iterator[dict]:
+    """取得モードを控え、teardownで必ず書き戻す。
+
+    **`:BITS` は high_resolution モードでしか書けない**(実機実測)ため、復元は
+    2段: high_resolution で分解能を戻してから、元のモードと平均回数を戻す。
+    """
+    before = driver.get_acquisition_config()
+    tag = request.node.name
+    _report(f"[before:{tag}] acquisition={before}")
+    try:
+        yield before
+    finally:
+        failures: list[Exception] = []
+        # 2段は独立に試みる(1段目が失敗しても元のモードへは必ず戻す)
+        for step in (
+            {"mode": "high_resolution", "adc_bits": before["adc_bits"]},
+            {"mode": before["mode"], "averages": before["averages"]},
+        ):
+            try:
+                driver.configure_acquisition(**step)
+            except Exception as exc:  # 復元は最後まで試みる
+                failures.append(exc)
+
+        after = driver.get_acquisition_config()
+        drift = _diff(before, after)
+        _report(f"[restore:{tag}] acquisition 復元後={after}")
+        assert not failures, f"取得モードの復元に失敗: {failures!r}"
+        assert not drift, f"取得モードが復元されていません: {drift}"
+
+
+@pytest.mark.parametrize("mode", ["peak", "average", "high_resolution", "normal"])
+def test_configure_acquisition_mode_round_trip(
+    control: ControlService, driver: ScopeDriver, acquisition_before: dict, mode: str
+) -> None:
+    result = control.configure_acquisition(driver, mode=mode)
+    _report(f"[acquisition] mode={mode} applied={result['applied']}")
+
+    assert result["applied"] == {"mode": mode}
+    assert driver.session.drain_error_queue() == []
+
+
+def test_configure_acquisition_averages_round_trip(
+    control: ControlService, driver: ScopeDriver, acquisition_before: dict
+) -> None:
+    """2のべき乗の上限まで往復する(非2のべき乗は送信前に拒否するので送らない)。"""
+    result = control.configure_acquisition(driver, mode="average", averages=65536)
+    _report(f"[acquisition] averages=65536 applied={result['applied']}")
+
+    assert result["applied"] == {"mode": "average", "averages": 65536}
+
+
+def test_configure_acquisition_adc_bits_round_trip(
+    control: ControlService, driver: ScopeDriver, acquisition_before: dict
+) -> None:
+    result = control.configure_acquisition(driver, mode="high_resolution", adc_bits=16)
+    _report(f"[acquisition] adc_bits=16 applied={result['applied']}")
+
+    assert result["applied"] == {"mode": "high_resolution", "adc_bits": 16}

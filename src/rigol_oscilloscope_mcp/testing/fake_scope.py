@@ -751,6 +751,15 @@ _DVM_PROPS: tuple[tuple[str, str, object, object], ...] = (
 #: `:DVM:CURRent?` の値(DC 1V + 0.5Vpp正弦を当てた想定の代表値。要実機検証)
 _DVM_VALUES = {"ACRM": 0.35, "DC": 1.0, "DCRM": 1.06}
 
+#: 取得モード(ガイド3.3)。既定値はガイドの Default 欄と実機の初期応答に従う
+_ACQUIRE_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("mode", "TYPE", ("NORMal", "PEAK", "AVERages", "HRESolution"), "NORM"),
+    # **実機実測**: 2のべき乗以外は -200 で拒否(ガイド3.3.1 の「切り下げ」は
+    # 前面パネルのテンキー入力の話で、SCPIには当てはまらない)
+    ("averages", "AVERages", ("pow2", 2, 65536), 2),
+    # **実機実測**: HRESolution モード以外では同じ値の書き込みでも -200
+    ("adc_bits", "BITS", ("hres", ("14", "16")), "14"),
+)
 _HISTOGRAM_TYPES = ("HORizontal", "VERTical")
 #: 測定の前提設定(ガイド3.17)。既定値はガイドの Default 欄に従う。
 _MEASURE_SOURCES = tuple(f"CHANnel{n}" for n in range(1, 5)) + tuple(
@@ -955,6 +964,7 @@ class FakeScope:
         self.counter: dict = {key: default for key, _, _, default in _COUNTER_PROPS}
         self.counter["total"] = _COUNTER_TOTAL
         self.dvm: dict = {key: default for key, _, _, default in _DVM_PROPS}
+        self.acquire: dict = {key: default for key, _, _, default in _ACQUIRE_PROPS}
         self.measure_setup: dict = {
             key: default for key, _, _, default in _MEASURE_SETUP_PROPS
         }
@@ -1219,6 +1229,7 @@ class FakeScope:
         entries += self._meter_entries()
         entries += self._trigger_entries()
         entries += self._measure_setup_entries()
+        entries += self._prop_entries(rf":?{_mn('ACQuire')}", _ACQUIRE_PROPS, self.acquire)
         entries += self._histogram_entries()
         entries += self._reference_entries()
         return tuple(
@@ -1985,6 +1996,17 @@ class FakeScope:
         elif kind == "bitmask":
             # :TRIGger:LIN:DATA は整数で書き、2進マスクで読み戻る(実機実測)
             value = format(self._int(token), "08b")
+        elif isinstance(kind, tuple) and kind[0] == "pow2":
+            _, low, high = kind
+            value = self._int(token)
+            if not low <= value <= high or value & (value - 1):
+                self.error_queue.append(EXECUTE_ERROR)  # 沈黙しない(実機実測)
+                return None
+        elif isinstance(kind, tuple) and kind[0] == "hres":
+            if state["mode"] != "HRES":
+                self.error_queue.append(EXECUTE_ERROR)  # 沈黙しない(実機実測)
+                return None
+            value = self._enum(token, kind[1])
         elif isinstance(kind, tuple) and kind[0] == "int":
             _, low, high = kind
             value = self._int(token)

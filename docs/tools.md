@@ -107,7 +107,7 @@ API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。「500 mV」「20 us」等の�
 |---|---|---|---|
 | `sections` | string[] | – | 取得セクションの絞り込み: `channels` / `timebase` / `trigger` / `acquisition`。省略時は全セクション |
 
-全取得は約39クエリ・実測1.3〜1.5秒(負荷時はさらに増加)かかるため、目的が明確な場合は `sections` での絞り込みを推奨する(この旨をTool descriptionに記載する)。
+全取得は約42クエリ(MVP時点の実測は39クエリで1.3〜1.5秒)(負荷時はさらに増加)かかるため、目的が明確な場合は `sections` での絞り込みを推奨する(この旨をTool descriptionに記載する)。
 
 ### `get_channel` — READ_ONLY / Phase 1
 
@@ -125,7 +125,8 @@ API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。「500 mV」「20 us」等の�
 
 ### `get_acquisition_state` — READ_ONLY / Phase 1
 
-返却: `state`(run / stop / single待機 等)、トリガ状態
+返却: `running`(停止中以外は true)、`trigger_status`(`:TRIGger:STATus?` の生値)。
+プロファイルが取得モードを宣言している機種(`acquire_types`)では `mode` / `averages` / `adc_bits` も載る(16章。未宣言の機種では設定クエリを1件も送らない)
 
 ---
 
@@ -527,9 +528,10 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `get_reference_state` | READ_ONLY | M3 |
 | `configure_measurement` | SAFE_WRITE | M4 |
 | `get_measurement_statistics` | READ_ONLY | M4 |
+| `configure_acquisition` | SAFE_WRITE | M6 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は40(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
+登録Tool数は41(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2 + Phase M6: 1。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**、Phase M5(トリガ種別)は**15章**、Phase M6(取得モード)は**16章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
 
 将来(Phase 4の残り): `:PERiod` / `:VOLTage:HIGH`/`:LOW`(恒久スキップ。`frequency_hz`/`amplitude_vpp`+`offset_v`で表現可能なため)、DHOファミリの `:SOURce`(番号なし・DGモジュール)対応、Logic Analyzer。
 
@@ -1015,3 +1017,28 @@ MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標
 8. **SPIは `CLK`/`SCL` と `MISO`/`SDA` が同義の別名**(ガイドの説明文が同一)。片方(`:CLK` / `:MISO`)だけを公開している — 両方出すと同じ設定に2つの入口ができる
 9. **CURRbit / CODE(データのビット単位マスク)は意図的に未対応。** 「桁を選ぶ → その桁の値を 0/1/任意 に設定」という状態を持つ2コマンドの対で、デコードの `bit_sources` と同じくリスト値のキーが要る。`data` で「この値のとき」は表現できるため、必要になってから足す
 10. **プロファイルゲートは「宣言された種別」で行う。** モジュールの項目表にあるだけでは足りない — 実機未検証の機種へ `:TRIGger:MODE PULSe` を送ってしまう。DHO系プロファイルは `edge` のみ宣言している
+
+---
+
+## 16. 取得モード(Phase M6・issue #52)
+
+ノイズの乗った信号には平均化、見逃したくない過渡にはピーク検出、というように**取り込み方そのものをAIが選べる**ようにする(ガイド3.3)。
+
+### `configure_acquisition` — SAFE_WRITE / Phase M6
+
+| 引数 | 値 | SCPI |
+|---|---|---|
+| `mode` | `normal` / `peak` / `average` / `high_resolution` | `:ACQuire:TYPE` |
+| `averages` | 2〜65536 の**2のべき乗のみ**(`average` モードで使われる) | `:ACQuire:AVERages` |
+| `adc_bits` | `14` / `16`(**`high_resolution` モードでのみ設定可**) | `:ACQuire:BITS` |
+
+- 未指定の項目は変更しない。1つも指定しなければ `INVALID_PARAMETER`
+- **送信順は `mode` → `averages` → `adc_bits` に固定**(`adc_bits` はモードが先に決まっていないと受理されない)
+- 返却: `requested` / `applied`(read-back)/ `changed`
+- 実機実測で判明した制約(いずれも**送信前に `INVALID_PARAMETER`** で弾く。機器のエラーキューを汚さない):
+  - `averages` の非2のべき乗は `-200` で拒否される。ガイド3.3.1 の「近い2のべき乗へ切り下げ」は前面パネルのテンキー入力の話で、SCPIには当てはまらない
+  - `adc_bits` は `high_resolution` 以外のモードでは同じ値でも `-200`。`mode` を同時指定しなければ現在モードを1回だけ読んで判定する
+- プロファイル方言 `acquire_types`(必須ゲート)/ `acquire_bits`(分解能の選択肢)。未宣言の機種では送信ゼロで `UNSUPPORTED_FEATURE`
+
+読み取りは `get_acquisition_state`(1章ではなく2章の既存Tool)に `mode` / `averages` / `adc_bits` として載る。
+
