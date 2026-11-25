@@ -2230,5 +2230,5 @@ def test_force_trigger_interrupts_a_waiting_single_on_the_device(
     assert results["single"]["interrupted"] is True
     # 実機実測: 割り込み直後の観測はまだ WAIT のことがある(STOP への遷移に
     # 約0.25秒)。だから「STOP を見たか」ではなく interrupted で判断させる
-    assert results["single"]["completed"] == (results["single"]["trigger_status"] == "STOP")
+    assert results["single"]["completed"] is False
     assert elapsed < 4.0

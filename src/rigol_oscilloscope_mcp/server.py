@@ -1424,7 +1424,8 @@ def create_server(
         never triggers, call force_trigger to capture anyway.
         Other calls (stop, force_trigger, reads) can run while this waits; if
         one of them stops or restarts the acquisition, the wait ends with
-        interrupted=true, so the STOP may not be this capture's own trigger.
+        interrupted=true and completed=false (the STOP, if any, is not this
+        capture's own trigger).
         """
         return control.single(manager.require_scope(), wait_s)
 

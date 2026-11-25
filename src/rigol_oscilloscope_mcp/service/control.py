@@ -1012,7 +1012,8 @@ class ControlService:
 
         result: dict = {"result": "ok", "trigger_status": status}
         if wait_s is not None:
-            result["completed"] = status == STOPPED_TRIGGER_STATUS
+            # 割り込まれたら、観測した STOP は自分の取り込みの完了とは限らない
+            result["completed"] = status == STOPPED_TRIGGER_STATUS and not interrupted
             result["interrupted"] = interrupted
         return result
 

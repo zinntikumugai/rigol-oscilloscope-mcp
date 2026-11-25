@@ -894,6 +894,8 @@ def test_wait_releases_the_device_lock_between_polls(
         driver.stop()
     thread.join(timeout=5)
 
+    # ドライバを直接叩いた停止は「別の取り込み操作」として数えない(Tool経由の
+    # 割り込みは test_wait_reports_an_interrupting_acquisition_operation が見る)
     assert time.monotonic() - started < 1.0
     assert results["single"]["completed"] is True
     assert results["single"]["trigger_status"] == "STOP"
@@ -963,10 +965,11 @@ def test_wait_reports_an_interrupting_acquisition_operation(
         service.stop(driver)  # 別のToolからの割り込み
     thread.join(timeout=5)
 
+    # STOP は割り込んだ stop の結果。自分の取り込みの完了ではないので completed は false
     assert results["single"] == {
         "result": "ok",
         "trigger_status": "STOP",
-        "completed": True,
+        "completed": False,
         "interrupted": True,
     }
 
