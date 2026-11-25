@@ -4505,6 +4505,25 @@ def test_configure_search_sends_mode_then_settings_then_state(
     }
 
 
+def test_configure_search_mode_is_read_back(
+    driver: ScopeDriver, scope: FakeScope, monkeypatch
+) -> None:
+    """applied の mode は要求値ではなく読み戻し値(AGENTS.md ルール3)。"""
+    original = scope.handle
+
+    def answer_edge(command: str):
+        if command.upper().startswith(":SEARCH:MODE?"):
+            return b"EDGE"
+        return original(command)
+
+    monkeypatch.setattr(scope, "handle", answer_edge)
+
+    applied = driver.configure_search(mode="pulse")
+
+    # 差し替えた handle が EDGE を返したので、読み戻しを使っていれば edge になる
+    assert applied == {"mode": "edge"}
+
+
 def test_configure_search_pulse_sends_condition_before_widths(
     driver: ScopeDriver, scope: FakeScope
 ) -> None:

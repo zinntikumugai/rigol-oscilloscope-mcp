@@ -1638,7 +1638,7 @@ class ScopeDriver:
         `mode` を省略して `settings` を渡すと `:SEARch:MODE?` を1本読み、今の
         種別のサブツリーへ書く(`configure_trigger` と同じ原則)。
         """
-        to_mode, _ = self._search_modes()
+        to_mode, from_mode = self._search_modes()
         if settings is not None and not isinstance(settings, dict):
             raise _invalid("settings must be an object", {"settings": settings})
         mode_command = (
@@ -1662,8 +1662,10 @@ class ScopeDriver:
 
         applied: dict[str, object] = {}
         if mode_command is not None:
-            self.session.write_checked(mode_command)
-            applied["mode"] = mode
+            # 要求値ではなく読み戻し値を返す(AGENTS.md ルール3)
+            applied["mode"] = from_mode(
+                self.session.set_and_verify(mode_command, ":SEARch:MODE?")
+            )
         for key, set_cmd, query, from_scpi in plan:
             applied[key] = from_scpi(self.session.set_and_verify(set_cmd, query))
         return applied
