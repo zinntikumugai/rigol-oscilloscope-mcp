@@ -853,6 +853,40 @@ def test_short_wait_is_not_overshot_by_the_poll_interval(
     assert result["completed"] is False
 
 
+def test_wait_releases_the_device_lock_between_polls(
+    store: ConfirmTokenStore, audit_path: Path, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """待機中に別のToolが割り込める(Copilotレビュー指摘)。
+
+    サーバーはTool全体を `manager.lock` で囲む。ポーリングの合間に眠る間だけ
+    ロックを手放さないと、`single(wait_s=60)` の間は `stop` すら打てない。
+    """
+    import threading
+    import time
+
+    from rigol_oscilloscope_mcp.server import unlocked_sleep
+
+    lock = threading.RLock()
+    service = ControlService(store, AuditLogger(audit_path), sleep=unlocked_sleep(lock))
+    results: dict = {}
+
+    def waiter() -> None:
+        with lock:
+            results["single"] = service.single(driver, wait_s=5.0)
+
+    thread = threading.Thread(target=waiter)
+    started = time.monotonic()
+    thread.start()
+    time.sleep(0.15)
+    with lock:  # ロックが解放されていなければここで5秒待たされる
+        driver.stop()
+    thread.join(timeout=5)
+
+    assert time.monotonic() - started < 1.0
+    assert results["single"]["completed"] is True
+    assert results["single"]["trigger_status"] == "STOP"
+
+
 @pytest.mark.parametrize("wait_s", [0, -1, 61, "1", True])
 def test_wait_s_is_validated_before_sending(
     service: ControlService, driver: ScopeDriver, scope: FakeScope, wait_s: object

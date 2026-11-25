@@ -141,9 +141,17 @@ class ControlService:
     確認を無効化するために使う(Requirements.md 6.2)。
     """
 
-    def __init__(self, confirm_store: ConfirmTokenStore, audit: AuditLogger) -> None:
+    def __init__(
+        self,
+        confirm_store: ConfirmTokenStore,
+        audit: AuditLogger,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._confirm = confirm_store
         self._audit = audit
+        # 取り込み完了待ち(wait_s)のポーリング間に眠る関数。サーバーは機器ロックを
+        # 眠る間だけ手放す版を渡す(待機中に stop / force_trigger を割り込ませるため)
+        self._sleep = sleep
 
     # -- 設定変更 ---------------------------------------------------------
 
@@ -987,7 +995,7 @@ class ControlService:
                     if remaining <= 0:
                         break
                     # 残り時間を超えて眠らない(短い wait_s を間隔で超過しない)
-                    time.sleep(min(_WAIT_POLL_S, remaining))
+                    self._sleep(min(_WAIT_POLL_S, remaining))
                     status = driver.get_trigger_status()
             record.after({"trigger_status": status})
 

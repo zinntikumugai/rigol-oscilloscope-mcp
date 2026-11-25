@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import sys
+import time
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import asdict
@@ -138,6 +139,24 @@ def _tool_result(fn: Callable[..., Any]) -> Callable[..., Any]:
 _CONFIRM_REQUIRED = (OperationClass.RESTRICTED_WRITE, OperationClass.DANGEROUS_WRITE)
 
 
+def unlocked_sleep(lock: Any) -> Callable[[float], None]:
+    """眠る間だけ機器ロックを手放す sleep を返す(`single` / `force_trigger` の wait_s)。
+
+    Tool本体は `_locked` の下で動くので、ポーリングの合間に眠る間もロックを
+    握ったままだと、待機中は `stop` や `force_trigger` を割り込ませられない。
+    SCPIの送受信そのものは常にロック下で行われ、直列化は崩れない。
+    """
+
+    def sleep(seconds: float) -> None:
+        lock.release()
+        try:
+            time.sleep(seconds)
+        finally:
+            lock.acquire()
+
+    return sleep
+
+
 def _locked(lock: AbstractContextManager[Any]) -> Callable[..., Any]:
     """Tool本体全体を機器アクセスのロックで囲む(Requirements.md 6.5)。"""
 
@@ -226,7 +245,7 @@ def create_server(
     )
     # confirmトークンはサーバー(=セッション)寿命で共有する。世代バインドは
     # 呼び出しごとに manager.generation を渡すことで効かせる(Requirements.md 6.2)
-    control = ControlService(ConfirmTokenStore(), audit)
+    control = ControlService(ConfirmTokenStore(), audit, sleep=unlocked_sleep(manager.lock))
 
     server = FastMCP(SERVER_NAME, instructions=INSTRUCTIONS)
     _register = _checked_tool(server, manager.lock)
