@@ -92,7 +92,7 @@ API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。「500 mV」「20 us」等の�
 | `clock` | object \| null | 機器時刻とホスト時刻の突き合わせ(issue #54。下記)。時計クエリを持たない機種では `null` |
 | `unsupported_vendor` | bool | 製造者がRIGOLでない場合 `true` |
 
-`clock` は `device_time`(機器の時計。タイムゾーンなしのISO 8601)/ `host_time`(ホストのローカル時刻。オフセット付き)/ `time_skew_s`(機器 − ホスト、秒)/ `warning`(ずれが10秒を超えたときの説明文。それ以外は `null`)。ずれが時差の単位(15分)の倍数から120秒以内なら、警告に「タイムゾーン設定の違いと思われる」旨と `+09:00` のようなオフセット、残りのドリフト秒数が入る。**時計の設定はしない**(#10)。プロファイルの `system_clock` 宣言がゲートで、`:SYSTem:DATE?` → `:TIME?` → `:DATE?` の3クエリ(日付が途中で変わったら `:TIME?` を読み直す)。
+`clock` は `device_time`(機器の時計。タイムゾーンなしのISO 8601)/ `host_time`(ホストのローカル時刻。オフセット付き)/ `time_skew_s`(機器 − ホスト、秒)/ `warning`(ずれが10秒を超えたときの説明文。それ以外は `null`)。ずれが時差の単位(15分)の倍数から120秒以内なら、警告に「タイムゾーン設定の違いと思われる」旨と `+09:00` のようなオフセット、残りのドリフト秒数(小さくても必ず)が入る。**時計の設定はしない**(#10)。プロファイルの `system_clock` 宣言がゲートで、`:SYSTem:DATE?` → `:TIME?` → `:DATE?` の3クエリ(日付が途中で変わったら `:TIME?` を読み直す)。
 
 `options` はプロファイルが `option_query` / `option_types` を宣言する機種でのみ得られ、**非対応機種では `null`**(照会自体を実機へ送らない。[device-profiles.md](device-profiles.md) 2.2)。実機MHO98では未ライセンス状態でも `afg_50mhz` / `memory_500mpts` が `true`(工場出荷標準)である点に注意([verification/mho98-unlicensed.md](verification/mho98-unlicensed.md))。オプションの照会結果は接続中キャッシュされる(ライセンス適用は再起動を伴うため、接続中に変化しない)。
 

@@ -38,12 +38,14 @@ def _timezone_hint(skew_s: float) -> tuple[str, float] | None:
 def clock_check(driver: ScopeDriver, now: datetime | None = None) -> dict | None:
     """機器時刻・ホスト時刻・ずれ(秒、機器 − ホスト)・警告。非対応機種は None。
 
-    `now` はテスト用(タイムゾーン付き)。省略時はホストのローカル時刻。
+    `now` はテスト用(タイムゾーン付き。そのタイムゾーンの壁時計として比べる)。
+    省略時はホストのローカル時刻。
     """
     device = driver.get_device_time()
     if device is None:
         return None
-    host = (now or datetime.now()).astimezone()
+    # 注入された now はそのタイムゾーンのまま使う(テストが実行環境のTZに依存しない)
+    host = now if now is not None else datetime.now().astimezone()
     skew = round((device - host.replace(tzinfo=None)).total_seconds(), 1)
 
     warning = None
@@ -59,11 +61,7 @@ def clock_check(driver: ScopeDriver, now: datetime | None = None) -> dict | None
                 f" The difference is close to {offset}, so the device is probably "
                 "set to a different timezone than the host"
             )
-            warning += (
-                f" (plus {residual:+.1f} s of clock drift)."
-                if abs(residual) > CLOCK_TOLERANCE_S
-                else "."
-            )
+            warning += f" (plus {residual:+.1f} s of clock drift)."
     return {
         "device_time": device.isoformat(),
         "host_time": host.isoformat(timespec="seconds"),

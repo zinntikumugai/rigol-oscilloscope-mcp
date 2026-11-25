@@ -58,6 +58,8 @@ def test_whole_hour_skew_suggests_a_timezone_mismatch(scope: FakeScope) -> None:
     assert result["time_skew_s"] == pytest.approx(9 * 3600 + 0.6)
     assert "timezone" in result["warning"]
     assert "+09:00" in result["warning"]
+    # 残りのずれが小さくても必ず添える(ぴったりの時差とドリフトを区別できるように)
+    assert "+0.6 s" in result["warning"]
 
 
 def test_timezone_hint_tolerates_clock_drift(scope: FakeScope) -> None:
@@ -86,6 +88,19 @@ def test_negative_half_hour_offset_is_also_a_timezone_hint(scope: FakeScope) -> 
     result = clock_check(make_driver(scope), now=HOST)
 
     assert "-05:30" in result["warning"]
+
+
+def test_injected_host_time_is_not_converted_to_the_runner_timezone(
+    scope: FakeScope,
+) -> None:
+    """テスト用の now はそのタイムゾーンのまま使う(実行環境のTZに依存しない)。"""
+    jst = timezone(timedelta(hours=9))
+    scope.clock = datetime(2026, 11, 26, 2, 18, 51)
+
+    result = clock_check(make_driver(scope), now=HOST.astimezone(jst))
+
+    assert result["host_time"] == "2026-11-26T02:18:50+09:00"
+    assert result["time_skew_s"] == pytest.approx(0.6)
 
 
 def test_clock_check_is_none_on_generic(scope: FakeScope) -> None:
