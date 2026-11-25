@@ -560,6 +560,41 @@ def create_server(
         )
 
     @_register
+    def configure_search(
+        enabled: bool | None = None,
+        mode: str | None = None,
+        settings: dict | None = None,
+    ) -> dict:
+        """Configure the event search (marks matching events in the captured
+        waveform). Omitted items are left unchanged.
+
+        mode is "edge" or "pulse"; settings depends on it:
+        - edge: source ("CH1"-"CH4"), slope (rising/falling/either), threshold_v
+        - pulse: source, polarity (positive/negative), when (greater/less/between),
+          upper_width_s, lower_width_s, threshold_v
+        Without mode, settings apply to the current mode. enabled=true starts the
+        search (it is sent last, after the conditions). This only marks events; the
+        acquisition is untouched. Read the events with get_search_results.
+        """
+        return control.configure_search(
+            manager.require_scope(), enabled=enabled, mode=mode, settings=settings
+        )
+
+    @_register
+    def get_search_results(max_events: int = 100) -> dict:
+        """Return the events found by the search: count and the time of each event
+        in seconds relative to the trigger point (events_s, oldest first).
+
+        Call stop first: while running the event list can change between reads,
+        so this refuses to read (SAFETY_POLICY_DENIED). Each event costs one query
+        (about 26 ms), so at most max_events (1 to 1000) are read; truncated tells
+        whether more exist. search echoes the current search settings.
+        """
+        driver = manager.require_scope()
+        search = driver.get_search_config()
+        return {**driver.get_search_results(max_events), "search": search}
+
+    @_register
     def configure_trigger(
         type: str | None = None,
         source: str | None = None,

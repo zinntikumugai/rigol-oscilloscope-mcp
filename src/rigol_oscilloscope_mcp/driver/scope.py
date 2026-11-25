@@ -150,6 +150,32 @@ _ACQUIRE_AVERAGES = ("pow2", 2, 65536)
 #: 書き込みでも `-200`(読み取りはどのモードでも通る)
 _ACQUIRE_BITS_MODE = "high_resolution"
 
+#: イベント検索(ガイド3.22。issue #56)。種別ごとのサブツリーと項目表
+#: (**この並びがそのまま送信順**。pulse は条件 → 上限 → 下限)
+_SEARCH_SUBTREES: dict[str, tuple[str, tuple[tuple[str, str, object], ...]]] = {
+    "edge": (
+        ":SEARch:EDGE",
+        (
+            ("source", ":SOURce", "achannel"),
+            ("slope", ":SLOPe", ("enum", "search_edge_slopes", "the edge search slope")),
+            ("threshold_v", ":THReshold", "number"),
+        ),
+    ),
+    "pulse": (
+        ":SEARch:PULSe",
+        (
+            ("source", ":SOURce", "achannel"),
+            ("polarity", ":POLarity", ("enum", "search_pulse_polarities", "the pulse search polarity")),
+            ("when", ":QUALifier", ("enum", "search_pulse_when", "the pulse search condition")),
+            ("upper_width_s", ":UWIDth", "number"),
+            ("lower_width_s", ":LWIDth", "number"),
+            ("threshold_v", ":THReshold", "number"),
+        ),
+    ),
+}
+#: `get_search_results` で1回に読むイベント数の上限(1件あたり実測約26ms)
+SEARCH_MAX_EVENTS = 1000
+
 # 機器が「測定不能」を示すために返す番兵値(±9.9E37 前後)
 INVALID_MEASUREMENT = 9.0e37
 
@@ -1588,6 +1614,109 @@ class ScopeDriver:
             raw = self.session.query(f"{_ACQUIRE_PREFIX}{path}?")
             config[key] = _acquire_value(key, from_scpi(raw))
         return config
+
+    # -- イベント検索(issue #56)----------------------------------------
+
+    def _search_modes(self) -> tuple[object, object]:
+        """`search_modes` の宣言がゲート(未宣言なら送信前に UNSUPPORTED_FEATURE)。"""
+        return self._afg_enum("search_modes", "the search type")
+
+    def _search_mode(self) -> str:
+        _, from_scpi = self._search_modes()
+        return from_scpi(self.session.query(":SEARch:MODE?"))
+
+    def configure_search(
+        self,
+        *,
+        enabled: bool | None = None,
+        mode: str | None = None,
+        settings: dict | None = None,
+    ) -> dict:
+        """検索を設定する。None の項目は変更しない。
+
+        送信順は モード → 配下の条件 → 有効化(条件が揃ってから検索を走らせる)。
+        `mode` を省略して `settings` を渡すと `:SEARch:MODE?` を1本読み、今の
+        種別のサブツリーへ書く(`configure_trigger` と同じ原則)。
+        """
+        to_mode, _ = self._search_modes()
+        if settings is not None and not isinstance(settings, dict):
+            raise _invalid("settings must be an object", {"settings": settings})
+        mode_command = (
+            f":SEARch:MODE {to_mode(mode, 'mode')}" if mode is not None else None
+        )
+        plan: list[tuple[str, str, str, object]] = []
+        if settings:
+            name = mode if mode is not None else self._search_mode()
+            prefix, items = _SEARCH_SUBTREES[name]
+            allowed = [key for key, _, _ in items]
+            unknown = sorted(key for key in settings if key not in allowed)
+            if unknown:
+                raise _invalid(
+                    f"the {name} search does not have these settings: {unknown}",
+                    {"mode": name, "unknown": unknown, "allowed": allowed},
+                )
+            plan = self._command_plan(prefix, 0, items, settings)
+        plan += self._command_plan(
+            ":SEARch", 0, (("enabled", ":STATe", "bool"),), {"enabled": enabled}
+        )
+
+        applied: dict[str, object] = {}
+        if mode_command is not None:
+            self.session.write_checked(mode_command)
+            applied["mode"] = mode
+        for key, set_cmd, query, from_scpi in plan:
+            applied[key] = from_scpi(self.session.set_and_verify(set_cmd, query))
+        return applied
+
+    def get_search_config(self) -> dict:
+        """検索の有効状態・種別・今の種別のサブツリー項目を読む。"""
+        self._search_modes()
+        enabled = parse_bool(self.session.query(":SEARch:STATe?"))
+        mode = self._search_mode()
+        prefix, items = _SEARCH_SUBTREES[mode]
+        settings = {}
+        for key, path, kind in items:
+            _, from_scpi = self._converter(kind, 0)
+            settings[key] = from_scpi(self.session.query(f"{prefix}{path}?"))
+        return {"enabled": enabled, "mode": mode, "settings": settings}
+
+    def get_search_results(self, max_events: int) -> dict:
+        """検索で見つかったイベントの件数と、各イベントの時刻(トリガ点基準の秒)。
+
+        **実機実測(V-4)**: `:SEARch:VALue? n` は1始まりで、範囲外の n は
+        SCPIサーバーを沈黙させる。取り込み中は `COUNt?` と `VALue?` の間に件数が
+        変わりうるので、**停止中でなければ1件も読まずに拒否**し、読むのは必ず
+        `1..COUNt?` の範囲だけにする。
+        """
+        if (
+            isinstance(max_events, bool)
+            or not isinstance(max_events, int)
+            or not 1 <= max_events <= SEARCH_MAX_EVENTS
+        ):
+            raise _invalid(
+                f"max_events must be an integer between 1 and {SEARCH_MAX_EVENTS}: "
+                f"{max_events!r}",
+                {"max_events": max_events, "max": SEARCH_MAX_EVENTS},
+            )
+        self._search_modes()
+        empty = {"count": 0, "events_s": [], "truncated": False}
+        if not parse_bool(self.session.query(":SEARch:STATe?")):
+            return empty
+        if self.get_trigger_status() != STOPPED_TRIGGER_STATUS:
+            raise ScopeError(
+                ErrorCode.SAFETY_POLICY_DENIED,
+                "Stop the acquisition (stop) before reading search results: while "
+                "running the event count can change between reads, and asking the "
+                "device for an event that no longer exists makes it stop responding.",
+                {"trigger_status": self.get_trigger_status()},
+            )
+        count = int(parse_nr3(self.session.query(":SEARch:COUNt?")))
+        wanted = min(count, max_events)
+        events = [
+            parse_nr3(self.session.query(f":SEARch:VALue? {index}"))
+            for index in range(1, wanted + 1)
+        ]
+        return {"count": count, "events_s": events, "truncated": count > wanted}
 
     # -- トリガ -----------------------------------------------------------
 

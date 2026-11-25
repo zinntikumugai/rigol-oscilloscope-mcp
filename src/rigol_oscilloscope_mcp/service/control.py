@@ -290,6 +290,43 @@ class ControlService:
 
         return {"requested": requested, "applied": applied, "changed": before != after}
 
+    def configure_search(
+        self,
+        driver: ScopeDriver,
+        *,
+        enabled: bool | None = None,
+        mode: str | None = None,
+        settings: dict | None = None,
+    ) -> dict:
+        """イベント検索を設定する(SAFE_WRITE。issue #56)。未指定の項目は変更しない。
+
+        検索は取り込み済みの波形に印を付けるだけで、取り込み条件にも出力にも
+        触れない(`configure_measurement` と同じ扱い)。
+        """
+        requested = _specified(
+            {"enabled": enabled, "mode": mode, "settings": settings}, actions=("settings",)
+        )
+        if not requested:
+            raise _invalid(
+                "No item to change was specified "
+                "(specify at least one of enabled / mode / settings)",
+                {},
+            )
+
+        with self._audited("configure_search", requested) as record:
+            before = driver.get_search_config()
+            record.before(before)
+            applied = driver.configure_search(enabled=enabled, mode=mode, settings=settings)
+            after = driver.get_search_config()
+            record.after(after)
+
+        return {
+            "requested": requested,
+            "applied": applied,
+            "changed": before != after,
+            "search": after,
+        }
+
     def configure_trigger(
         self,
         driver: ScopeDriver,

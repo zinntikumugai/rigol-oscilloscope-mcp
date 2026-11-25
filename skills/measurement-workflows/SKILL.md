@@ -38,6 +38,8 @@ Acquisition mode (`configure_acquisition`, read back with `get_acquisition_state
 `peak` to catch narrow glitches at slow timebases, `high_resolution` to smooth noise in a single-shot capture.
 Restore `normal` when done: averaging hides one-off events.
 
+Finding rare events in a capture: `configure_search(enabled=true, mode="pulse", settings={"source": "CH1", "when": "less", "upper_width_s": 1e-7, "threshold_v": <Vpp/2>})` marks glitches narrower than 100 ns; `stop`, then `get_search_results` returns the count and each event's time (seconds from the trigger point). It refuses while running — always `stop` first.
+
 ## UART workflow
 
 1. `get_state` (use `sections` to read only what you need — a full read is ~42 SCPI queries)

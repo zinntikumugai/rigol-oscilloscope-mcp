@@ -4468,3 +4468,174 @@ def test_get_hardware_info_is_none_on_generic(
     assert generic_driver.get_hardware_info() is None
     assert generic_driver.autoset_available() is None
     assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# イベント検索(issue #56)
+# --------------------------------------------------------------------------
+
+
+def search_writes(scope: FakeScope) -> list[str]:
+    return [c for c in scope.command_log if "?" not in c and c.startswith(":SEARch")]
+
+
+def test_configure_search_sends_mode_then_settings_then_state(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """モード → 配下の条件 → 有効化 の順(条件が揃ってから検索を走らせる)。"""
+    applied = driver.configure_search(
+        enabled=True,
+        mode="edge",
+        settings={"threshold_v": 0.2, "slope": "either", "source": "CH1"},
+    )
+
+    assert search_writes(scope) == [
+        ":SEARch:MODE EDGE",
+        ":SEARch:EDGE:SOURce CHANnel1",
+        ":SEARch:EDGE:SLOPe EITHer",
+        ":SEARch:EDGE:THReshold 0.2",
+        ":SEARch:STATe ON",
+    ]
+    assert applied == {
+        "mode": "edge",
+        "source": "CH1",
+        "slope": "either",
+        "threshold_v": 0.2,
+        "enabled": True,
+    }
+
+
+def test_configure_search_pulse_sends_condition_before_widths(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_search(
+        mode="pulse",
+        settings={"lower_width_s": 1e-4, "upper_width_s": 2e-4, "when": "between"},
+    )
+
+    assert search_writes(scope) == [
+        ":SEARch:MODE PULSe",
+        ":SEARch:PULSe:QUALifier GLESs",
+        ":SEARch:PULSe:UWIDth 0.0002",
+        ":SEARch:PULSe:LWIDth 0.0001",
+    ]
+
+
+def test_configure_search_without_mode_writes_the_current_subtree(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_search(settings={"slope": "falling"})
+
+    assert scope.command_log[0] == ":SEARch:MODE?"
+    assert search_writes(scope) == [":SEARch:EDGE:SLOPe NEGative"]
+
+
+def test_configure_search_rejects_settings_of_another_mode(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_search(mode="edge", settings={"polarity": "positive"})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert excinfo.value.detail["allowed"] == ["source", "slope", "threshold_v"]
+    assert scope.command_log == []
+
+
+def test_configure_search_unsupported_on_generic(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.configure_search(enabled=True)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_get_search_config_reads_the_current_subtree(driver: ScopeDriver) -> None:
+    driver.configure_search(mode="pulse", enabled=True)
+
+    config = driver.get_search_config()
+
+    assert config["enabled"] is True
+    assert config["mode"] == "pulse"
+    assert set(config["settings"]) == {
+        "source", "polarity", "when", "upper_width_s", "lower_width_s", "threshold_v"
+    }
+
+
+def test_get_search_results_reads_each_event_time(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """実機実測(V-4): `:SEARch:VALue? n` はトリガ点基準の時刻(秒)、1始まり。"""
+    scope.search_events = [-9.324e-4, 6.76e-5]
+    driver.configure_search(enabled=True)
+    driver.stop()
+    scope.command_log.clear()
+
+    result = driver.get_search_results(max_events=100)
+
+    assert result == {"count": 2, "events_s": [-9.324e-4, 6.76e-5], "truncated": False}
+    assert sent(scope, "VALUE") == [":SEARch:VALue? 1", ":SEARch:VALue? 2"]
+
+
+def test_get_search_results_truncates_to_max_events(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    scope.search_events = [0.001 * n for n in range(5)]
+    driver.configure_search(enabled=True)
+    driver.stop()
+
+    result = driver.get_search_results(max_events=2)
+
+    assert result["count"] == 5
+    assert result["events_s"] == [0.0, 0.001]
+    assert result["truncated"] is True
+
+
+def test_get_search_results_refuses_while_running(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """**実機実測**: 範囲外の `:SEARch:VALue?` は機器を沈黙させる。取り込み中は
+    件数が読み出しの間に変わりうるので、停止中以外は1件も読まない。"""
+    scope.search_events = [0.0]
+    driver.configure_search(enabled=True)
+    scope.command_log.clear()
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_search_results(max_events=10)
+
+    assert excinfo.value.code == ErrorCode.SAFETY_POLICY_DENIED
+    assert sent(scope, "VALUE") == []
+
+
+def test_get_search_results_disabled_reads_no_values(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.stop()
+    scope.command_log.clear()
+
+    assert driver.get_search_results(max_events=10) == {
+        "count": 0,
+        "events_s": [],
+        "truncated": False,
+    }
+    assert sent(scope, "VALUE") == []
+
+
+@pytest.mark.parametrize("max_events", [0, 1001, True, 1.5])
+def test_get_search_results_validates_max_events(
+    driver: ScopeDriver, scope: FakeScope, max_events: object
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_search_results(max_events=max_events)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_fake_search_value_out_of_range_is_silent(scope: FakeScope) -> None:
+    """フェイク機器も実機と同じく範囲外インデックスで沈黙する。"""
+    from rigol_oscilloscope_mcp.testing import SilentTimeout
+
+    with pytest.raises(SilentTimeout):
+        scope.handle(":SEARch:VALue? 0")
