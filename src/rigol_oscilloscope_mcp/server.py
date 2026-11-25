@@ -313,7 +313,7 @@ def create_server(
         it is null when the model has no clock query. This tool never sets the
         clock.
         hardware is what the device itself reports: analog_channels (the real
-        channel count) and autoset_available (false when the AUTO function is
+        channel count; other tools still use the profile's count) and autoset_available (false when the AUTO function is
         disabled or locked on the device); null when the model cannot report it.
         """
         driver = manager.require_scope()

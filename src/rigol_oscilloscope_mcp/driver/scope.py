@@ -962,7 +962,8 @@ class ScopeDriver:
         """機器自身が申告する実アナログch数と autoset の可否(issue #55)。
 
         未宣言の機種では1クエリも送らず None。`analog_channels` はプロファイルの
-        宣言値ではなく実測値(2chモデルの判別に使える。#24)。
+        宣言値ではなく実測値。**ドライバの `analog_channels`(状態取得・ch検証)
+        へはまだ反映しない**(#24 の材料。反映は #24 で行う)。
         """
         if not self.profile.supports("hardware_info"):
             return None

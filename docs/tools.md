@@ -89,7 +89,7 @@ API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。「500 mV」「20 us」等の�
 | `profile` | object | `name` / `confidence` |
 | `capabilities` | object | プロファイルのcapabilitiesブロックそのまま |
 | `options` | object \| null | 導入済みライセンスオプション(意味的な名前 → `true` / `false`)。判定できなかった項目は `null` |
-| `hardware` | object \| null | 機器自身の申告(issue #55): `analog_channels`(`:SYSTem:RAMount?` の実測ch数。プロファイル宣言値ではない)/ `autoset_available`(AUTO機能が有効かつロックされていない)。プロファイルの `hardware_info` 未宣言なら `null`(照会しない) |
+| `hardware` | object \| null | 機器自身の申告(issue #55): `analog_channels`(`:SYSTem:RAMount?` の実測ch数。プロファイル宣言値ではない。**状態取得やch検証にはまだ反映しない** — #24 で扱う)/ `autoset_available`(AUTO機能が有効かつロックされていない)。プロファイルの `hardware_info` 未宣言なら `null`(照会しない) |
 | `clock` | object \| null | 機器時刻とホスト時刻の突き合わせ(issue #54。下記)。時計クエリを持たない機種では `null` |
 | `unsupported_vendor` | bool | 製造者がRIGOLでない場合 `true` |
 

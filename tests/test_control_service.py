@@ -1248,12 +1248,18 @@ def test_autoset_skips_the_before_state_without_audit_log(
     assert before_autoset == [":AUToset:ENAble?", ":AUToset:LOCK?"]
 
 
-def test_autoset_refuses_when_the_auto_function_is_disabled(
-    service: ControlService, driver: ScopeDriver, scope: FakeScope
+@pytest.mark.parametrize(("enabled", "locked"), [(False, False), (True, True)])
+def test_autoset_refuses_when_the_auto_function_is_disabled_or_locked(
+    service: ControlService,
+    driver: ScopeDriver,
+    scope: FakeScope,
+    enabled: bool,
+    locked: bool,
 ) -> None:
-    """AUTO機能が無効だと機器は :AUToset を黙って無視する。承認後でも実行前に止める。"""
+    """AUTO機能が無効またはロック中なら、承認後でも :AUToset を送らずに止める。"""
     token = request_autoset(service, driver).detail["confirm_token"]
-    scope.autoset_locked = True
+    scope.autoset_enabled = enabled
+    scope.autoset_locked = locked
     scope.command_log.clear()
 
     with pytest.raises(ScopeError) as excinfo:
@@ -1261,6 +1267,9 @@ def test_autoset_refuses_when_the_auto_function_is_disabled(
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert ":AUToset" not in scope.command_log
+    # 対処はどちらの状態でも正しくなるよう、有効化とロック解除の両方を案内する
+    assert "unlock" in excinfo.value.message
+    assert "enable" in excinfo.value.message
 
 
 def test_autoset_check_happens_after_confirmation(

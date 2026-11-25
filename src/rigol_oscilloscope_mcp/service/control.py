@@ -1043,9 +1043,9 @@ class ControlService:
             if driver.autoset_available() is False:
                 raise ScopeError(
                     ErrorCode.UNSUPPORTED_FEATURE,
-                    "Auto Setup is disabled or locked on the device "
-                    "(the AUTO function is turned off on the front panel), "
-                    "so it was not run. Ask the human user to enable it first.",
+                    "Auto Setup was not run: the AUTO function is disabled or "
+                    "locked on the device. Ask the human user to enable and "
+                    "unlock the AUTO function on the front panel first.",
                     {"autoset_available": False},
                 )
             # before はチャンネル4本分(28クエリ)を避け、水平軸とトリガに絞る。
