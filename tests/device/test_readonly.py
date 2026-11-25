@@ -743,3 +743,15 @@ def test_acquisition_config_answers(driver: ScopeDriver) -> None:
     assert 2 <= config["averages"] <= 65536
     assert config["adc_bits"] in (14, 16)
     assert driver.session.drain_error_queue() == []
+
+
+def test_device_clock_answers(driver: ScopeDriver) -> None:
+    """機器時刻の読み取り(issue #54)。ずれの大きさは環境依存なので記録のみ。"""
+    from rigol_oscilloscope_mcp.service import clock_check
+
+    clock = clock_check(driver)
+    _report(f"[clock] {clock}")
+
+    assert clock is not None
+    assert set(clock) == {"device_time", "host_time", "time_skew_s", "warning"}
+    assert driver.session.drain_error_queue() == []

@@ -89,7 +89,10 @@ API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。「500 mV」「20 us」等の�
 | `profile` | object | `name` / `confidence` |
 | `capabilities` | object | プロファイルのcapabilitiesブロックそのまま |
 | `options` | object \| null | 導入済みライセンスオプション(意味的な名前 → `true` / `false`)。判定できなかった項目は `null` |
+| `clock` | object \| null | 機器時刻とホスト時刻の突き合わせ(issue #54。下記)。時計クエリを持たない機種では `null` |
 | `unsupported_vendor` | bool | 製造者がRIGOLでない場合 `true` |
+
+`clock` は `device_time`(機器の時計。タイムゾーンなしのISO 8601)/ `host_time`(ホストのローカル時刻。オフセット付き)/ `time_skew_s`(機器 − ホスト、秒)/ `warning`(ずれが10秒を超えたときの説明文。それ以外は `null`)。ずれが時差の単位(15分)の倍数から120秒以内なら、警告に「タイムゾーン設定の違いと思われる」旨と `+09:00` のようなオフセット、残りのドリフト秒数が入る。**時計の設定はしない**(#10)。プロファイルの `system_clock` 宣言がゲートで、`:SYSTem:DATE?` → `:TIME?` → `:DATE?` の3クエリ(日付が途中で変わったら `:TIME?` を読み直す)。
 
 `options` はプロファイルが `option_query` / `option_types` を宣言する機種でのみ得られ、**非対応機種では `null`**(照会自体を実機へ送らない。[device-profiles.md](device-profiles.md) 2.2)。実機MHO98では未ライセンス状態でも `afg_50mhz` / `memory_500mpts` が `true`(工場出荷標準)である点に注意([verification/mho98-unlicensed.md](verification/mho98-unlicensed.md))。オプションの照会結果は接続中キャッシュされる(ライセンス適用は再起動を伴うため、接続中に変化しない)。
 
@@ -294,7 +297,10 @@ FFTの実装:
 1. プロファイルのスクリーンショットコマンド(MHO98: `:DISPlay:DATA?` → PNG 約97KB)で画像取得
 2. `path` を `~` 展開・(相対ならデフォルトディレクトリ基準で)正規化し、許可ルート([Requirements.md](Requirements.md) 9章 = 明示指定 + デフォルト保存先 + 一時ディレクトリ)内であることを検証。外なら `INVALID_PARAMETER`(`detail.hint` で `RIGOL_MCP_ALLOWED_DIRS` を案内)
 3. 指定形式へ変換(Pillow)して保存。機器返却形式と同一ならそのまま保存
-4. 返却: 保存した絶対パス、形式、サイズ、(`return_image=true` なら)画像本体
+4. 撮影の直後に機器時刻を読み、ホスト時刻と比べる(`clock`。`get_capabilities` と同じ形。issue #54)
+5. 返却: 保存した絶対パス、形式、サイズ、`clock`、(`return_image=true` なら)画像本体
+
+画面には機器の時計が写る。`clock.warning` が付いていたら、**画面上の時刻を証拠として使う前に利用者へ伝える**(Tool descriptionで指示している)。
 
 用途は波形形状・トリガ状態・画面異常の目視確認とLLM Vision解析。**数値はスクリーンショットのOCRではなく `measure` の結果を優先する**。
 

@@ -17,6 +17,7 @@ import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 
 from ..errors import ErrorCode, ScopeError
 from ..models import ChannelState, IdnInfo, MeasurementResult, TimebaseState, TriggerState
@@ -931,6 +932,31 @@ class ScopeDriver:
         return IdnInfo(
             manufacturer=parts[0], model=parts[1], serial=parts[2], firmware=parts[3]
         )
+
+    def get_device_time(self) -> datetime | None:
+        """機器の時計(タイムゾーンを持たない)。未宣言の機種では1クエリも送らず None。
+
+        DATE → TIME → DATE の順に読み、間で日付が変わっていたら後の日付で
+        TIME を読み直す(23:59:59 と翌日の日付を組み合わせないため)。
+        """
+        if not self.profile.supports("system_clock"):
+            return None
+        query = self.session.query
+        date = query(":SYSTem:DATE?")
+        clock = query(":SYSTem:TIME?")
+        later = query(":SYSTem:DATE?")
+        if later.strip() != date.strip():
+            date, clock = later, query(":SYSTem:TIME?")
+        # 実機実測: TIME? はコロン区切り。ガイドの set 形はカンマ区切りなので両方読む
+        parts = re.split(r"[,:]", f"{date.strip()},{clock.strip()}")
+        try:
+            return datetime(*(int(part) for part in parts))
+        except (TypeError, ValueError):
+            raise ScopeError(
+                ErrorCode.SCPI_ERROR,
+                f"cannot interpret the device date/time: {date.strip()!r} {clock.strip()!r}",
+                {"date": date.strip(), "time": clock.strip()},
+            ) from None
 
     def installed_options(self) -> dict[str, bool | None]:
         """導入済みオプションを意味的な名前で返す(不明な項目は None)。

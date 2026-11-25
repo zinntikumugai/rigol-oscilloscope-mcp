@@ -1,6 +1,7 @@
 """サービス層(接続ライフサイクルと、Toolから呼ばれる操作の組み立て)。"""
 
 from .analysis import VALID_ANALYSES, analyze_waveform, waveform_fft, waveform_stats
+from .clock import clock_check
 from .connection import ConnectionManager, ConnectionStatus
 from .control import AUTOSET_NOTE, ControlService
 from .decode import get_decode_result
@@ -31,6 +32,7 @@ __all__ = [
     "analyze_waveform",
     "capture_screenshot",
     "capture_waveform",
+    "clock_check",
     "get_acquisition_dict",
     "get_channel_dict",
     "get_decode_result",

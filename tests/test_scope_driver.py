@@ -4371,3 +4371,66 @@ def test_force_trigger_unsupported_on_generic(
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# 機器時刻(issue #54)
+# --------------------------------------------------------------------------
+
+
+def test_get_device_time_parses_date_and_time(driver: ScopeDriver, scope: FakeScope) -> None:
+    """実機実測: DATE? はカンマ区切り、TIME? は**コロン区切り**(V-3)。"""
+    from datetime import datetime
+
+    scope.clock = datetime(2026, 11, 26, 2, 18, 54)
+
+    assert driver.get_device_time() == datetime(2026, 11, 26, 2, 18, 54)
+    assert sent(scope, ":SYST") == [
+        ":SYSTem:DATE?",
+        ":SYSTem:TIME?",
+        ":SYSTem:DATE?",
+    ]
+
+
+def test_get_device_time_accepts_comma_separated_time(
+    driver: ScopeDriver, monkeypatch
+) -> None:
+    """ガイドの set 形はカンマ区切り。他ファームで query もそうなっても読める。"""
+    from datetime import datetime
+
+    answers = iter(["2026,11,26", "02,18,54", "2026,11,26"])
+    monkeypatch.setattr(driver.session, "query", lambda command, *a, **k: next(answers))
+
+    assert driver.get_device_time() == datetime(2026, 11, 26, 2, 18, 54)
+
+
+def test_get_device_time_rereads_when_the_date_rolls_over(
+    driver: ScopeDriver, monkeypatch
+) -> None:
+    """DATE と TIME の間で日付が変わったら、後の日付で TIME を読み直す。"""
+    from datetime import datetime
+
+    answers = iter(["2026,11,25", "23:59:59", "2026,11,26", "00:00:00"])
+    monkeypatch.setattr(driver.session, "query", lambda command, *a, **k: next(answers))
+
+    assert driver.get_device_time() == datetime(2026, 11, 26, 0, 0, 0)
+
+
+def test_get_device_time_rejects_unparsable_answer(
+    driver: ScopeDriver, monkeypatch
+) -> None:
+    answers = iter(["2026,11,26", "garbage", "2026,11,26"])
+    monkeypatch.setattr(driver.session, "query", lambda command, *a, **k: next(answers))
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_device_time()
+
+    assert excinfo.value.code == ErrorCode.SCPI_ERROR
+
+
+def test_get_device_time_is_none_on_generic(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """DHO800/900 には :SYSTem:DATE / TIME が無い。未宣言なら1クエリも送らない。"""
+    assert generic_driver.get_device_time() is None
+    assert scope.command_log == []
