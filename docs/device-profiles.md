@@ -58,6 +58,7 @@
 | `frequency_counter` | true | 周波数カウンタ(`:COUNter`)の可否。`configure_meter(kind="counter")` / `get_meter_value(kind="counter")` が使う。**未宣言ならカウンタ操作自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) |
 | `dvm` | true | 電圧計(`:DVM`)の可否。`configure_meter(kind="dvm")` / `get_meter_value(kind="dvm")` が使う。**未宣言なら電圧計操作自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) |
 | `system_clock` | true | 機器の時計(`:SYSTem:DATE?` / `:TIME?`)の可否。`get_capabilities` / `capture_screenshot` の `clock` が使う。**未宣言なら時計を読まず `clock: null`**。mho98のみ(DHO800/900 にはコマンド自体が無い) |
+| `hardware_info` | true | 機器自身の申告(`:SYSTem:RAMount?` / `:AUToset:ENAble?` / `:LOCK?`)の可否。`get_capabilities` の `hardware` と、autoset 実行前の可否確認が使う。**未宣言なら照会せず `hardware: null`**。mho98のみ。`:SYSTem:MODules?` は実態と合わないため使わない([verification/mho98-m6.md](verification/mho98-m6.md) §4) |
 | `histogram` | true | 波形ヒストグラム(`:HISTogram`)の可否。`configure_histogram` / `get_histogram_result` が使う。**未宣言ならヒストグラム操作自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) |
 
 未対応機能のToolが呼ばれた場合、実機へコマンドを送らず `UNSUPPORTED_FEATURE` を返す(理由は4.2参照)。

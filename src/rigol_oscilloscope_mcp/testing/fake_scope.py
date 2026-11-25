@@ -1003,6 +1003,9 @@ class FakeScope:
             for name, props in _TRIGGER_SUBTREE_PROPS.items()
         }
         self.acquisition = "RUN"
+        #: AUTO機能の状態(`:AUToset:ENAble?` / `:LOCK?`)
+        self.autoset_enabled = True
+        self.autoset_locked = False
         #: 機器の時計。None ならホストのローカル時刻に同期しているものとして扱う
         self.clock: datetime | None = None
         self.waveform: dict[str, object] = {
@@ -1063,6 +1066,10 @@ class FakeScope:
         entries: list[tuple[str, Callable]] = [
             (r"\*IDN\?", lambda m: IDN.encode("ascii")),
             (rf":?{_mn('SYSTem')}:{_mn('ERRor')}\?", self._system_error),
+            # 実アナログch数とAUTO機能の可否(3.24.8 / 3.2.6-7。実機は 4 / 1 / 0)
+            (rf":?{_mn('SYSTem')}:{_mn('RAMount')}\?", lambda m: b"4"),
+            (rf":?{_mn('AUToset')}:{_mn('ENAble')}\?", lambda m: b"1" if self.autoset_enabled else b"0"),
+            (rf":?{_mn('AUToset')}:{_mn('LOCK')}\?", lambda m: b"1" if self.autoset_locked else b"0"),
             # 機器の時計(3.24.4-5)。実機実測: DATE? はカンマ、TIME? はコロン区切り
             (rf":?{_mn('SYSTem')}:{_mn('DATE')}\?", lambda m: self._now().strftime("%Y,%m,%d").encode("ascii")),
             (rf":?{_mn('SYSTem')}:{_mn('TIME')}\?", lambda m: self._now().strftime("%H:%M:%S").encode("ascii")),

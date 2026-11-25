@@ -94,3 +94,17 @@
 - 観測時のホスト時刻は `2026-11-25 17:18`(UTC)。read-onlyスイートでの実測は **`time_skew_s: 32428.6` = +9時間 + 約29秒**(JSTに設定された機器と、UTCのホスト。残り29秒は時計のドリフト)。機器の時計はタイムゾーンを持たないため、`clock_check` はずれが15分単位の倍数から120秒以内ならタイムゾーン違い(+ドリフト秒数)を示唆する。当初の許容10秒ではこの実機の値を取りこぼしたため広げた
 - 時計の**設定はしない**(機器のグローバル状態の書き換え。#10)
 - read-only(`-m device tests/device/test_readonly.py`): **21 passed, 1 skipped**(`test_device_clock_answers` を含む)
+
+## 4. 機器メタ情報(issue #55、2026-11-25)
+
+| コマンド | 応答 | エラーキュー | 所見 |
+|---|---|---|---|
+| `:SYSTem:RAMount?` | `4` | No error | 実アナログch数。プロファイル宣言値と一致 |
+| `:AUToset:ENAble?` | `1` | No error | AUTO機能 有効 |
+| `:AUToset:LOCK?` | `0` | No error | ロックなし |
+| `:SYSTem:MODules?` | `1,0,0,0,0` | No error | ガイド3.24.15: 1桁目=LA、2桁目=DG。**実態と合わない**(下記) |
+
+- **`:SYSTem:MODules?` は使わない。** LAプローブ未接続の状態で LA=`1`、AFGを内蔵し実機で出力も確認済みなのに DG=`0`。プローブの有無でもAFGの有無でもない何かを示しており、判定材料にならない(V-2 の後半は「判定できない」で決着)
+- autoset の可否は、**承認後・実行前**に読む。autoset 自体は実機での実行が禁止なので、無効時に `:AUToset` を送ったときの機器の反応は観測していない
+- read-only(`-m device tests/device/test_readonly.py`): **22 passed, 1 skipped**(`test_hardware_info_answers` を含む)
+

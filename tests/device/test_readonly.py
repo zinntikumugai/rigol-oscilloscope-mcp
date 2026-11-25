@@ -755,3 +755,14 @@ def test_device_clock_answers(driver: ScopeDriver) -> None:
     assert clock is not None
     assert set(clock) == {"device_time", "host_time", "time_skew_s", "warning"}
     assert driver.session.drain_error_queue() == []
+
+
+def test_hardware_info_answers(driver: ScopeDriver) -> None:
+    """機器自身が申告する実アナログch数と autoset の可否(issue #55)。"""
+    info = driver.get_hardware_info()
+    _report(f"[hardware] {info}")
+
+    assert info is not None
+    assert info["analog_channels"] == driver.analog_channels  # MHO98 は 4
+    assert isinstance(info["autoset_available"], bool)
+    assert driver.session.drain_error_queue() == []

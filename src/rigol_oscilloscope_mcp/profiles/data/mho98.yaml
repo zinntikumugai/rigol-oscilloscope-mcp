@@ -24,6 +24,10 @@ capabilities:
   # :SYSTem:DATE? / :TIME?(ガイド3.24.4-5。issue #54)。実機実測: DATE? はカンマ区切り、
   # TIME? はコロン区切り(V-3)。DHO800/900 にはコマンド自体が無い
   system_clock: true
+  # :SYSTem:RAMount?(3.24.8)と :AUToset:ENAble? / :LOCK?(3.2.6-7)。issue #55。
+  # 実機で応答確認済み(4 / 1 / 0)。:SYSTem:MODules? は実態と合わない(LAプローブ
+  # 未接続でも LA=1、AFG内蔵なのに DG=0)ため使わない
+  hardware_info: true
   measurements: [
      frequency, period, rise_time, fall_time, pulse_width_pos, pulse_width_neg, duty,
     duty_neg, time_at_vmax, time_at_vmin, vpp, vmax, vmin, vtop, vbase, vamp, vupper,

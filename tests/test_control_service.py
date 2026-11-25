@@ -1072,7 +1072,9 @@ def test_autoset_with_token_executes(
     result = service.autoset(driver, 0, confirm_token=token)
 
     assert result["result"] == "ok"
-    assert [c for c in scope.command_log if "AUTO" in c.upper()] == [":AUToset"]
+    assert [c for c in scope.command_log if "AUTO" in c.upper() and "?" not in c] == [
+        ":AUToset"
+    ]
 
 
 def test_autoset_note_states_settings_changed(
@@ -1242,7 +1244,44 @@ def test_autoset_skips_the_before_state_without_audit_log(
     service.autoset(driver, 0, confirm_token=excinfo.value.detail["confirm_token"])
 
     before_autoset = scope.command_log[: scope.command_log.index(":AUToset")]
-    assert before_autoset == []
+    # 実行前に読むのは autoset の可否(issue #55)だけ。状態の before は取らない
+    assert before_autoset == [":AUToset:ENAble?", ":AUToset:LOCK?"]
+
+
+@pytest.mark.parametrize(("enabled", "locked"), [(False, False), (True, True)])
+def test_autoset_refuses_when_the_auto_function_is_disabled_or_locked(
+    service: ControlService,
+    driver: ScopeDriver,
+    scope: FakeScope,
+    enabled: bool,
+    locked: bool,
+) -> None:
+    """AUTO機能が無効またはロック中なら、承認後でも :AUToset を送らずに止める。"""
+    token = request_autoset(service, driver).detail["confirm_token"]
+    scope.autoset_enabled = enabled
+    scope.autoset_locked = locked
+    scope.command_log.clear()
+
+    with pytest.raises(ScopeError) as excinfo:
+        service.autoset(driver, 0, confirm_token=token)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert ":AUToset" not in scope.command_log
+    # 対処はどちらの状態でも正しくなるよう、有効化とロック解除の両方を案内する
+    assert "unlock" in excinfo.value.message
+    assert "enable" in excinfo.value.message
+
+
+def test_autoset_check_happens_after_confirmation(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """承認前は1コマンドも送らない不変条件を保つ(可否の確認も承認後)。"""
+    scope.autoset_locked = True
+
+    error = request_autoset(service, driver)
+
+    assert error.code == ErrorCode.USER_CONFIRMATION_REQUIRED
+    assert scope.command_log == []
 
 
 # ==========================================================================
