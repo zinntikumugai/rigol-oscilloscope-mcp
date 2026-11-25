@@ -761,6 +761,25 @@ _ACQUIRE_PROPS: tuple[tuple[str, str, object, object], ...] = (
     # **実機実測**: HRESolution モード以外では同じ値の書き込みでも -200
     ("adc_bits", "BITS", ("hres", ("14", "16")), "14"),
 )
+#: イベント検索(ガイド3.22)。既定値は実機の初期応答(EDGE / POS / CHAN1 / GRE)
+_SEARCH_CHANNELS = tuple(f"CHANnel{n}" for n in range(1, 5))
+_SEARCH_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("enabled", "STATe", "bool", False),
+    ("mode", "MODE", ("EDGE", "PULSe"), "EDGE"),
+)
+_SEARCH_EDGE_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("source", "SOURce", _SEARCH_CHANNELS, "CHAN1"),
+    ("slope", "SLOPe", ("POSitive", "NEGative", "EITHer"), "POS"),
+    ("threshold", "THReshold", "nr3", 0.0),
+)
+_SEARCH_PULSE_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("source", "SOURce", _SEARCH_CHANNELS, "CHAN1"),
+    ("polarity", "POLarity", ("POSitive", "NEGative"), "POS"),
+    ("when", "QUALifier", ("GREater", "LESS", "GLESs"), "GRE"),
+    ("upper", "UWIDth", "nr3", 2.0e-6),
+    ("lower", "LWIDth", "nr3", 1.0e-6),
+    ("threshold", "THReshold", "nr3", 0.0),
+)
 _HISTOGRAM_TYPES = ("HORizontal", "VERTical")
 #: 測定の前提設定(ガイド3.17)。既定値はガイドの Default 欄に従う。
 _MEASURE_SOURCES = tuple(f"CHANnel{n}" for n in range(1, 5)) + tuple(
@@ -966,6 +985,11 @@ class FakeScope:
         self.counter["total"] = _COUNTER_TOTAL
         self.dvm: dict = {key: default for key, _, _, default in _DVM_PROPS}
         self.acquire: dict = {key: default for key, _, _, default in _ACQUIRE_PROPS}
+        self.search: dict = {key: default for key, _, _, default in _SEARCH_PROPS}
+        self.search_edge: dict = {k: d for k, _, _, d in _SEARCH_EDGE_PROPS}
+        self.search_pulse: dict = {k: d for k, _, _, d in _SEARCH_PULSE_PROPS}
+        #: 検索で見つかるイベントの時刻(秒)。検索が有効なときだけ数えられる
+        self.search_events: list[float] = []
         self.measure_setup: dict = {
             key: default for key, _, _, default in _MEASURE_SETUP_PROPS
         }
@@ -1246,6 +1270,7 @@ class FakeScope:
         entries += self._trigger_entries()
         entries += self._measure_setup_entries()
         entries += self._prop_entries(rf":?{_mn('ACQuire')}", _ACQUIRE_PROPS, self.acquire)
+        entries += self._search_entries()
         entries += self._histogram_entries()
         entries += self._reference_entries()
         return tuple(
@@ -1600,6 +1625,27 @@ class FakeScope:
             ),
         ]
         return entries
+
+    def _search_entries(self) -> list[tuple[str, Callable]]:
+        """イベント検索(ガイド3.22)。`:EVENt` / `:NAVigate` は未実装 = 沈黙。"""
+        search = rf":?{_mn('SEARch')}"
+        entries = self._prop_entries(search, _SEARCH_PROPS, self.search)
+        entries += self._prop_entries(rf"{search}:{_mn('EDGE')}", _SEARCH_EDGE_PROPS, self.search_edge)
+        entries += self._prop_entries(rf"{search}:{_mn('PULSe')}", _SEARCH_PULSE_PROPS, self.search_pulse)
+        entries += [
+            (rf"{search}:{_mn('COUNt')}\?", lambda m: str(self._search_count()).encode("ascii")),
+            (rf"{search}:{_mn('VALue')}\?\s+(\d+)", lambda m: self._search_value(int(m.group(1)))),
+        ]
+        return entries
+
+    def _search_count(self) -> int:
+        return len(self.search_events) if self.search["enabled"] else 0
+
+    def _search_value(self, index: int) -> bytes:
+        """**実機実測**: 範囲外(0件時の 0 など)は `-200` を積んで沈黙する。"""
+        if not 1 <= index <= self._search_count():
+            raise self._silent(EXECUTE_ERROR)
+        return f"{self.search_events[index - 1]:.6E}".encode("ascii")
 
     def _measure_threshold_default(self) -> None:
         """ガイド3.17.18: しきい値を既定へ戻す(パーセント既定 90/50/10)。"""

@@ -35,6 +35,8 @@ EXPECTED = {
     "stop": "SAFE_WRITE",
     "single": "SAFE_WRITE",
     "force_trigger": "SAFE_WRITE",
+    "configure_search": "SAFE_WRITE",
+    "get_search_results": "READ_ONLY",
     "autoset": "RESTRICTED_WRITE",
     "configure_decode": "SAFE_WRITE",
     "get_decode_result": "READ_ONLY",

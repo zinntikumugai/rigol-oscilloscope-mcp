@@ -2232,3 +2232,105 @@ def test_force_trigger_interrupts_a_waiting_single_on_the_device(
     # 約0.25秒)。だから「STOP を見たか」ではなく interrupted で判断させる
     assert results["single"]["completed"] is False
     assert elapsed < 4.0
+
+
+# --------------------------------------------------------------------------
+# イベント検索(issue #56)
+# --------------------------------------------------------------------------
+
+#: 検索検証で一時的に使う表示条件。CH1 の校正信号(1kHz・約0.3Vpp)が
+#: 画面内に複数周期入るようにする(実機の既定 50mV/div・2µs/div ではエッジが無い)
+SEARCH_CH1_SCALE_V = 0.1
+SEARCH_TIMEBASE_S = 2e-4
+SEARCH_THRESHOLD_V = 0.15
+
+
+@pytest.fixture
+def search_before(
+    request: pytest.FixtureRequest,
+    driver: ScopeDriver,
+    sweep_before: dict,
+) -> Iterator[dict]:
+    """検索設定(両種別)・CH1スケール・時間軸を控え、teardownで必ず戻す。
+
+    検索結果の読み出しは停止中が前提なので、取り込み状態は sweep_before が戻す。
+    """
+    current = driver.get_search_config()
+    before = {
+        "enabled": current["enabled"],
+        "mode": current["mode"],
+        "subtrees": {},
+        "ch1_scale": get_channel_dict(driver, "CH1")["scale_v_per_div"],
+        "timebase": get_timebase_dict(driver)["scale_s_per_div"],
+    }
+    for mode in ("edge", "pulse"):
+        driver.configure_search(mode=mode)
+        before["subtrees"][mode] = driver.get_search_config()["settings"]
+    driver.configure_search(mode=before["mode"])
+    tag = request.node.name
+    _report(f"[before:{tag}] search={before}")
+    try:
+        yield before
+    finally:
+        failures: list[Exception] = []
+        for step in (
+            lambda: [
+                driver.configure_search(mode=mode, settings=settings)
+                for mode, settings in before["subtrees"].items()
+            ],
+            lambda: driver.configure_search(enabled=before["enabled"], mode=before["mode"]),
+            lambda: driver.set_channel_scale("CH1", before["ch1_scale"]),
+            lambda: driver.set_timebase_scale(before["timebase"]),
+        ):
+            try:
+                step()
+            except Exception as exc:  # 復元は最後まで試みる
+                failures.append(exc)
+        after = driver.get_search_config()
+        _report(f"[restore:{tag}] search 復元後={after}")
+        assert not failures, f"検索設定の復元に失敗: {failures!r}"
+        assert after["enabled"] == before["enabled"]
+        assert after["mode"] == before["mode"]
+        assert after["settings"] == before["subtrees"][before["mode"]]
+
+
+def test_search_edges_returns_event_times(
+    control: ControlService, driver: ScopeDriver, search_before: dict
+) -> None:
+    """V-4 の裏取り: 1kHz の立ち上がりエッジが 1ms 間隔の時刻として並ぶ。"""
+    driver.set_channel_scale("CH1", SEARCH_CH1_SCALE_V)
+    driver.set_timebase_scale(SEARCH_TIMEBASE_S)
+    result = control.configure_search(
+        driver,
+        enabled=True,
+        mode="edge",
+        settings={"source": "CH1", "slope": "rising", "threshold_v": SEARCH_THRESHOLD_V},
+    )
+    _report(f"[search] applied={result['applied']}")
+    time.sleep(1.0)
+    control.stop(driver)
+    time.sleep(0.3)
+
+    found = driver.get_search_results(max_events=100)
+    _report(f"[search] results={found}")
+
+    assert found["count"] >= 2
+    assert len(found["events_s"]) == min(found["count"], 100)
+    gaps = [b - a for a, b in zip(found["events_s"], found["events_s"][1:])]
+    assert all(abs(gap - 1e-3) < 5e-5 for gap in gaps), gaps
+    assert driver.session.drain_error_queue() == []
+
+
+def test_search_results_refuse_while_running(
+    control: ControlService, driver: ScopeDriver, search_before: dict
+) -> None:
+    """取り込み中は読まない(範囲外 VALue? による沈黙を避ける)。"""
+    driver.set_channel_scale("CH1", SEARCH_CH1_SCALE_V)
+    driver.set_timebase_scale(SEARCH_TIMEBASE_S)
+    control.configure_search(driver, enabled=True, mode="edge")
+    control.run(driver)
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_search_results(max_events=10)
+
+    assert excinfo.value.code == ErrorCode.SAFETY_POLICY_DENIED

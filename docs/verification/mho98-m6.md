@@ -1,4 +1,4 @@
-# MHO98 M6(取り込み制御と同期)/ M8(時刻とメタ情報)実機検証記録
+# MHO98 M6(取り込み制御と同期)/ M7(自動監視)/ M8(時刻とメタ情報)実機検証記録
 
 **対象:** RIGOL MHO98(ファームウェア 00.01.00、LAN SCPI :5555)。IP・シリアルは記録しない
 **手順規律:** [mho98-unlicensed.md](mho98-unlicensed.md) と同じ(1コマンド → 応答/エラーキュー確認 → 記録)
@@ -107,4 +107,36 @@
 - **`:SYSTem:MODules?` は使わない。** LAプローブ未接続の状態で LA=`1`、AFGを内蔵し実機で出力も確認済みなのに DG=`0`。プローブの有無でもAFGの有無でもない何かを示しており、判定材料にならない(V-2 の後半は「判定できない」で決着)
 - autoset の可否は、**承認後・実行前**に読む。autoset 自体は実機での実行が禁止なので、無効時に `:AUToset` を送ったときの機器の反応は観測していない
 - read-only(`-m device tests/device/test_readonly.py`): **22 passed, 1 skipped**(`test_hardware_info_answers` を含む)
+
+## 5. イベント検索(issue #56、2026-11-25)
+
+### 5.1 読み取りプローブ(初期状態)
+
+`:SEARch:STATe?` → `0` / `:MODE?` → `EDGE` / `:COUNt?` → `0` / `:EVENt?` → `0` / `:EDGE:SLOPe?` → `POS` / `:EDGE:SOURce?` → `CHAN1` / `:EDGE:THReshold?` → `0.000000` / `:PULSe:POLarity?` → `POS` / `:PULSe:QUALifier?` → `GRE` / `:PULSe:UWIDth?` → `2.000000E-6` / `:PULSe:LWIDth?` → `1.000000E-6` / `:PULSe:THReshold?` → `0.000000`。いずれも No error。
+
+### 5.2 **沈黙を1回踏んだ**(V-4 の核心)
+
+検索有効・イベント0件の状態で **`:SEARch:VALue? 0` を送るとSCPIサーバーが沈黙**した(5秒タイムアウト)。再接続(open時の空行)で `*IDN?` が応答し復旧。エラーキューには **`-200,"Command execute failed"` が1件**残っていたのでdrainした。変更していた設定(CH1スケール・時間軸・検索のしきい値と有効状態)はすべて元へ戻した。
+
+→ **範囲外の `VALue?` は沈黙を招く。** `get_search_results` は `1..COUNt?` の範囲しか読まず、件数が読み出し中に変わりうる取り込み中は読まない(`SAFETY_POLICY_DENIED`)。FakeScope も範囲外で沈黙するようにした。
+
+### 5.3 応答形式(V-4 解決)
+
+CH1 = 校正信号(1kHz、約0.3Vpp)、CH1 0.1V/div、200µs/div、しきい値0.2V:
+
+| 条件 | `:SEARch:COUNt?` | `:SEARch:VALue? n` |
+|---|---|---|
+| edge / rising | `2` | `1` → `-9.324000E-4`、`2` → `6.760000E-5`(1ms間隔) |
+| edge / either | `4` | `-8.542000E-4` / `-3.546000E-4` / `1.458000E-4` / `6.454000E-4`(0.5ms間隔) |
+| edge / rising、5ms/div | `50` | 50件を連続で読んで **1301ms(約26ms/件)** |
+| pulse / greater 100µs | `50` | `-2.430500E-2`、`-2.330500E-2` … |
+
+- `VALue? n` は**1始まりのイベント番号**で、**トリガ点基準の時刻(秒、科学表記)**を返す
+- `:SEARch:EVENt 2` の後の `:EVENt?` が `1` のままだった(移動が読み戻しに反映されない)。使わない
+- 停止(`:STOP`)後も `COUNt?` は同じ値を返す
+- 1V/div・しきい値1V(信号振幅0.4Vの外)では当然0件
+
+### 5.4 スイート実行
+
+- write(`-m device_write -k search`): **2 passed**。edge検索で2件を取得し間隔が1ms(±50µs)であることを確認、取り込み中の読み出しが `SAFETY_POLICY_DENIED` になることを確認。検索設定(両種別)・CH1スケール・時間軸・掃引モード・取り込み状態の復元漏れゼロ
 

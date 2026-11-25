@@ -269,6 +269,23 @@ dialect:
   # ADC分解能(ガイド3.3.5)。high_resolution モードでだけ効く(他モードは12bit)。
   # DHO800/900 には無い(:ACQuire:HRESolution が別綴りで在る)ため方言化
   acquire_bits: [14, 16]
+  # イベント検索(ガイド3.22。issue #56)。未宣言なら configure_search /
+  # get_search_results は送信ゼロで UNSUPPORTED_FEATURE。実機実測: 範囲外の
+  # :SEARch:VALue?(0件時の 0 など)はSCPIサーバーを沈黙させる(V-4)
+  search_modes: # 3.22.3。応答は EDGE / PULS
+    edge: EDGE
+    pulse: PULSe
+  search_edge_slopes: # 3.22.6
+    rising: POSitive
+    falling: NEGative
+    either: EITHer
+  search_pulse_polarities: # 3.22.9
+    positive: POSitive
+    negative: NEGative
+  search_pulse_when: # 3.22.10
+    greater: GREater
+    less: LESS
+    between: GLESs
   measure_areas: # ガイド3.17.19
     main: MAIN
     zoom: ZOOM # 遅延掃引を先に有効化しないと機器が拒否する(同節Remark)

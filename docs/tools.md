@@ -530,6 +530,8 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `configure_trigger` | SAFE_WRITE | 2 |
 | `run` / `stop` / `single` | SAFE_WRITE | 2 |
 | `force_trigger` | SAFE_WRITE | M6 |
+| `configure_search` | SAFE_WRITE | M7 |
+| `get_search_results` | READ_ONLY | M7 |
 | `autoset` | RESTRICTED_WRITE | 2 |
 | `recommend_setup`(未実装・スキルで代替) | READ_ONLY | 3 |
 | `configure_decode` | SAFE_WRITE | 4 |
@@ -554,7 +556,7 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `configure_acquisition` | SAFE_WRITE | M6 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は42(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2 + Phase M6: 2。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**、Phase M5(トリガ種別)は**15章**、Phase M6(取得モード)は**16章**(`force_trigger` は4章)にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
+登録Tool数は44(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2 + Phase M6: 2 + Phase M7: 2。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**、Phase M5(トリガ種別)は**15章**、Phase M6(取得モード)は**16章**(`force_trigger` は4章)、Phase M7(イベント検索)は**17章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
 
 将来(Phase 4の残り): `:PERiod` / `:VOLTage:HIGH`/`:LOW`(恒久スキップ。`frequency_hz`/`amplitude_vpp`+`offset_v`で表現可能なため)、DHOファミリの `:SOURce`(番号なし・DGモジュール)対応、Logic Analyzer。
 
@@ -1064,4 +1066,38 @@ MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標
 - プロファイル方言 `acquire_types`(必須ゲート)/ `acquire_bits`(分解能の選択肢)。未宣言の機種では送信ゼロで `UNSUPPORTED_FEATURE`
 
 読み取りは `get_acquisition_state`(1章ではなく2章の既存Tool)に `mode` / `averages` / `adc_bits` として載る。
+
+---
+
+## 17. イベント検索(Phase M7・issue #56)
+
+取り込んだ波形の中から条件に合うエッジ/パルスを機器に探させ、**各イベントの時刻を数値のリストで**受け取る(ガイド3.22)。人間なら画面をスクロールして探す作業が、AIには数値ループになる。検索条件は `edge` と `pulse` の2種のみ(シリアルバスのデータ値検索はガイドに無い。特定データを狙うのはシリアルバストリガの役割)。
+
+### `configure_search` — SAFE_WRITE / Phase M7
+
+| 引数 | 値 |
+|---|---|
+| `enabled` | 検索の有効/無効(`:SEARch:STATe`) |
+| `mode` | `edge` / `pulse`(`:SEARch:MODE`) |
+| `settings` | 種別ごとの条件(下表)。`mode` 省略時は現在の種別のサブツリーへ書く(`:SEARch:MODE?` を1本読む) |
+
+| 種別 | `settings` のキー |
+|---|---|
+| `edge` | `source`(CH1〜CH4)/ `slope`(rising/falling/either)/ `threshold_v` |
+| `pulse` | `source` / `polarity`(positive/negative)/ `when`(greater/less/between)/ `upper_width_s` / `lower_width_s` / `threshold_v` |
+
+- **送信順は モード → 条件 → 有効化**(条件が揃ってから検索を走らせる)。pulse は `when` → 上限 → 下限
+- 別種別のキーは送信前に `INVALID_PARAMETER`(`detail.allowed` に有効なキー)
+- 返却: `requested` / `applied` / `changed` / `search`(設定後の `get_search_config`)
+- 検索は取り込み済み波形に印を付けるだけで、取り込み条件にも出力にも触れない
+
+### `get_search_results` — READ_ONLY / Phase M7
+
+返却: `count`(全件数)/ `events_s`(各イベントの時刻。トリガ点基準の秒、古い順)/ `truncated`(`max_events` で打ち切ったか)/ `search`(現在の検索設定)。
+
+- `max_events`(1〜1000、既定100)件まで読む。1件ごとに `:SEARch:VALue? n` を1本送る(実測約26ms/件)
+- **取り込み中は拒否する(`SAFETY_POLICY_DENIED`)。先に `stop`。** 実機実測で、**範囲外の `:SEARch:VALue?`(0件時の `0` など)はSCPIサーバーを沈黙させる**ことが分かった。取り込み中は `COUNt?` と `VALue?` の間に件数が変わりうるため、停止中に限り、かつ `1..COUNt?` の範囲だけを読む
+- 検索が無効なら値を1件も読まずに `count: 0`
+- `:SEARch:EVENt`(イベントへの移動)は使わない。実機で書き込みが読み戻しに反映されないことがあった
+- プロファイル方言 `search_modes`(ゲート)/ `search_edge_slopes` / `search_pulse_polarities` / `search_pulse_when`。未宣言なら送信ゼロで `UNSUPPORTED_FEATURE`
 
