@@ -28,6 +28,10 @@ capabilities:
   # 実機で応答確認済み(4 / 1 / 0)。:SYSTem:MODules? は実態と合わない(LAプローブ
   # 未接続でも LA=1、AFG内蔵なのに DG=0)ため使わない
   hardware_info: true
+  # Pass/Fail(マスク)試験(ガイド3.15。issue #57)。:MASK:OUTPut:*(背面AUX出力)
+  # は対象外。実機実測: 試験が無効だと :MASK:CREate は -200、不合格が出ると
+  # 取り込みが止まる
+  mask_test: true
   measurements: [
      frequency, period, rise_time, fall_time, pulse_width_pos, pulse_width_neg, duty,
     duty_neg, time_at_vmax, time_at_vmin, vpp, vmax, vmin, vtop, vbase, vamp, vupper,

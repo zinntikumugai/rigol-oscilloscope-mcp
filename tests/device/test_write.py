@@ -2142,6 +2142,11 @@ def sweep_before(request: pytest.FixtureRequest, driver: ScopeDriver) -> Iterato
         driver.configure_trigger(sweep_mode=before["sweep_mode"])
         if before["running"]:
             driver.run()
+            # 実機実測: 停止中(マスク試験の不合格で止まった後など)に :RUN を送ると、
+            # 直後の :TRIGger:STATus? はまだ STOP のことがある
+            deadline = time.monotonic() + 1.0
+            while not get_acquisition_dict(driver)["running"] and time.monotonic() < deadline:
+                time.sleep(0.1)
         else:
             driver.stop()
         after = {
@@ -2334,3 +2339,81 @@ def test_search_results_refuse_while_running(
         driver.get_search_results(max_events=10)
 
     assert excinfo.value.code == ErrorCode.SAFETY_POLICY_DENIED
+
+
+# --------------------------------------------------------------------------
+# Pass/Fail(マスク)試験(issue #57)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mask_before(
+    request: pytest.FixtureRequest, driver: ScopeDriver, sweep_before: dict
+) -> Iterator[dict]:
+    """マスク試験の設定を控え、teardownで必ず止めて戻す(取り込み状態は sweep_before)。"""
+    before = driver.get_mask_result()
+    tag = request.node.name
+    _report(f"[before:{tag}] mask={before}")
+    try:
+        yield before
+    finally:
+        failures: list[Exception] = []
+        for step in (
+            lambda: driver.configure_mask(running=False),
+            lambda: driver.configure_mask(
+                source=before["source"], x_margin=before["x_margin"], y_margin=before["y_margin"]
+            ),
+            lambda: driver.configure_mask(enabled=before["enabled"]),
+        ):
+            try:
+                step()
+            except Exception as exc:  # 復元は最後まで試みる
+                failures.append(exc)
+        after = driver.get_mask_result()
+        _report(f"[restore:{tag}] mask 復元後={after}")
+        assert not failures, f"マスク試験の復元に失敗: {failures!r}"
+        for key in ("enabled", "running", "source", "x_margin", "y_margin"):
+            assert after[key] == before[key], key
+
+
+def test_mask_test_counts_frames(
+    control: ControlService, driver: ScopeDriver, mask_before: dict
+) -> None:
+    """マスクを作って走らせ、フレーム数が数えられることを確かめる。
+
+    合否の内訳は信号次第なので問わない(不合格が出ると取り込みが止まる。実測)。
+    """
+    result = control.configure_mask(
+        driver,
+        enabled=True,
+        source="CH1",
+        x_margin=0.5,
+        y_margin=0.5,
+        create=True,
+        reset=True,
+        running=True,
+    )
+    _report(f"[mask] applied={result['applied']}")
+    assert result["applied"]["running"] is True
+    time.sleep(2.0)
+
+    counts = driver.get_mask_result()
+    running = get_acquisition_dict(driver)["running"]
+    _report(f"[mask] result={counts} acquisition_running={running}")
+
+    assert counts["total"] >= 1
+    assert counts["total"] == counts["passed"] + counts["failed"]
+    assert driver.session.drain_error_queue() == []
+
+
+def test_mask_create_while_disabled_is_rejected_by_the_device(
+    control: ControlService, driver: ScopeDriver, mask_before: dict
+) -> None:
+    """実機実測の再確認: 試験が無効だと :MASK:CREate は -200(沈黙しない)。"""
+    control.configure_mask(driver, enabled=False)
+
+    with pytest.raises(ScopeError) as excinfo:
+        control.configure_mask(driver, create=True)
+
+    assert excinfo.value.code == ErrorCode.SCPI_ERROR
+    assert "-200" in excinfo.value.detail["scpi_error"]

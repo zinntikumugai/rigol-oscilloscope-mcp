@@ -40,6 +40,8 @@ Restore `normal` when done: averaging hides one-off events.
 
 Finding rare events in a capture: `configure_search(enabled=true, mode="pulse", settings={"source": "CH1", "when": "less", "upper_width_s": 1e-7, "threshold_v": <Vpp/2>})` marks glitches narrower than 100 ns; `stop`, then `get_search_results` returns the count and each event's time (seconds from the trigger point). It refuses while running — always `stop` first.
 
+Long unattended monitoring: with a good waveform on screen, `configure_mask(enabled=true, source="CH1", x_margin=0.5, y_margin=0.5, create=true, reset=true, running=true)`, then poll `get_mask_result` (total / passed / failed). A failed frame stops both the test and the acquisition on this scope (`acquisition_running` turns false) — that frozen frame is the evidence: `capture_screenshot` / `capture_waveform` it before calling `run` again.
+
 ## UART workflow
 
 1. `get_state` (use `sections` to read only what you need — a full read is ~42 SCPI queries)

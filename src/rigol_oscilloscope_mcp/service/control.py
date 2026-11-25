@@ -327,6 +327,45 @@ class ControlService:
             "search": after,
         }
 
+    def configure_mask(
+        self,
+        driver: ScopeDriver,
+        *,
+        enabled: bool | None = None,
+        source: str | None = None,
+        x_margin: float | None = None,
+        y_margin: float | None = None,
+        create: bool | None = None,
+        reset: bool | None = None,
+        running: bool | None = None,
+    ) -> dict:
+        """Pass/Fail(マスク)試験の設定と操作(SAFE_WRITE。issue #57)。"""
+        values = {
+            "enabled": enabled,
+            "source": source,
+            "x_margin": x_margin,
+            "y_margin": y_margin,
+            "create": create,
+            "reset": reset,
+            "running": running,
+        }
+        requested = _specified(values, actions=("create", "reset"))
+        if not requested:
+            raise _invalid(
+                "No item to change was specified (specify at least one of enabled / "
+                "source / x_margin / y_margin / create / reset / running)",
+                {},
+            )
+
+        with self._audited("configure_mask", requested) as record:
+            before = driver.get_mask_result()
+            record.before(before)
+            applied = driver.configure_mask(**values)
+            after = driver.get_mask_result()
+            record.after(after)
+
+        return {"requested": requested, "applied": applied, "mask": after}
+
     def configure_trigger(
         self,
         driver: ScopeDriver,

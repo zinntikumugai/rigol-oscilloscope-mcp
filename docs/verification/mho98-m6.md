@@ -140,3 +140,31 @@ CH1 = 校正信号(1kHz、約0.3Vpp)、CH1 0.1V/div、200µs/div、しきい値0
 
 - write(`-m device_write -k search`): **2 passed**。edge検索で2件を取得し間隔が1ms(±50µs)であることを確認、取り込み中の読み出しが `SAFETY_POLICY_DENIED` になることを確認。検索設定(両種別)・CH1スケール・時間軸・掃引モード・取り込み状態の復元漏れゼロ
 
+## 6. Pass/Fail(マスク)試験(issue #57、2026-11-25)
+
+### 6.1 読み取りプローブ(初期状態)
+
+`:MASK:ENABle?` → `0` / `:SOURce?` → `CHAN1` / `:OPERate?` → `STOP` / **`:X?` → `2.400000E0`** / **`:Y?` → `4.800000E0`** / `:FAILed?` `:PASSed?` `:TOTal?` → `0` / `:OUTPut:ENABle?` → `0`。いずれも No error。
+
+### 6.2 書き込みプローブ(最後に元の値へ戻した)
+
+| コマンド | エラーキュー | 読み戻し | 所見 |
+|---|---|---|---|
+| `:MASK:X 0.28` | No error | `2.800000E-1` | |
+| `:MASK:X 2.8` | No error | `2.800000E0` | ガイドの上限 2 div を超えても受理 |
+| `:MASK:X 0.005` | No error | `1.000000E-1` | 最小付近は丸められる |
+| `:MASK:Y 0.36` | No error | `4.000000E-1` | 同上 |
+| `:MASK:CREate`(試験 無効) | **`-200`** | — | 有効化が前提。沈黙はしない |
+| `:MASK:ENABle 1` → `:X 0.5` / `:Y 0.5` → `:CREate` → `:OPERate RUN` | No error | | |
+| 1秒ごとに `TOTal?` / `PASSed?` / `FAILed?` / `:TRIGger:STATus?` | | `4,3,1,STOP` のまま | **不合格が出た時点で取り込みが止まった** |
+| `:MASK:OPERate STOP` | No error | カウンタは `4,3,1` のまま | 停止ではカウンタは消えない |
+| `:MASK:RESet` | No error | `0,0,0` | |
+
+- 余白の値: **ガイドの既定値(0.24 / 0.48 div)の10倍が初期値として読める**一方、0.28 を書けば 0.28 が読み戻る。単位がガイドの記述(div)どおりかは判断できなかった。ホスト側で値域を決め打ちせず、read-back を返す
+- 不合格による停止: マスク試験そのもの(`:MASK:OPERate?` → `STOP`)と取り込み(`:TRIGger:STATus?` → `STOP`)の両方が止まる。本体の Stop on Fail 相当と思われるが、ガイドに対応するSCPIは無い
+- 停止中に `:RUN` を送ると、直後の `:TRIGger:STATus?` はまだ `STOP` のことがある(device_write の復元fixtureは最大1秒待つ)
+
+### 6.3 スイート実行
+
+- write(`-m device_write -k "mask or force_trigger or search"`): **5 passed**。マスク試験は CH1 の校正信号で `total=1, failed=1`(不合格で停止)を観測し、`total == passed + failed` を確認。無効時の `:MASK:CREate` が `-200` になることを再確認。マスク設定・掃引モード・取り込み状態の復元漏れゼロ
+

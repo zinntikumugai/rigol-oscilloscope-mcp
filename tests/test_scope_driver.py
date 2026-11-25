@@ -4658,3 +4658,107 @@ def test_fake_search_value_out_of_range_is_silent(scope: FakeScope) -> None:
 
     with pytest.raises(SilentTimeout):
         scope.handle(":SEARch:VALue? 0")
+
+
+# --------------------------------------------------------------------------
+# Pass/Fail(マスク)試験(issue #57)
+# --------------------------------------------------------------------------
+
+
+def mask_writes(scope: FakeScope) -> list[str]:
+    return [c for c in scope.command_log if "?" not in c and c.startswith(":MASK")]
+
+
+def test_configure_mask_sends_items_in_table_order(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """有効化 → ソース → 余白 → マスク生成 → カウンタのリセット → 試験開始。
+
+    `:MASK:CREate` は試験が有効でないと -200(実機実測)。余白はマスクを作る前に
+    決める。リセットは開始の直前(数え直してから走らせる)。
+    """
+    applied = driver.configure_mask(
+        running=True,
+        reset=True,
+        create=True,
+        y_margin=0.5,
+        x_margin=0.5,
+        source="CH2",
+        enabled=True,
+    )
+
+    assert mask_writes(scope) == [
+        ":MASK:ENABle ON",
+        ":MASK:SOURce CHANnel2",
+        ":MASK:X 0.5",
+        ":MASK:Y 0.5",
+        ":MASK:CREate",
+        ":MASK:RESet",
+        ":MASK:OPERate RUN",
+    ]
+    assert applied == {
+        "enabled": True,
+        "source": "CH2",
+        "x_margin": 0.5,
+        "y_margin": 0.5,
+        "create": True,
+        "reset": True,
+        "running": True,
+    }
+
+
+def test_configure_mask_create_while_disabled_is_a_device_error(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """実機実測: 試験が無効だと :MASK:CREate は -200(沈黙はしない)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_mask(create=True)
+
+    assert excinfo.value.code == ErrorCode.SCPI_ERROR
+
+
+def test_configure_mask_without_items_sends_nothing(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    assert driver.configure_mask(create=False, reset=False) == {}
+    assert scope.command_log == []
+
+
+def test_configure_mask_unsupported_on_generic(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.configure_mask(enabled=True)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_get_mask_result_reads_counts_and_settings(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_mask(enabled=True, create=True, running=True)
+    scope.mask_counts = (5, 3, 2)
+
+    result = driver.get_mask_result()
+
+    assert result == {
+        "enabled": True,
+        "running": True,
+        "source": "CH1",
+        "x_margin": 2.4,
+        "y_margin": 4.8,
+        "total": 5,
+        "passed": 3,
+        "failed": 2,
+    }
+
+
+def test_get_mask_result_unsupported_on_generic(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.get_mask_result()
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
