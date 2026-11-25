@@ -532,6 +532,8 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `force_trigger` | SAFE_WRITE | M6 |
 | `configure_search` | SAFE_WRITE | M7 |
 | `get_search_results` | READ_ONLY | M7 |
+| `configure_mask` | SAFE_WRITE | M7 |
+| `get_mask_result` | READ_ONLY | M7 |
 | `autoset` | RESTRICTED_WRITE | 2 |
 | `recommend_setup`(未実装・スキルで代替) | READ_ONLY | 3 |
 | `configure_decode` | SAFE_WRITE | 4 |
@@ -556,7 +558,7 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `configure_acquisition` | SAFE_WRITE | M6 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は44(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2 + Phase M6: 2 + Phase M7: 2。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**、Phase M5(トリガ種別)は**15章**、Phase M6(取得モード)は**16章**(`force_trigger` は4章)、Phase M7(イベント検索)は**17章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
+登録Tool数は46(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2 + Phase M6: 2 + Phase M7: 4。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**、Phase M5(トリガ種別)は**15章**、Phase M6(取得モード)は**16章**(`force_trigger` は4章)、Phase M7(イベント検索)は**17章**、Pass/Fail試験は**18章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
 
 将来(Phase 4の残り): `:PERiod` / `:VOLTage:HIGH`/`:LOW`(恒久スキップ。`frequency_hz`/`amplitude_vpp`+`offset_v`で表現可能なため)、DHOファミリの `:SOURce`(番号なし・DGモジュール)対応、Logic Analyzer。
 
@@ -1100,4 +1102,34 @@ MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標
 - 検索が無効なら値を1件も読まずに `count: 0`
 - `:SEARch:EVENt`(イベントへの移動)は使わない。実機で書き込みが読み戻しに反映されないことがあった
 - プロファイル方言 `search_modes`(ゲート)/ `search_edge_slopes` / `search_pulse_polarities` / `search_pulse_when`。未宣言なら送信ゼロで `UNSUPPORTED_FEATURE`
+
+---
+
+## 18. Pass/Fail(マスク)試験(Phase M7・issue #57)
+
+現在の波形から許容幅つきのマスクを作り、以後の各フレームがマスクに収まるかを機器に数えさせる(ガイド3.15)。合否件数が**整数で**返るので、ポーリングだけで長時間の無人監視ができる。背面 [AUX OUT] への出力(`:MASK:OUTPut:*`)は対象外。
+
+### `configure_mask` — SAFE_WRITE / Phase M7
+
+| 引数 | 値 | SCPI |
+|---|---|---|
+| `enabled` | 試験機能の有効/無効 | `:MASK:ENABle` |
+| `source` | CH1〜CH4 | `:MASK:SOURce` |
+| `x_margin` / `y_margin` | マスクの水平/垂直の余白 | `:MASK:X` / `:Y` |
+| `create` | true でその時点の波形からマスクを作る(一発動作) | `:MASK:CREate` |
+| `reset` | true で合否カウンタを0に戻す(一発動作) | `:MASK:RESet` |
+| `running` | 試験の開始/停止 | `:MASK:OPERate RUN\|STOP` |
+
+- **送信順は上の表の順に固定**(余白はマスク生成より前、リセットは開始の直前)
+- 返却: `requested` / `applied` / `mask`(設定後の `get_mask_result`)
+- 実機実測:
+  - 試験が無効だと `:MASK:CREate` は `-200`(沈黙はしない。`SCPI_ERROR` として返る)
+  - **不合格のフレームが出ると、マスク試験と取り込みの両方が止まる**(本体の Stop on Fail 相当。ガイドにSCPIは無い)。続けるには `run` の後に `configure_mask(running=true)`(`run` だけでは取り込みは再開するがマスク試験は止まったまま)
+  - 余白の単位はガイド上 div だが、**実機の既定値は 2.4 / 4.8 と読める**(ガイドの既定は 0.24 / 0.48 div)。2.8 も受理し、最小付近は丸められる(X 0.005 → 0.1、Y 0.36 → 0.4)。ホスト側では値域を決め打ちせず、read-back(`applied`)を返す
+  - `:MASK:OPERate STOP` してもカウンタは残る。`:MASK:CREate` と `:MASK:RESet` で0に戻る
+- プロファイルの capability `mask_test`。未宣言なら送信ゼロで `UNSUPPORTED_FEATURE`
+
+### `get_mask_result` — READ_ONLY / Phase M7
+
+返却: `enabled` / `running` / `source` / `x_margin` / `y_margin` / `total` / `passed` / `failed` / `acquisition_running`(不合格で取り込みが止まったかどうかを見分けるため)。
 

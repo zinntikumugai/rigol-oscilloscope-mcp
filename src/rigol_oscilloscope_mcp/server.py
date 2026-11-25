@@ -595,6 +595,49 @@ def create_server(
         return {**driver.get_search_results(max_events), "search": search}
 
     @_register
+    def configure_mask(
+        enabled: bool | None = None,
+        source: str | None = None,
+        x_margin: float | None = None,
+        y_margin: float | None = None,
+        create: bool | None = None,
+        reset: bool | None = None,
+        running: bool | None = None,
+    ) -> dict:
+        """Configure and run the pass/fail (mask) test: the scope compares every
+        captured frame with a mask built from the current waveform and counts
+        passed / failed frames. Omitted items are left unchanged.
+
+        Typical use: enabled=true, source="CH1", x_margin / y_margin (tolerance
+        around the waveform; the device snaps them, trust applied),
+        create=true (builds the mask from the waveform on screen now; needs
+        enabled), reset=true (zero the counters), running=true (start counting).
+        Items are sent in that order. Then poll get_mask_result.
+        A failed frame stops the acquisition on this device (observed), so
+        get_mask_result reports acquisition_running. To continue, call run and then
+        configure_mask(running=true): run alone does not restart the mask counting.
+        """
+        return control.configure_mask(
+            manager.require_scope(),
+            enabled=enabled,
+            source=source,
+            x_margin=x_margin,
+            y_margin=y_margin,
+            create=create,
+            reset=reset,
+            running=running,
+        )
+
+    @_register
+    def get_mask_result() -> dict:
+        """Return the pass/fail (mask) test settings and counters: total, passed and
+        failed frames, plus acquisition_running (a failure stops the acquisition)."""
+        driver = manager.require_scope()
+        result = driver.get_mask_result()
+        result["acquisition_running"] = service.get_acquisition_dict(driver)["running"]
+        return result
+
+    @_register
     def configure_trigger(
         type: str | None = None,
         source: str | None = None,

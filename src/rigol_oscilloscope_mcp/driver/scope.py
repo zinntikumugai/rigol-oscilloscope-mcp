@@ -176,6 +176,15 @@ _SEARCH_SUBTREES: dict[str, tuple[str, tuple[tuple[str, str, object], ...]]] = {
 #: `get_search_results` で1回に読むイベント数の上限(1件あたり実測約26ms)
 SEARCH_MAX_EVENTS = 1000
 
+#: Pass/Fail(マスク)試験の設定項目(ガイド3.15)。**この並びがそのまま送信順**。
+#: 余白(X/Y)は `:MASK:CREate` より前に決める(マスクはその時点の余白で作られる)
+_MASK_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("enabled", ":ENABle", "bool"),
+    ("source", ":SOURce", "achannel"),
+    ("x_margin", ":X", "number"),
+    ("y_margin", ":Y", "number"),
+)
+
 # 機器が「測定不能」を示すために返す番兵値(±9.9E37 前後)
 INVALID_MEASUREMENT = 9.0e37
 
@@ -1719,6 +1728,71 @@ class ScopeDriver:
             for index in range(1, wanted + 1)
         ]
         return {"count": count, "events_s": events, "truncated": count > wanted}
+
+    # -- Pass/Fail(マスク)試験(issue #57)-----------------------------
+
+    def configure_mask(
+        self,
+        *,
+        enabled: bool | None = None,
+        source: str | None = None,
+        x_margin: float | None = None,
+        y_margin: float | None = None,
+        create: bool | None = None,
+        reset: bool | None = None,
+        running: bool | None = None,
+    ) -> dict:
+        """マスク試験を設定・操作する。None / False の一発動作は送らない。
+
+        送信順: 有効化 → ソース → 余白 → マスク生成 → カウンタのリセット →
+        試験の開始/停止。**実機実測**: 試験が無効だと `:MASK:CREate` は `-200`。
+        余白の単位はガイド上 div だが、実機の既定値は 2.4 / 4.8 と読め(ガイドの
+        既定は 0.24 / 0.48)、最小付近は丸められる。値域は決め打ちせず read-back
+        を返す。
+        """
+        self._require("mask_test", "the pass/fail (mask) test")
+        for key, value in (("create", create), ("reset", reset), ("running", running)):
+            if value is not None and not isinstance(value, bool):
+                raise _invalid(f"{key} is not a boolean: {value!r}", {"key": key, "value": value})
+        plan = self._command_plan(
+            ":MASK",
+            0,
+            _MASK_ITEMS,
+            {"enabled": enabled, "source": source, "x_margin": x_margin, "y_margin": y_margin},
+        )
+        applied: dict[str, object] = {}
+        for key, set_cmd, query, from_scpi in plan:
+            applied[key] = from_scpi(self.session.set_and_verify(set_cmd, query))
+        if create:
+            self.session.write_checked(":MASK:CREate")
+            applied["create"] = True
+        if reset:
+            self.session.write_checked(":MASK:RESet")
+            applied["reset"] = True
+        if running is not None:
+            readback = self.session.set_and_verify(
+                f":MASK:OPERate {'RUN' if running else 'STOP'}", ":MASK:OPERate?"
+            )
+            applied["running"] = readback.strip().upper() == "RUN"
+        return applied
+
+    def get_mask_result(self) -> dict:
+        """マスク試験の設定と、合格/不合格/総フレーム数。"""
+        self._require("mask_test", "the pass/fail (mask) test")
+        query = self.session.query
+        result: dict[str, object] = {}
+        for key, path, kind in _MASK_ITEMS:
+            _, from_scpi = self._converter(kind, 0)
+            result[key] = from_scpi(query(f":MASK{path}?"))
+        result["running"] = query(":MASK:OPERate?").strip().upper() == "RUN"
+        result = {"enabled": result.pop("enabled"), "running": result.pop("running"), **result}
+        for key, command in (
+            ("total", ":MASK:TOTal?"),
+            ("passed", ":MASK:PASSed?"),
+            ("failed", ":MASK:FAILed?"),
+        ):
+            result[key] = int(parse_nr3(query(command)))
+        return result
 
     # -- トリガ -----------------------------------------------------------
 

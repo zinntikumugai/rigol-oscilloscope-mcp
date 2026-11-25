@@ -780,6 +780,14 @@ _SEARCH_PULSE_PROPS: tuple[tuple[str, str, object, object], ...] = (
     ("lower", "LWIDth", "nr3", 1.0e-6),
     ("threshold", "THReshold", "nr3", 0.0),
 )
+#: Pass/Fail(マスク)試験(ガイド3.15)。既定値は実機の初期応答(X/Y は 2.4 / 4.8)
+_MASK_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("enabled", "ENABle", "bool", False),
+    ("source", "SOURce", tuple(f"CHANnel{n}" for n in range(1, 5)), "CHAN1"),
+    ("x", "X", "nr3", 2.4),
+    ("y", "Y", "nr3", 4.8),
+    ("operate", "OPERate", ("RUN", "STOP"), "STOP"),
+)
 _HISTOGRAM_TYPES = ("HORizontal", "VERTical")
 #: 測定の前提設定(ガイド3.17)。既定値はガイドの Default 欄に従う。
 _MEASURE_SOURCES = tuple(f"CHANnel{n}" for n in range(1, 5)) + tuple(
@@ -988,6 +996,9 @@ class FakeScope:
         self.search: dict = {key: default for key, _, _, default in _SEARCH_PROPS}
         self.search_edge: dict = {k: d for k, _, _, d in _SEARCH_EDGE_PROPS}
         self.search_pulse: dict = {k: d for k, _, _, d in _SEARCH_PULSE_PROPS}
+        self.mask: dict = {key: default for key, _, _, default in _MASK_PROPS}
+        #: マスク試験の (総数, 合格, 不合格)。`:MASK:CREate` / `:RESet` で0に戻る
+        self.mask_counts: tuple[int, int, int] = (0, 0, 0)
         #: 検索で見つかるイベントの時刻(秒)。検索が有効なときだけ数えられる
         self.search_events: list[float] = []
         self.measure_setup: dict = {
@@ -1271,6 +1282,7 @@ class FakeScope:
         entries += self._measure_setup_entries()
         entries += self._prop_entries(rf":?{_mn('ACQuire')}", _ACQUIRE_PROPS, self.acquire)
         entries += self._search_entries()
+        entries += self._mask_entries()
         entries += self._histogram_entries()
         entries += self._reference_entries()
         return tuple(
@@ -1637,6 +1649,30 @@ class FakeScope:
             (rf"{search}:{_mn('VALue')}\?\s+(\d+)", lambda m: self._search_value(int(m.group(1)))),
         ]
         return entries
+
+    def _mask_entries(self) -> list[tuple[str, Callable]]:
+        """マスク試験(ガイド3.15)。`:MASK:OUTPut:*` は未実装 = 沈黙。"""
+        mask = rf":?{_mn('MASK')}"
+        entries = self._prop_entries(mask, _MASK_PROPS, self.mask)
+        for index, name in enumerate(("TOTal", "PASSed", "FAILed")):
+            entries.append(
+                (rf"{mask}:{_mn(name)}\?", lambda m, i=index: str(self.mask_counts[i]).encode("ascii"))
+            )
+        entries += [
+            (rf"{mask}:{_mn('CREate')}", lambda m: self._mask_create()),
+            (rf"{mask}:{_mn('RESet')}", lambda m: self._mask_reset()),
+        ]
+        return entries
+
+    def _mask_create(self) -> None:
+        """**実機実測**: 試験が無効だと -200(沈黙しない)。カウンタも0に戻る。"""
+        if not self.mask["enabled"]:
+            self.error_queue.append(EXECUTE_ERROR)
+            return None
+        return self._mask_reset()
+
+    def _mask_reset(self) -> None:
+        self.mask_counts = (0, 0, 0)
 
     def _search_count(self) -> int:
         return len(self.search_events) if self.search["enabled"] else 0
