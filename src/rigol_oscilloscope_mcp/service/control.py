@@ -942,7 +942,14 @@ class ControlService:
 
     def force_trigger(self, driver: ScopeDriver, wait_s: float | None = None) -> dict:
         """強制トリガ(issue #53)。トリガ待ちのシングルを終わらせる用途。"""
-        return self._acquisition(driver, "force_trigger", driver.force_trigger, wait_s)
+        return self._acquisition(
+            driver,
+            "force_trigger",
+            driver.force_trigger,
+            wait_s,
+            # 監査用の事前クエリより前にゲートする(未宣言機種は送信ゼロ)
+            precheck=driver.force_trigger_command,
+        )
 
     def clear_measurements(self, driver: ScopeDriver) -> dict:
         """Resultビューの全測定項目を消す(SAFE_WRITE。issue #16)。
@@ -961,10 +968,13 @@ class ControlService:
         tool: str,
         action: Callable[[], None],
         wait_s: float | None = None,
+        precheck: Callable[[], object] | None = None,
     ) -> dict:
         _validate_wait(wait_s)
         requested = {} if wait_s is None else {"wait_s": wait_s}
         with self._audited(tool, requested) as record:
+            if precheck is not None:
+                precheck()
             # before は監査記録専用。無効時は実機への1クエリ(≒30ms)を省く
             if self._audit.enabled:
                 record.before({"trigger_status": driver.get_trigger_status()})
@@ -972,8 +982,12 @@ class ControlService:
             status = driver.get_trigger_status()
             if wait_s is not None:
                 deadline = time.monotonic() + wait_s
-                while status != STOPPED_TRIGGER_STATUS and time.monotonic() < deadline:
-                    time.sleep(_WAIT_POLL_S)
+                while status != STOPPED_TRIGGER_STATUS:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    # 残り時間を超えて眠らない(短い wait_s を間隔で超過しない)
+                    time.sleep(min(_WAIT_POLL_S, remaining))
                     status = driver.get_trigger_status()
             record.after({"trigger_status": status})
 

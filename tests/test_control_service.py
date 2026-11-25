@@ -826,6 +826,33 @@ def test_single_wait_returns_as_soon_as_stopped(
     assert scope.command_log == [":TRIGger:STATus?", ":TRIGger:STATus?"]
 
 
+def test_force_trigger_unsupported_sends_nothing_even_with_audit(
+    service: ControlService, scope: FakeScope, audit_path: Path
+) -> None:
+    """未宣言の機種では監査用の事前クエリも含め1コマンドも送らない。拒否は記録する。"""
+    generic = make_driver(scope, "rigol-generic")
+
+    with pytest.raises(ScopeError) as excinfo:
+        service.force_trigger(generic, wait_s=1.0)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+    assert operations(audit_path)[0]["tool"] == "force_trigger"
+
+
+def test_short_wait_is_not_overshot_by_the_poll_interval(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    """ポーリング間隔(0.1秒)より短い wait_s でも、その時間を超えて待たない。"""
+    import time
+
+    started = time.monotonic()
+    result = service.single(driver, wait_s=0.01)
+
+    assert time.monotonic() - started < 0.08
+    assert result["completed"] is False
+
+
 @pytest.mark.parametrize("wait_s", [0, -1, 61, "1", True])
 def test_wait_s_is_validated_before_sending(
     service: ControlService, driver: ScopeDriver, scope: FakeScope, wait_s: object
