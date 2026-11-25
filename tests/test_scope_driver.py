@@ -4220,3 +4220,128 @@ def test_get_measurement_statistics_rejects_channel_b_without_dual_items(
 
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
     assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# 取得モード(issue #52 / M6)
+# --------------------------------------------------------------------------
+
+
+def test_configure_acquisition_sends_mode_before_counts(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """送信順は表の並び(TYPE → AVERages → BITS)に固定する。
+
+    `:BITS` は high_resolution モードでしか受理されない(実機実測)ので、
+    モードを先に送る順序がそのまま正しさの条件になる。
+    """
+    driver.configure_acquisition(adc_bits=16, averages=64, mode="high_resolution")
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":ACQuire")]
+    assert writes == [
+        ":ACQuire:TYPE HRESolution",
+        ":ACQuire:AVERages 64",
+        ":ACQuire:BITS 16",
+    ]
+
+
+def test_configure_acquisition_reads_back_each_item(driver: ScopeDriver) -> None:
+    applied = driver.configure_acquisition(mode="high_resolution", averages=128, adc_bits=16)
+
+    assert applied == {"mode": "high_resolution", "averages": 128, "adc_bits": 16}
+
+
+@pytest.mark.parametrize("averages", [1, 3, 100, 131072])
+def test_configure_acquisition_rejects_invalid_averages(
+    driver: ScopeDriver, scope: FakeScope, averages: int
+) -> None:
+    """**実機実測**: 2のべき乗以外は -200 で拒否される(ガイド3.3.1 の「切り下げ」
+    は前面パネルの話)。送信前に弾き、機器のエラーキューを汚さない。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_acquisition(averages=averages)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_acquisition_adc_bits_needs_high_resolution(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """**実機実測**: `:BITS` は high_resolution 以外で -200。現在モードを1回だけ
+    読んで判定し、書き込みは1件も送らない。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_acquisition(adc_bits=16)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert "high_resolution" in excinfo.value.message
+    assert scope.command_log == [":ACQuire:TYPE?"]
+
+
+def test_configure_acquisition_adc_bits_alone_in_high_resolution(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_acquisition(mode="high_resolution")
+    scope.command_log.clear()
+
+    assert driver.configure_acquisition(adc_bits=16) == {"adc_bits": 16}
+
+
+def test_configure_acquisition_adc_bits_rejected_when_mode_leaves_high_resolution(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """同じ呼び出しで high_resolution 以外へ切り替えるなら現在モードに関わらず拒否。"""
+    driver.configure_acquisition(mode="high_resolution")
+    scope.command_log.clear()
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_acquisition(mode="normal", adc_bits=14)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_acquisition_rejects_undeclared_adc_bits(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_acquisition(mode="high_resolution", adc_bits=12)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_acquisition_rejects_unknown_mode(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_acquisition(mode="envelope")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_configure_acquisition_unsupported_on_generic(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """方言未宣言の機種では1コマンドも送らない(AGENTS.md ルール2)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.configure_acquisition(mode="normal")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_get_acquisition_config_reads_all_items(driver: ScopeDriver) -> None:
+    assert driver.get_acquisition_config() == {
+        "mode": "normal",
+        "averages": 2,
+        "adc_bits": 14,
+    }
+
+
+def test_get_acquisition_config_is_empty_on_generic(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """読み取りもゲートする(未宣言ニモニックのクエリ1発で機器が沈黙する)。"""
+    assert generic_driver.get_acquisition_config() == {}
+    assert scope.command_log == []

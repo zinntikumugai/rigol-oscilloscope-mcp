@@ -33,9 +33,14 @@ Scaling rules (the instrument snaps values itself — trust the `applied` field 
 - `scale_s_per_div = periods_to_show / (frequency * 10)` (10 horizontal divisions; show ~4 periods of a periodic signal)
 - trigger `level_v = Vpp / 2` for logic-type signals, `0` for AC-coupled ones
 
+Acquisition mode (`configure_acquisition`, read back with `get_acquisition_state`): leave `normal` unless a reason applies —
+`average` (with `averages` = a power of 2, e.g. 16) to pull a small repetitive signal out of random noise (power ripple),
+`peak` to catch narrow glitches at slow timebases, `high_resolution` to smooth noise in a single-shot capture.
+Restore `normal` when done: averaging hides one-off events.
+
 ## UART workflow
 
-1. `get_state` (use `sections` to read only what you need — a full read is ~39 SCPI queries)
+1. `get_state` (use `sections` to read only what you need — a full read is ~42 SCPI queries)
 2. Decide settings from the table, substituting the actual baud rate and logic level
 3. `configure_channel` → `configure_timebase` → `configure_trigger`
 4. `single`, wait for the trigger, then `measure` (frequency, vpp) and `capture_screenshot`

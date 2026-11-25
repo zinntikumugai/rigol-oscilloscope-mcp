@@ -23,6 +23,7 @@ EXPECTED = {
     "measure": "READ_ONLY",
     "clear_measurements": "SAFE_WRITE",
     "configure_measurement": "SAFE_WRITE",
+    "configure_acquisition": "SAFE_WRITE",
     "get_measurement_statistics": "READ_ONLY",
     "capture_waveform": "READ_ONLY",
     "analyze_waveform": "READ_ONLY",

@@ -3,7 +3,7 @@
 server層がそのままToolレスポンスにできるよう、返却は**JSONプリミティブのみ**の
 dict に揃える(dataclass や None 以外の非JSON値を混ぜない)。
 
-全取得は約39クエリ・実測約1.3秒かかるため、`sections` による絞り込みを提供し、
+全取得は約42クエリ・実測約1.4秒かかるため、`sections` による絞り込みを提供し、
 **指定されていないセクションのクエリは1件も送らない**ことを保証する。
 """
 
@@ -37,9 +37,17 @@ def get_trigger_dict(driver: ScopeDriver) -> dict:
 
 
 def get_acquisition_dict(driver: ScopeDriver) -> dict:
-    """収集状態。`running` はトリガ状態の生値から導く(専用クエリを増やさない)。"""
+    """収集状態。`running` はトリガ状態の生値から導く(専用クエリを増やさない)。
+
+    取得モード(mode / averages / adc_bits)はプロファイルが宣言している機種だけ
+    載せる(issue #52)。未宣言の機種では設定クエリを1件も送らない。
+    """
     status = driver.get_trigger_status()
-    return {"trigger_status": status, "running": status != STOPPED_STATUS}
+    return {
+        "trigger_status": status,
+        "running": status != STOPPED_STATUS,
+        **driver.get_acquisition_config(),
+    }
 
 
 def _channels_dict(driver: ScopeDriver) -> dict:

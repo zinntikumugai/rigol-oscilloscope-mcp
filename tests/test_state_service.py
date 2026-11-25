@@ -23,8 +23,8 @@ from rigol_oscilloscope_mcp.service.state import (
 )
 from rigol_oscilloscope_mcp.testing import FakeScope, FakeTransport
 
-# get_state 全取得のクエリ数上限(ch 7×4 + timebase 4 + trigger 6 + acquisition 1 = 39)
-MAX_FULL_QUERIES = 40
+# get_state 全取得のクエリ数上限(ch 7×4 + timebase 4 + trigger 6 + acquisition 4 = 42)
+MAX_FULL_QUERIES = 43
 
 
 def make_driver(scope: FakeScope, profile_name: str = "mho98") -> ScopeDriver:
@@ -107,7 +107,11 @@ def test_get_state_trigger_values_match_fake_defaults(driver: ScopeDriver) -> No
 def test_get_state_acquisition_running(driver: ScopeDriver) -> None:
     acquisition = get_state(driver)["acquisition"]
 
-    assert acquisition == {"trigger_status": "TD", "running": True}
+    assert acquisition == {
+        "trigger_status": "TD",
+        "running": True,
+        "mode": "normal", "averages": 2, "adc_bits": 14,
+    }
 
 
 def test_get_state_acquisition_stopped(driver: ScopeDriver, scope: FakeScope) -> None:
@@ -115,7 +119,11 @@ def test_get_state_acquisition_stopped(driver: ScopeDriver, scope: FakeScope) ->
 
     acquisition = get_state(driver)["acquisition"]
 
-    assert acquisition == {"trigger_status": "STOP", "running": False}
+    assert acquisition == {
+        "trigger_status": "STOP",
+        "running": False,
+        "mode": "normal", "averages": 2, "adc_bits": 14,
+    }
 
 
 def test_get_state_is_json_serializable(driver: ScopeDriver) -> None:
@@ -249,14 +257,22 @@ def test_get_trigger_dict(driver: ScopeDriver) -> None:
 
 
 def test_get_acquisition_dict(driver: ScopeDriver) -> None:
-    assert get_acquisition_dict(driver) == {"trigger_status": "TD", "running": True}
+    assert get_acquisition_dict(driver) == {
+        "trigger_status": "TD",
+        "running": True,
+        "mode": "normal", "averages": 2, "adc_bits": 14,
+    }
 
 
 def test_get_acquisition_dict_single_is_running(driver: ScopeDriver) -> None:
     driver.single()
 
     # WAIT(トリガ待ち)は停止ではない
-    assert get_acquisition_dict(driver) == {"trigger_status": "WAIT", "running": True}
+    assert get_acquisition_dict(driver) == {
+        "trigger_status": "WAIT",
+        "running": True,
+        "mode": "normal", "averages": 2, "adc_bits": 14,
+    }
 
 
 def test_get_state_matches_individual_getters(driver: ScopeDriver) -> None:

@@ -294,7 +294,7 @@ def create_server(
         """Get the main settings (channels / timebase / trigger / acquisition) in one call.
 
         When you know what you need, narrowing with sections is much faster
-        (a full read is about 39 queries and can take several seconds).
+        (a full read is about 42 queries and can take several seconds).
         Omitting sections returns every section.
         """
         return service.get_state(manager.require_scope(), sections)
@@ -316,7 +316,8 @@ def create_server(
 
     @_register
     def get_acquisition_state() -> dict:
-        """Return the acquisition state (whether it is running, and the trigger status)."""
+        """Return the acquisition state: whether it is running, the trigger status,
+        and (when the model supports it) mode / averages / adc_bits."""
         return service.get_acquisition_dict(manager.require_scope())
 
     # -- 測定・データ取得 -------------------------------------------------
@@ -484,6 +485,27 @@ def create_server(
             manager.require_scope(),
             scale_s_per_div=scale_s_per_div,
             position_s=position_s,
+        )
+
+    @_register
+    def configure_acquisition(
+        mode: str | None = None,
+        averages: int | None = None,
+        adc_bits: int | None = None,
+    ) -> dict:
+        """Configure the acquisition mode. Omitted items are left unchanged.
+
+        mode is "normal" / "peak" (peak detect: catches narrow glitches) /
+        "average" (lowers random noise on a repetitive signal) /
+        "high_resolution" (smooths noise within a single acquisition).
+        averages is used in "average" mode and must be a power of 2 from 2 to
+        65536 (2, 4, 8, ... 65536); other values are rejected.
+        adc_bits (14 / 16) can only be set in high_resolution mode: pass
+        mode="high_resolution" in the same call unless it is already active.
+        Read the current values with get_acquisition_state.
+        """
+        return control.configure_acquisition(
+            manager.require_scope(), mode=mode, averages=averages, adc_bits=adc_bits
         )
 
     @_register

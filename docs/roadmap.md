@@ -31,7 +31,7 @@
 |---|---|
 | ~~`:TRIGger`~~ | **M5で解消**(1.2)。標準の16種(非シリアル11 + シリアル5)を開放した。当初の内訳: トリガ種別**20種中EDGEの1種のみ**。PULSe / TIMeout / DURation / RUNT / SHOLd / PATTern / DELay / NEDGe / WINDows / SLOPe / VIDeo と、シリアルバストリガ8種(RS232/IIC/SPI/CAN/LIN/FLEXray/IIS/M1553)が全て未実装 |
 | ~~`:MEASure`~~ | **M4で解消**(1.1)。`:ITEM` は全41トークンを宣言し、統計・測定区間・しきい値も公開した。当初の内訳: `:ITEM` の**41トークン中10のみ**プロファイル宣言。加えて `:MEASure:STATistic`(統計)、`:MEASure:AREA`(測定区間の限定)、**`:MEASure:COUNter`(3.17.25-27)と `:MEASure:HISTogram`(3.17.31-32)が丸ごと未実装**。後2者は実装済みの `:COUNter`(3.7)/ `:HISTogram`(3.11)とは**別サブシステム**なので取り違えないこと |
-| **`:ACQuire`** | `:SRATe?` / `:MDEPth` の**読みのみ**。取得モード(Normal / Peak Detect / Average / High Resolution)・平均回数・ADC分解能の設定が未実装 |
+| ~~`:ACQuire`~~ | **M6で解消**(1.3、issue #52)。`configure_acquisition` で取得モード・平均回数・ADC分解能を設定できる。当初の内訳: `:SRATe?` / `:MDEPth` の**読みのみ**。メモリ深さの設定は2章に残る |
 | **`:SYSTem`** | `:ERRor?` / `:OPTion:STATus?` のみ。**`:DATE` / `:TIME` が未実装(issue #10)** |
 
 この4つは**新Toolをほとんど増やさず既存Toolの引数追加で届く**。
@@ -87,7 +87,7 @@
 
 | 機能 | 代表SCPI | AIにとって何が嬉しいか | 実装コスト |
 |---|---|---|---|
-| **取得モードの制御** | `:ACQuire:TYPE` / `:AVERages` / `:BITS` | ノイズが乗った信号にAverage、見逃したくない過渡にPeak Detect、分解能が要るならHigh Resolution を**AIが自分で選べる**。今は選べない | **小**(`configure_timebase` か新規 `configure_acquisition`) |
+| ~~**取得モードの制御**~~ | `:ACQuire:TYPE` / `:AVERages` / `:BITS` | **完了**(issue #52。新Tool `configure_acquisition`、読みは `get_acquisition_state`。実測: [verification/mho98-m6.md](verification/mho98-m6.md))。実機で**ガイドと違う挙動2件**(平均回数の非2のべき乗は切り下げでなく `-200` / `:BITS` は high_resolution 以外で `-200`)が判明し、送信前の検証で反映済み | 小 |
 | **動作完了の同期** | `*OPC?` | **現状は「取り込みが終わったか」を知る手段が `:TRIGger:STATus?` のポーリングしか無く、設定変更の完了は待てていない**(送って次を送るだけ)。`*OPC?` があれば `:SINGle` 実行後や重い設定変更後の完了を機器自身に申告させられ、待ち時間の当て推量が消える | **小**(内部利用。Tool追加不要) |
 | 強制トリガ | `:TFORce` | トリガ待ちで固まったときAIが自力で打開できる | **小** |
 | トリガホールドオフ / トリガ位置取得 | `:TRIGger:HOLDoff` / `:TRIGger:POSition?` | 繰り返し波形の安定捕捉、波形内のトリガ点の数値特定 | **小** |
