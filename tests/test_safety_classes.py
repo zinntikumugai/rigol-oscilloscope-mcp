@@ -34,6 +34,7 @@ EXPECTED = {
     "run": "SAFE_WRITE",
     "stop": "SAFE_WRITE",
     "single": "SAFE_WRITE",
+    "force_trigger": "SAFE_WRITE",
     "autoset": "RESTRICTED_WRITE",
     "configure_decode": "SAFE_WRITE",
     "get_decode_result": "READ_ONLY",

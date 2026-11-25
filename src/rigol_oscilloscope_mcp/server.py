@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import sys
+import time
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import asdict
@@ -138,6 +139,38 @@ def _tool_result(fn: Callable[..., Any]) -> Callable[..., Any]:
 _CONFIRM_REQUIRED = (OperationClass.RESTRICTED_WRITE, OperationClass.DANGEROUS_WRITE)
 
 
+def unlocked_sleep(
+    lock: Any, current_scope: Callable[[], object]
+) -> Callable[[float], None]:
+    """眠る間だけ機器ロックを手放す sleep を返す(`single` / `force_trigger` の wait_s)。
+
+    Tool本体は `_locked` の下で動くので、ポーリングの合間に眠る間もロックを
+    握ったままだと、待機中は `stop` や `force_trigger` を割り込ませられない。
+    SCPIの送受信そのものは常にロック下で行われ、直列化は崩れない。
+
+    手放している間に `connect` / `disconnect` で接続が差し替わりうる。ロックを
+    取り直したら `current_scope()` が眠る前と同じドライバかを確かめ、違えば
+    古いドライバで読み続けずに DEVICE_DISCONNECTED で打ち切る。
+    """
+
+    def sleep(seconds: float) -> None:
+        before = current_scope()
+        lock.release()
+        try:
+            time.sleep(seconds)
+        finally:
+            lock.acquire()
+        if current_scope() is not before:
+            raise ScopeError(
+                ErrorCode.DEVICE_DISCONNECTED,
+                "The connection was closed or replaced while waiting; "
+                "the wait was abandoned. Check the state with get_acquisition_state.",
+                {"connected": current_scope() is not None},
+            )
+
+    return sleep
+
+
 def _locked(lock: AbstractContextManager[Any]) -> Callable[..., Any]:
     """Tool本体全体を機器アクセスのロックで囲む(Requirements.md 6.5)。"""
 
@@ -226,7 +259,11 @@ def create_server(
     )
     # confirmトークンはサーバー(=セッション)寿命で共有する。世代バインドは
     # 呼び出しごとに manager.generation を渡すことで効かせる(Requirements.md 6.2)
-    control = ControlService(ConfirmTokenStore(), audit)
+    control = ControlService(
+        ConfirmTokenStore(),
+        audit,
+        sleep=unlocked_sleep(manager.lock, lambda: manager.current_scope),
+    )
 
     server = FastMCP(SERVER_NAME, instructions=INSTRUCTIONS)
     _register = _checked_tool(server, manager.lock)
@@ -1377,9 +1414,31 @@ def create_server(
         return control.stop(manager.require_scope())
 
     @_register
-    def single() -> dict:
-        """Perform a single-shot acquisition (triggers once, then stops)."""
-        return control.single(manager.require_scope())
+    def single(wait_s: float | None = None) -> dict:
+        """Perform a single-shot acquisition (triggers once, then stops).
+
+        Without wait_s this returns immediately, usually with trigger_status
+        "WAIT" (armed, waiting for a trigger). Pass wait_s (seconds, up to 60)
+        to wait until the capture finishes: completed is true once the scope
+        reports "STOP", false if wait_s ran out first (not an error). If it
+        never triggers, call force_trigger to capture anyway.
+        Other calls (stop, force_trigger, reads) can run while this waits; if
+        one of them stops or restarts the acquisition, the wait ends with
+        interrupted=true and completed=false (the STOP, if any, is not this
+        capture's own trigger).
+        """
+        return control.single(manager.require_scope(), wait_s)
+
+    @_register
+    def force_trigger(wait_s: float | None = None) -> dict:
+        """Force one trigger now, even if the trigger condition is not met.
+
+        Use it to finish a single capture that is stuck waiting ("WAIT"), or to
+        check that the channels show anything at all. The scope takes a moment
+        to stop, so pass wait_s (e.g. 1.0) to wait for "STOP"; completed tells
+        whether it did. In continuous run it only captures one extra frame.
+        """
+        return control.force_trigger(manager.require_scope(), wait_s)
 
     @_register
     def autoset(confirm_token: str | None = None) -> dict:

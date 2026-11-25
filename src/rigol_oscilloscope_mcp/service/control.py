@@ -15,16 +15,23 @@ Safety Layer(confirmトークン・監査ログ)とドライバの結合点。�
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import asdict
 
-from ..driver.scope import ScopeDriver
+from ..driver.scope import STOPPED_TRIGGER_STATUS, ScopeDriver
 from ..errors import ErrorCode, ScopeError
 from ..safety import AuditLogger, AuditScope, ConfirmTokenStore, token_digest
 from .state import get_channel_dict, get_state, get_timebase_dict, get_trigger_dict
 
 #: RESTRICTED_WRITE へ昇格させる入力インピーダンス(tools.md 3章)
 RESTRICTED_IMPEDANCE = "50"
+
+#: 取り込み完了待ち(`wait_s`)の上限と、`:TRIGger:STATus?` のポーリング間隔。
+#: **`*OPC?` は使えない** — 実機実測でトリガ待ち(WAIT)のままでも即 `1` を返す
+#: (issue #53)。完了は STOP の観測でしか分からない
+MAX_WAIT_S = 60.0
+_WAIT_POLL_S = 0.1
 
 #: autoset 実行後、返却に必ず添える注記(tools.md 4章)
 AUTOSET_NOTE = "Auto Setup was executed. The settings have been changed substantially."
@@ -106,6 +113,21 @@ def _cursor_settings(state: dict) -> dict:
     }
 
 
+def _validate_wait(wait_s: object) -> None:
+    """`wait_s` は 0 < wait_s <= MAX_WAIT_S の数値(送信前に検証する)。"""
+    if wait_s is None:
+        return
+    if (
+        isinstance(wait_s, bool)
+        or not isinstance(wait_s, (int, float))
+        or not 0 < wait_s <= MAX_WAIT_S
+    ):
+        raise _invalid(
+            f"wait_s must be a number greater than 0 and at most {MAX_WAIT_S:g}: {wait_s!r}",
+            {"wait_s": wait_s, "max": MAX_WAIT_S},
+        )
+
+
 def _is_restricted_impedance(impedance: str | None) -> bool:
     """`"50"` のみ昇格対象。表記ゆれ(前後空白)は吸収する。"""
     return isinstance(impedance, str) and impedance.strip() == RESTRICTED_IMPEDANCE
@@ -119,9 +141,20 @@ class ControlService:
     確認を無効化するために使う(Requirements.md 6.2)。
     """
 
-    def __init__(self, confirm_store: ConfirmTokenStore, audit: AuditLogger) -> None:
+    def __init__(
+        self,
+        confirm_store: ConfirmTokenStore,
+        audit: AuditLogger,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._confirm = confirm_store
         self._audit = audit
+        # 取り込み完了待ち(wait_s)のポーリング間に眠る関数。サーバーは機器ロックを
+        # 眠る間だけ手放す版を渡す(待機中に stop / force_trigger を割り込ませるため)
+        self._sleep = sleep
+        # 取り込み操作(run / stop / single / force_trigger / autoset)の通し番号。
+        # 待機中にロックを手放している間に別の操作が入ったかを見分ける
+        self._acquisition_epoch = 0
 
     # -- 設定変更 ---------------------------------------------------------
 
@@ -914,9 +947,20 @@ class ControlService:
         """波形取り込みを停止する。"""
         return self._acquisition(driver, "stop", driver.stop)
 
-    def single(self, driver: ScopeDriver) -> dict:
-        """シングルショット取り込みを行う。"""
-        return self._acquisition(driver, "single", driver.single)
+    def single(self, driver: ScopeDriver, wait_s: float | None = None) -> dict:
+        """シングルショット取り込みを行う。`wait_s` があれば完了(STOP)まで待つ。"""
+        return self._acquisition(driver, "single", driver.single, wait_s)
+
+    def force_trigger(self, driver: ScopeDriver, wait_s: float | None = None) -> dict:
+        """強制トリガ(issue #53)。トリガ待ちのシングルを終わらせる用途。"""
+        return self._acquisition(
+            driver,
+            "force_trigger",
+            driver.force_trigger,
+            wait_s,
+            # 監査用の事前クエリより前にゲートする(未宣言機種は送信ゼロ)
+            precheck=driver.force_trigger_command,
+        )
 
     def clear_measurements(self, driver: ScopeDriver) -> dict:
         """Resultビューの全測定項目を消す(SAFE_WRITE。issue #16)。
@@ -930,17 +974,48 @@ class ControlService:
         return {"result": "ok"}
 
     def _acquisition(
-        self, driver: ScopeDriver, tool: str, action: Callable[[], None]
+        self,
+        driver: ScopeDriver,
+        tool: str,
+        action: Callable[[], None],
+        wait_s: float | None = None,
+        precheck: Callable[[], object] | None = None,
     ) -> dict:
-        with self._audited(tool, {}) as record:
+        _validate_wait(wait_s)
+        requested = {} if wait_s is None else {"wait_s": wait_s}
+        with self._audited(tool, requested) as record:
+            if precheck is not None:
+                precheck()
             # before は監査記録専用。無効時は実機への1クエリ(≒30ms)を省く
             if self._audit.enabled:
                 record.before({"trigger_status": driver.get_trigger_status()})
             action()
+            self._acquisition_epoch += 1
+            mine = self._acquisition_epoch
+            interrupted = False
             status = driver.get_trigger_status()
+            if wait_s is not None:
+                deadline = time.monotonic() + wait_s
+                while status != STOPPED_TRIGGER_STATUS:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    # 残り時間を超えて眠らない(短い wait_s を間隔で超過しない)
+                    self._sleep(min(_WAIT_POLL_S, remaining))
+                    status = driver.get_trigger_status()
+                    # 眠っている間に別の取り込み操作が入った。以後の STOP は
+                    # その操作の結果かもしれないので、待つのをやめて知らせる
+                    if self._acquisition_epoch != mine:
+                        interrupted = True
+                        break
             record.after({"trigger_status": status})
 
-        return {"result": "ok", "trigger_status": status}
+        result: dict = {"result": "ok", "trigger_status": status}
+        if wait_s is not None:
+            # 割り込まれたら、観測した STOP は自分の取り込みの完了とは限らない
+            result["completed"] = status == STOPPED_TRIGGER_STATUS and not interrupted
+            result["interrupted"] = interrupted
+        return result
 
     def autoset(
         self,
@@ -973,6 +1048,7 @@ class ControlService:
                     }
                 )
             driver.autoset()
+            self._acquisition_epoch += 1
             state = get_state(driver, AUTOSET_SECTIONS)
             record.after(
                 {"timebase": state["timebase"], "trigger": state["trigger"]}

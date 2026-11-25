@@ -170,7 +170,20 @@ API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。「500 mV」「20 us」等の�
 
 ### `run` / `stop` / `single` — SAFE_WRITE / Phase 2
 
-波形取り込みの開始 / 停止 / シングルショット。
+波形取り込みの開始 / 停止 / シングルショット。返却は `result` / `trigger_status`。
+
+**`single` の `wait_s`(Phase M6・issue #53):** 指定すると `:TRIGger:STATus?` を0.1秒間隔でポーリングし、`STOP` を観測するか `wait_s` が尽きるまで待つ。返却に `completed`(STOP を観測したか)が加わる。時間切れはエラーにしない(`completed: false`)。値域は 0 < `wait_s` ≤ 60(送信前に検証)。**ポーリングの合間に眠る間は機器ロックを手放す**ので、待機中でも別の呼び出し(`stop` / `force_trigger` / 読み取り)が割り込める(SCPIの送受信自体は常にロック下で直列化)。待機中に `connect` / `disconnect` で接続が差し替わったら、古い接続で読み続けずに `DEVICE_DISCONNECTED` で打ち切る。待機中に別の取り込み操作(`run` / `stop` / `single` / `force_trigger` / `autoset`)が入ったら、その後の `STOP` は自分の取り込みの完了とは限らないので、待つのをやめて `interrupted: true` / `completed: false` を返す(`completed` は自分の取り込みが終わったときだけ true。`wait_s` 指定時は両方が必ず入る)。
+
+- **`*OPC?` は完了待ちに使えない**(実機実測): `:SINGle` 直後、トリガ待ち(`WAIT`)のままでも即 `1` を返す。取り込みの完了は `STOP` の観測でしか分からない
+- **`:SINGle` は掃引モードを `SINGle` に書き換える**(実機実測)。連続取り込みへ戻すときは `configure_trigger(sweep_mode=...)` + `run`
+
+### `force_trigger` — SAFE_WRITE / Phase M6(issue #53)
+
+`:TFORce`(ガイド3.1.5)。トリガ条件が満たされなくても1回取り込ませる。トリガ待ちで止まったシングルを終わらせる、チャンネルに何か映っているかを確かめる、といった用途。
+
+- 実機実測: トリガ待ちのシングルへ送ると**約0.25秒で `STOP` へ遷移**する。直後の `trigger_status` はまだ `WAIT` のことがあるので、`wait_s`(`single` と同じ意味)で待つ
+- 連続取り込み中は1フレーム余分に取り込むだけ(`STOP` にはならない)
+- プロファイル方言 `force_trigger_command`(mho98: `:TFORce`)。未宣言なら送信ゼロで `UNSUPPORTED_FEATURE`
 
 ### `autoset` — RESTRICTED_WRITE / Phase 2
 
@@ -507,6 +520,7 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `configure_timebase` | SAFE_WRITE | 2 |
 | `configure_trigger` | SAFE_WRITE | 2 |
 | `run` / `stop` / `single` | SAFE_WRITE | 2 |
+| `force_trigger` | SAFE_WRITE | M6 |
 | `autoset` | RESTRICTED_WRITE | 2 |
 | `recommend_setup`(未実装・スキルで代替) | READ_ONLY | 3 |
 | `configure_decode` | SAFE_WRITE | 4 |
@@ -531,7 +545,7 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `configure_acquisition` | SAFE_WRITE | M6 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は41(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2 + Phase M6: 1。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**、Phase M5(トリガ種別)は**15章**、Phase M6(取得モード)は**16章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
+登録Tool数は42(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2 + Phase M6: 2。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**、Phase M5(トリガ種別)は**15章**、Phase M6(取得モード)は**16章**(`force_trigger` は4章)にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
 
 将来(Phase 4の残り): `:PERiod` / `:VOLTage:HIGH`/`:LOW`(恒久スキップ。`frequency_hz`/`amplitude_vpp`+`offset_v`で表現可能なため)、DHOファミリの `:SOURce`(番号なし・DGモジュール)対応、Logic Analyzer。
 

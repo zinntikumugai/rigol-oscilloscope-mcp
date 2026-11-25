@@ -789,6 +789,214 @@ def test_stop_audit_records_before_and_after_status(
     assert row["after"] == {"trigger_status": "STOP"}
 
 
+def test_force_trigger_completes_a_waiting_single(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """トリガ待ちのシングルを強制トリガで終わらせ、STOP まで待つ(issue #53)。"""
+    service.single(driver)
+
+    result = service.force_trigger(driver, wait_s=1.0)
+
+    assert result == {
+        "result": "ok",
+        "trigger_status": "STOP",
+        "completed": True,
+        "interrupted": False,
+    }
+    assert ":TFORce" in scope.command_log
+
+
+def test_single_wait_reports_not_completed_on_timeout(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """トリガが来なければ wait_s で打ち切り、completed=False を返す(例外にしない)。"""
+    result = service.single(driver, wait_s=0.2)
+
+    assert result == {
+        "result": "ok",
+        "trigger_status": "WAIT",
+        "completed": False,
+        "interrupted": False,
+    }
+    # ポーリングした(1回で諦めていない)
+    assert scope.command_log.count(":TRIGger:STATus?") >= 2
+
+
+def test_single_wait_returns_as_soon_as_stopped(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope, monkeypatch
+) -> None:
+    """STOP を観測したら待ち時間を使い切らずに返る。"""
+    driver.stop()
+    monkeypatch.setattr(driver, "single", lambda: None)  # 即完了する取り込みを模す
+    scope.command_log.clear()
+
+    result = service.single(driver, wait_s=30.0)
+
+    assert result["completed"] is True
+    assert scope.command_log == [":TRIGger:STATus?", ":TRIGger:STATus?"]
+
+
+def test_force_trigger_unsupported_sends_nothing_even_with_audit(
+    service: ControlService, scope: FakeScope, audit_path: Path
+) -> None:
+    """未宣言の機種では監査用の事前クエリも含め1コマンドも送らない。拒否は記録する。"""
+    generic = make_driver(scope, "rigol-generic")
+
+    with pytest.raises(ScopeError) as excinfo:
+        service.force_trigger(generic, wait_s=1.0)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+    assert operations(audit_path)[0]["tool"] == "force_trigger"
+
+
+def test_short_wait_is_not_overshot_by_the_poll_interval(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    """ポーリング間隔(0.1秒)より短い wait_s でも、その時間を超えて待たない。"""
+    import time
+
+    started = time.monotonic()
+    result = service.single(driver, wait_s=0.01)
+
+    assert time.monotonic() - started < 0.08
+    assert result["completed"] is False
+
+
+def test_wait_releases_the_device_lock_between_polls(
+    store: ConfirmTokenStore, audit_path: Path, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """待機中に別のToolが割り込める(Copilotレビュー指摘)。
+
+    サーバーはTool全体を `manager.lock` で囲む。ポーリングの合間に眠る間だけ
+    ロックを手放さないと、`single(wait_s=60)` の間は `stop` すら打てない。
+    """
+    import threading
+    import time
+
+    from rigol_oscilloscope_mcp.server import unlocked_sleep
+
+    lock = threading.RLock()
+    service = ControlService(
+        store, AuditLogger(audit_path), sleep=unlocked_sleep(lock, lambda: driver)
+    )
+    results: dict = {}
+
+    def waiter() -> None:
+        with lock:
+            results["single"] = service.single(driver, wait_s=5.0)
+
+    thread = threading.Thread(target=waiter)
+    started = time.monotonic()
+    thread.start()
+    time.sleep(0.15)
+    with lock:  # ロックが解放されていなければここで5秒待たされる
+        driver.stop()
+    thread.join(timeout=5)
+
+    # ドライバを直接叩いた停止は「別の取り込み操作」として数えない(Tool経由の
+    # 割り込みは test_wait_reports_an_interrupting_acquisition_operation が見る)
+    assert time.monotonic() - started < 1.0
+    assert results["single"]["completed"] is True
+    assert results["single"]["trigger_status"] == "STOP"
+
+
+def test_wait_aborts_when_the_connection_is_replaced(
+    store: ConfirmTokenStore, audit_path: Path, driver: ScopeDriver
+) -> None:
+    """待機中に connect / disconnect で接続が差し替わったら、古いドライバで
+    読み続けずに DEVICE_DISCONNECTED で打ち切る(Copilotレビュー指摘)。"""
+    import threading
+    import time
+
+    from rigol_oscilloscope_mcp.server import unlocked_sleep
+
+    lock = threading.RLock()
+    holder = {"scope": driver}
+    service = ControlService(
+        store, AuditLogger(audit_path), sleep=unlocked_sleep(lock, lambda: holder["scope"])
+    )
+    errors: list[ScopeError] = []
+
+    def waiter() -> None:
+        with lock:
+            try:
+                service.single(driver, wait_s=5.0)
+            except ScopeError as exc:
+                errors.append(exc)
+
+    thread = threading.Thread(target=waiter)
+    started = time.monotonic()
+    thread.start()
+    time.sleep(0.15)
+    with lock:
+        holder["scope"] = None  # disconnect 相当
+    thread.join(timeout=5)
+
+    assert time.monotonic() - started < 1.0
+    assert [e.code for e in errors] == [ErrorCode.DEVICE_DISCONNECTED]
+    assert operations(audit_path)[-1]["result"] != "success"
+
+
+def test_wait_reports_an_interrupting_acquisition_operation(
+    store: ConfirmTokenStore, audit_path: Path, driver: ScopeDriver
+) -> None:
+    """待機中に別の取り込み操作(stop / run / single / force_trigger)が入ったら、
+    それが終わらせた STOP を自分の完了と取り違えないよう interrupted で知らせる。"""
+    import threading
+    import time
+
+    from rigol_oscilloscope_mcp.server import unlocked_sleep
+
+    lock = threading.RLock()
+    service = ControlService(
+        store, AuditLogger(audit_path), sleep=unlocked_sleep(lock, lambda: driver)
+    )
+    results: dict = {}
+
+    def waiter() -> None:
+        with lock:
+            results["single"] = service.single(driver, wait_s=5.0)
+
+    thread = threading.Thread(target=waiter)
+    thread.start()
+    time.sleep(0.15)
+    with lock:
+        service.stop(driver)  # 別のToolからの割り込み
+    thread.join(timeout=5)
+
+    # STOP は割り込んだ stop の結果。自分の取り込みの完了ではないので completed は false
+    assert results["single"] == {
+        "result": "ok",
+        "trigger_status": "STOP",
+        "completed": False,
+        "interrupted": True,
+    }
+
+
+@pytest.mark.parametrize("wait_s", [0, -1, 61, "1", True])
+def test_wait_s_is_validated_before_sending(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope, wait_s: object
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        service.single(driver, wait_s=wait_s)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_wait_s_is_recorded_in_the_audit_row(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    service.single(driver)
+    service.force_trigger(driver, wait_s=0.5)
+    row = operations(audit_path)[-1]
+
+    assert row["tool"] == "force_trigger"
+    assert row["requested"] == {"wait_s": 0.5}
+    assert row["after"] == {"trigger_status": "STOP"}
+
+
 @pytest.mark.parametrize("method", ["run", "stop", "single"])
 def test_acquisition_needs_no_confirmation(
     service: ControlService, driver: ScopeDriver, audit_path: Path, method: str

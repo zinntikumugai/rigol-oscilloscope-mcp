@@ -2116,3 +2116,119 @@ def test_configure_acquisition_adc_bits_round_trip(
     _report(f"[acquisition] adc_bits=16 applied={result['applied']}")
 
     assert result["applied"] == {"mode": "high_resolution", "adc_bits": 16}
+
+
+# --------------------------------------------------------------------------
+# 強制トリガと取り込み完了待ち(issue #53)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sweep_before(request: pytest.FixtureRequest, driver: ScopeDriver) -> Iterator[dict]:
+    """掃引モードと取り込み状態を控え、teardownで必ず戻す。
+
+    **`:SINGle` は掃引モードを SINGle に書き換える**(実機実測)ので、シングルを
+    使うテストは掃引モードごと復元しなければならない。
+    """
+    before = {
+        "sweep_mode": get_trigger_dict(driver)["sweep_mode"],
+        "running": get_acquisition_dict(driver)["running"],
+    }
+    tag = request.node.name
+    _report(f"[before:{tag}] sweep={before}")
+    try:
+        yield before
+    finally:
+        driver.configure_trigger(sweep_mode=before["sweep_mode"])
+        if before["running"]:
+            driver.run()
+        else:
+            driver.stop()
+        after = {
+            "sweep_mode": get_trigger_dict(driver)["sweep_mode"],
+            "running": get_acquisition_dict(driver)["running"],
+        }
+        _report(f"[restore:{tag}] sweep 復元後={after}")
+        assert after == before, f"掃引モード/取り込み状態が復元されていません: {after}"
+
+
+def test_force_trigger_finishes_a_waiting_single(
+    control: ControlService,
+    driver: ScopeDriver,
+    trigger_before: dict,
+    sweep_before: dict,
+) -> None:
+    """成立しないトリガ条件でシングル → WAIT のまま → 強制トリガで STOP。
+
+    トリガレベルを信号の外へ置く方法は使えない(**レベルは画面範囲へクランプ
+    される**: `:TRIGger:EDGE:LEVel 10` → 0.225V。実機実測)。代わりに
+    「幅5〜10秒のパルス」という成立し得ない条件を使う。種別・掃引モードは
+    fixture が元へ戻す。
+    """
+    control.configure_trigger(
+        driver,
+        type="pulse",
+        sweep_mode="normal",
+        settings={"when": "between", "upper_width_s": 10.0, "lower_width_s": 5.0},
+    )
+    waiting = control.single(driver, wait_s=0.5)
+    _report(f"[force] single(wait_s=0.5)={waiting}")
+    assert waiting["completed"] is False
+    assert waiting["trigger_status"] == "WAIT"
+
+    forced = control.force_trigger(driver, wait_s=2.0)
+    _report(f"[force] force_trigger(wait_s=2.0)={forced}")
+    assert forced == {
+        "result": "ok",
+        "trigger_status": "STOP",
+        "completed": True,
+        "interrupted": False,
+    }
+
+
+def test_force_trigger_interrupts_a_waiting_single_on_the_device(
+    audit_path: Path, driver: ScopeDriver, trigger_before: dict, sweep_before: dict
+) -> None:
+    """待機中のロック解放と割り込みを実機のタイミングで確かめる(PR #59 レビュー)。
+
+    サーバーと同じく Tool 全体をロックで囲み、`single(wait_s=5)` の待機中に
+    別スレッドから `force_trigger` を打つ。待機側は割り込みを `interrupted` で
+    知らせ、5秒を待たずに返る。
+    """
+    import threading
+
+    from rigol_oscilloscope_mcp.server import unlocked_sleep
+
+    lock = threading.RLock()
+    service = ControlService(
+        ConfirmTokenStore(), AuditLogger(audit_path), sleep=unlocked_sleep(lock, lambda: driver)
+    )
+    with lock:
+        service.configure_trigger(
+            driver,
+            type="pulse",
+            sweep_mode="normal",
+            settings={"when": "between", "upper_width_s": 10.0, "lower_width_s": 5.0},
+        )
+    results: dict = {}
+
+    def waiter() -> None:
+        with lock:
+            results["single"] = service.single(driver, wait_s=5.0)
+
+    thread = threading.Thread(target=waiter)
+    started = time.monotonic()
+    thread.start()
+    time.sleep(0.5)
+    with lock:  # 待機側がロックを手放していなければここで5秒待たされる
+        results["force"] = service.force_trigger(driver, wait_s=2.0)
+    thread.join(timeout=10)
+    elapsed = time.monotonic() - started
+    _report(f"[force] interrupt: {results} elapsed={elapsed:.2f}s")
+
+    assert results["force"]["completed"] is True
+    assert results["single"]["interrupted"] is True
+    # 実機実測: 割り込み直後の観測はまだ WAIT のことがある(STOP への遷移に
+    # 約0.25秒)。だから「STOP を見たか」ではなく interrupted で判断させる
+    assert results["single"]["completed"] is False
+    assert elapsed < 4.0

@@ -234,6 +234,15 @@ class ConnectionManager:
 
     # -- 利用 -------------------------------------------------------------
 
+    @property
+    def current_scope(self) -> ScopeDriver | None:
+        """今の接続のドライバ(未接続なら None)。再接続を試みない・送信しない。
+
+        待機中にロックを手放したTool(`single` の wait_s)が、接続が差し替わって
+        いないかを確かめるために使う。
+        """
+        return self._scope
+
     def require_scope(self) -> ScopeDriver:
         """操作用のドライバを返す。切断されていれば1度だけ再接続を試みる。"""
         if self._scope is None or self._transport is None:
