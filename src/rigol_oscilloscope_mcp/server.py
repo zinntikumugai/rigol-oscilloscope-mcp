@@ -308,6 +308,10 @@ def create_server(
         Below verified, unverified features are restricted.
         options reports the installed license options, and is null when this
         model does not support option queries.
+        clock compares the device clock with the host clock (time_skew_s is
+        device minus host, in seconds) and carries a warning when they differ;
+        it is null when the model has no clock query. This tool never sets the
+        clock.
         """
         driver = manager.require_scope()
         status = manager.status()
@@ -321,6 +325,7 @@ def create_server(
             "profile": _profile_dict(driver.profile.name, driver.profile.confidence),
             "capabilities": dict(driver.profile.capabilities),
             "options": options,
+            "clock": service.clock_check(driver),
             "unsupported_vendor": status.unsupported_vendor,
         }
 
@@ -455,6 +460,10 @@ def create_server(
         format is png / jpg / jpeg / bmp / webp. With return_image=false only the
         metadata is returned, without the image (saves tokens).
         For numeric readings use measure, not this image.
+        clock compares the device clock (shown on the screen) with the host
+        clock right after the capture; if warning is set, tell the user that
+        the on-screen time is off before relying on it (null when the model
+        has no clock query).
         """
         shot = service.capture_screenshot(
             manager.require_scope(), resolved_config, path=path, format=format
@@ -464,6 +473,7 @@ def create_server(
             "format": shot.format,
             "size_bytes": shot.size_bytes,
             "mime": shot.mime,
+            "clock": shot.clock,
         }
         if not return_image:
             return metadata

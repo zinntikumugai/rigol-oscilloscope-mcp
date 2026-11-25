@@ -19,6 +19,7 @@ import math
 import re
 from collections import deque
 from collections.abc import Callable
+from datetime import datetime
 
 from PIL import Image
 
@@ -1002,6 +1003,8 @@ class FakeScope:
             for name, props in _TRIGGER_SUBTREE_PROPS.items()
         }
         self.acquisition = "RUN"
+        #: 機器の時計。None ならホストのローカル時刻に同期しているものとして扱う
+        self.clock: datetime | None = None
         self.waveform: dict[str, object] = {
             "source": "CHAN1",
             "mode": "NORM",
@@ -1060,6 +1063,9 @@ class FakeScope:
         entries: list[tuple[str, Callable]] = [
             (r"\*IDN\?", lambda m: IDN.encode("ascii")),
             (rf":?{_mn('SYSTem')}:{_mn('ERRor')}\?", self._system_error),
+            # 機器の時計(3.24.4-5)。実機実測: DATE? はカンマ、TIME? はコロン区切り
+            (rf":?{_mn('SYSTem')}:{_mn('DATE')}\?", lambda m: self._now().strftime("%Y,%m,%d").encode("ascii")),
+            (rf":?{_mn('SYSTem')}:{_mn('TIME')}\?", lambda m: self._now().strftime("%H:%M:%S").encode("ascii")),
             # オプション照会。`:STATus?`(推奨)と `:VALid?`(後方互換)は同一応答。
             # `*OPT?` は実装しない(Rigol全シリーズで未定義ヘッダ = 沈黙)。
             (
@@ -1774,6 +1780,9 @@ class FakeScope:
     def _set_waveform(self, key: str, value: object) -> None:
         self.waveform[key] = value
         return None
+
+    def _now(self) -> datetime:
+        return self.clock if self.clock is not None else datetime.now()
 
     def _force_trigger(self) -> None:
         if self.acquisition == "SINGLE":

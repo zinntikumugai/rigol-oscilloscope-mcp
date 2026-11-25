@@ -175,6 +175,17 @@ def test_get_capabilities_reports_profile(server) -> None:
     assert data["unsupported_vendor"] is False
 
 
+def test_get_capabilities_reports_the_device_clock(server) -> None:
+    """機器時刻とホスト時刻のずれ(issue #54)。FakeScope の時計はホストと同期。"""
+    connected(server)
+
+    clock = payload(call(server, "get_capabilities"))["clock"]
+
+    assert set(clock) == {"device_time", "host_time", "time_skew_s", "warning"}
+    assert abs(clock["time_skew_s"]) < 2
+    assert clock["warning"] is None
+
+
 def test_get_capabilities_reports_installed_options(server) -> None:
     connected(server)
 
@@ -309,6 +320,16 @@ def test_capture_screenshot_returns_image_content(server, config: Config) -> Non
     assert saved.parent == config.screenshot_dir
     assert saved.read_bytes()[:8] == PNG_MAGIC
     assert data["size_bytes"] == saved.stat().st_size
+
+
+def test_capture_screenshot_reports_the_device_clock(server) -> None:
+    """画面に写る時刻がずれていないかを、撮影と同時に確かめられる(issue #54)。"""
+    connected(server)
+
+    metadata = payload(call(server, "capture_screenshot", {"return_image": False}))
+
+    assert "device_time" in metadata["clock"]
+    assert abs(metadata["clock"]["time_skew_s"]) < 2
 
 
 def test_capture_screenshot_can_skip_the_image(server) -> None:

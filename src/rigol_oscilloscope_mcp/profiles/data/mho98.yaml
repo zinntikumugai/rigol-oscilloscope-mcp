@@ -21,6 +21,9 @@ capabilities:
   frequency_counter: true # ガイド3.7(:COUNter)
   dvm: true # ガイド3.10(:DVM)
   histogram: true # ガイド3.11(:HISTogram。SAVE:CSVを除く)
+  # :SYSTem:DATE? / :TIME?(ガイド3.24.4-5。issue #54)。実機実測: DATE? はカンマ区切り、
+  # TIME? はコロン区切り(V-3)。DHO800/900 にはコマンド自体が無い
+  system_clock: true
   measurements: [
      frequency, period, rise_time, fall_time, pulse_width_pos, pulse_width_neg, duty,
     duty_neg, time_at_vmax, time_at_vmin, vpp, vmax, vmin, vtop, vbase, vamp, vupper,

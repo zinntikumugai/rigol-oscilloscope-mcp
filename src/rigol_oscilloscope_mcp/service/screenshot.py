@@ -17,6 +17,7 @@ from PIL import Image
 from ..config import Config
 from ..driver.scope import ScopeDriver
 from ..errors import ErrorCode, ScopeError
+from .clock import clock_check
 from .paths import resolve_write_path
 
 SUPPORTED_FORMATS = ("png", "jpg", "jpeg", "bmp", "webp")
@@ -55,6 +56,8 @@ class ScreenshotResult:
     size_bytes: int
     mime: str
     image_bytes: bytes
+    #: 撮影直後の機器時刻とホスト時刻のずれ(`clock_check`)。非対応機種は None
+    clock: dict | None = None
 
 
 def _normalized(requested: str) -> str:
@@ -122,6 +125,8 @@ def capture_screenshot(
     target = resolve_write_path(path, config, stem, requested)
 
     png_bytes = driver.capture_screenshot_bytes()
+    # 画面に写った時計と比べたいので、撮影の直後に読む(issue #54)
+    clock = clock_check(driver)
     data = png_bytes if canonical == "png" else _convert(png_bytes, canonical)
 
     target.write_bytes(data)
@@ -132,4 +137,5 @@ def capture_screenshot(
         size_bytes=len(data),
         mime=_MIME[canonical],
         image_bytes=data,
+        clock=clock,
     )
