@@ -51,6 +51,7 @@ TOOL_CLASSES: dict[str, OperationClass] = {
     "run": OperationClass.SAFE_WRITE,
     "stop": OperationClass.SAFE_WRITE,
     "single": OperationClass.SAFE_WRITE,
+    "force_trigger": OperationClass.SAFE_WRITE,
     "autoset": OperationClass.RESTRICTED_WRITE,
     # 5. 測定・データ取得
     "measure": OperationClass.READ_ONLY,

@@ -42,3 +42,35 @@
 
 - read-only(`-m device tests/device/test_readonly.py`): **20 passed, 1 skipped**(`test_acquisition_config_answers` を含む)
 - write(`-m device_write -k acquisition`): **7 passed**。4モードの往復、平均回数65536の往復、high_resolution + 16bit の往復。全テストで復元漏れゼロ(復元は「high_resolution で分解能を戻す → 元のモードと平均回数を戻す」の2段)
+
+## 2. 強制トリガと取り込み完了の同期(issue #53、2026-11-25)
+
+### 2.1 `*OPC?` は取り込み完了を待たない
+
+| 手順 | 応答 | 所見 |
+|---|---|---|
+| `:SINGle` | (write)No error | |
+| `*OPC?` | **`1`**(25ms) | トリガ待ちのままでも即答する |
+| `:TRIGger:STATus?` | `WAIT` | 取り込みは終わっていない |
+
+→ `*OPC?` は「コマンドの受理が終わった」ことしか示さず、取り込みの完了同期には使えない。**ロードマップ1.3の前提(`*OPC?` で完了を申告させる)は成り立たない。** 代替として `single` / `force_trigger` に `wait_s`(`:TRIGger:STATus?` を STOP までポーリング)を実装した。
+
+### 2.2 `:TFORce` の効き方(0.25秒間隔で `:TRIGger:STATus?` を観測)
+
+| 状態 | 操作 | 観測された状態の推移 |
+|---|---|---|
+| 掃引 SINGle | `:SINGle` | `STOP` → `WAIT` → `WAIT` …(トリガ待ちが続く) |
+| 同上 | `:TFORce` | `WAIT` → **`STOP`**(2回目の観測=約0.25秒後) |
+| 掃引 NORMal | `:SINGle` → `:TFORce` | `WAIT` … → 即 `STOP` |
+| 連続取り込み(WAIT) | `:TFORce` | `TD`(1フレーム取り込む。停止はしない) |
+
+いずれもエラーキューは No error。
+
+### 2.3 付随して判明したこと
+
+- **`:SINGle` は掃引モードを `SINGle` に書き換える**(`:TRIGger:SWEep?` → `SING`)。プローブ後に `AUTO` + `:RUN` へ戻した。device_write の fixture も掃引モードと取り込み状態を復元する
+- **トリガレベルは画面範囲へクランプされる**: CH1 50mV/div で `:TRIGger:EDGE:LEVel 10` → 読み戻し `2.250000E-1`。「レベルを信号の外へ置いてトリガさせない」手は使えないため、テストでは成立し得ないパルス幅条件(5〜10秒)で WAIT を作った
+
+### 2.4 スイート実行
+
+- write(`-m device_write -k force_trigger`): **1 passed**。`single(wait_s=0.5)` → `completed: false` / `WAIT`、`force_trigger(wait_s=2.0)` → `completed: true` / `STOP`。トリガ種別・掃引モード・取り込み状態の復元漏れゼロ(パルス種別配下の幅設定は既存のトリガテストと同じく復元対象外)

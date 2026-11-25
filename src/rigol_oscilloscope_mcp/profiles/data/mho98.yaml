@@ -39,6 +39,10 @@ dialect:
   # サブツリー実在は読み取りプローブで実機確認済み(mho98-autoset.md)。
   # autoset書き込み自体は実機実行禁止のため未検証
   autoset_command: ":AUToset"
+  # 強制トリガ(ガイド3.1.5。issue #53)。実機実測: トリガ待ち(WAIT)のシングルに
+  # 送ると約0.25秒で STOP へ遷移する。未宣言なら force_trigger は送信ゼロで
+  # UNSUPPORTED_FEATURE
+  force_trigger_command: ":TFORce"
   # Resultビューの全測定項目を消す(ガイド3.17.3、引数なし・全消しのみ)。実機検証:
   # docs/verification/mho98-measure-clear.md。DHO800/900系は同義の :MEASure:CLEar
   # (ニモニックがファミリで分岐するためdialect化。MHO98実機は両方受理する)

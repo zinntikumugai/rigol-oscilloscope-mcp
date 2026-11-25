@@ -789,6 +789,66 @@ def test_stop_audit_records_before_and_after_status(
     assert row["after"] == {"trigger_status": "STOP"}
 
 
+def test_force_trigger_completes_a_waiting_single(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """トリガ待ちのシングルを強制トリガで終わらせ、STOP まで待つ(issue #53)。"""
+    service.single(driver)
+
+    result = service.force_trigger(driver, wait_s=1.0)
+
+    assert result == {"result": "ok", "trigger_status": "STOP", "completed": True}
+    assert ":TFORce" in scope.command_log
+
+
+def test_single_wait_reports_not_completed_on_timeout(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """トリガが来なければ wait_s で打ち切り、completed=False を返す(例外にしない)。"""
+    result = service.single(driver, wait_s=0.2)
+
+    assert result == {"result": "ok", "trigger_status": "WAIT", "completed": False}
+    # ポーリングした(1回で諦めていない)
+    assert scope.command_log.count(":TRIGger:STATus?") >= 2
+
+
+def test_single_wait_returns_as_soon_as_stopped(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope, monkeypatch
+) -> None:
+    """STOP を観測したら待ち時間を使い切らずに返る。"""
+    driver.stop()
+    monkeypatch.setattr(driver, "single", lambda: None)  # 即完了する取り込みを模す
+    scope.command_log.clear()
+
+    result = service.single(driver, wait_s=30.0)
+
+    assert result["completed"] is True
+    assert scope.command_log == [":TRIGger:STATus?", ":TRIGger:STATus?"]
+
+
+@pytest.mark.parametrize("wait_s", [0, -1, 61, "1", True])
+def test_wait_s_is_validated_before_sending(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope, wait_s: object
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        service.single(driver, wait_s=wait_s)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_wait_s_is_recorded_in_the_audit_row(
+    service: ControlService, driver: ScopeDriver, audit_path: Path
+) -> None:
+    service.single(driver)
+    service.force_trigger(driver, wait_s=0.5)
+    row = operations(audit_path)[-1]
+
+    assert row["tool"] == "force_trigger"
+    assert row["requested"] == {"wait_s": 0.5}
+    assert row["after"] == {"trigger_status": "STOP"}
+
+
 @pytest.mark.parametrize("method", ["run", "stop", "single"])
 def test_acquisition_needs_no_confirmation(
     service: ControlService, driver: ScopeDriver, audit_path: Path, method: str

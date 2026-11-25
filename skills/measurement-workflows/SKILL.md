@@ -43,7 +43,7 @@ Restore `normal` when done: averaging hides one-off events.
 1. `get_state` (use `sections` to read only what you need — a full read is ~42 SCPI queries)
 2. Decide settings from the table, substituting the actual baud rate and logic level
 3. `configure_channel` → `configure_timebase` → `configure_trigger`
-4. `single`, wait for the trigger, then `measure` (frequency, vpp) and `capture_screenshot`
+4. `single(wait_s=5)` — `completed: true` means it captured; if it stays `false` (no trigger), check the trigger level or call `force_trigger(wait_s=1)` to see what is there. Then `measure` (frequency, vpp) and `capture_screenshot`
 5. Interpret: bit time should be 1/baud; if the trace shows no edges, re-check the physical connection with the user
 6. **To read the bytes**, use the instrument's decoder instead of eyeballing the trace:
    `configure_decode(protocol="uart", enabled=true, event_table=true, settings={"rx_source": "CH1", "baud_bps": 115200, "rx_threshold_v": <Vpp/2>})`,

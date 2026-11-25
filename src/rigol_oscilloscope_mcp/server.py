@@ -1377,9 +1377,27 @@ def create_server(
         return control.stop(manager.require_scope())
 
     @_register
-    def single() -> dict:
-        """Perform a single-shot acquisition (triggers once, then stops)."""
-        return control.single(manager.require_scope())
+    def single(wait_s: float | None = None) -> dict:
+        """Perform a single-shot acquisition (triggers once, then stops).
+
+        Without wait_s this returns immediately, usually with trigger_status
+        "WAIT" (armed, waiting for a trigger). Pass wait_s (seconds, up to 60)
+        to wait until the capture finishes: completed is true once the scope
+        reports "STOP", false if wait_s ran out first (not an error). If it
+        never triggers, call force_trigger to capture anyway.
+        """
+        return control.single(manager.require_scope(), wait_s)
+
+    @_register
+    def force_trigger(wait_s: float | None = None) -> dict:
+        """Force one trigger now, even if the trigger condition is not met.
+
+        Use it to finish a single capture that is stuck waiting ("WAIT"), or to
+        check that the channels show anything at all. The scope takes a moment
+        to stop, so pass wait_s (e.g. 1.0) to wait for "STOP"; completed tells
+        whether it did. In continuous run it only captures one extra frame.
+        """
+        return control.force_trigger(manager.require_scope(), wait_s)
 
     @_register
     def autoset(confirm_token: str | None = None) -> dict:

@@ -1146,6 +1146,9 @@ class FakeScope:
             (r":?RUN", lambda m: self._set_acquisition("RUN")),
             (r":?STOP", lambda m: self._set_acquisition("STOP")),
             (rf":?{_mn('SINGle')}", lambda m: self._set_acquisition("SINGLE")),
+            # 強制トリガ: トリガ待ちのシングルを完了させる(実機実測: WAIT → STOP)。
+            # 連続取り込み中は1回取り込むだけで状態は変わらない
+            (rf":?{_mn('TFORce')}", lambda m: self._force_trigger()),
             # 実機の正式ニモニックは :AUToset(:AUToscale は未定義ヘッダ=沈黙)
             (rf":?{_mn('AUToset')}", lambda m: self._set_acquisition("RUN")),
             # 測定
@@ -1771,6 +1774,10 @@ class FakeScope:
     def _set_waveform(self, key: str, value: object) -> None:
         self.waveform[key] = value
         return None
+
+    def _force_trigger(self) -> None:
+        if self.acquisition == "SINGLE":
+            self.acquisition = "STOP"
 
     def _set_acquisition(self, state: str) -> None:
         self.acquisition = state

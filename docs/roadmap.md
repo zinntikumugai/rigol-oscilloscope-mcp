@@ -88,8 +88,8 @@
 | 機能 | 代表SCPI | AIにとって何が嬉しいか | 実装コスト |
 |---|---|---|---|
 | ~~**取得モードの制御**~~ | `:ACQuire:TYPE` / `:AVERages` / `:BITS` | **完了**(issue #52。新Tool `configure_acquisition`、読みは `get_acquisition_state`。実測: [verification/mho98-m6.md](verification/mho98-m6.md))。実機で**ガイドと違う挙動2件**(平均回数の非2のべき乗は切り下げでなく `-200` / `:BITS` は high_resolution 以外で `-200`)が判明し、送信前の検証で反映済み | 小 |
-| **動作完了の同期** | `*OPC?` | **現状は「取り込みが終わったか」を知る手段が `:TRIGger:STATus?` のポーリングしか無く、設定変更の完了は待てていない**(送って次を送るだけ)。`*OPC?` があれば `:SINGle` 実行後や重い設定変更後の完了を機器自身に申告させられ、待ち時間の当て推量が消える | **小**(内部利用。Tool追加不要) |
-| 強制トリガ | `:TFORce` | トリガ待ちで固まったときAIが自力で打開できる | **小** |
+| ~~**動作完了の同期**~~ | `*OPC?` | **完了**(issue #53)。ただし**`*OPC?` は使えないと判明** — 実機は `:SINGle` 直後、トリガ待ち(WAIT)のままでも即 `1` を返す。代わりに `single` / `force_trigger` に `wait_s`(`:TRIGger:STATus?` を STOP までポーリング)を足した | 小 |
+| ~~強制トリガ~~ | `:TFORce` | **完了**(issue #53。新Tool `force_trigger`)。WAIT のシングルを約0.25秒で STOP へ遷移させる(実測: [verification/mho98-m6.md](verification/mho98-m6.md)) | 小 |
 | トリガホールドオフ / トリガ位置取得 | `:TRIGger:HOLDoff` / `:TRIGger:POSition?` | 繰り返し波形の安定捕捉、波形内のトリガ点の数値特定 | **小** |
 
 **着手時の注意:**

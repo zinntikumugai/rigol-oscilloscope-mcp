@@ -4345,3 +4345,29 @@ def test_get_acquisition_config_is_empty_on_generic(
     """読み取りもゲートする(未宣言ニモニックのクエリ1発で機器が沈黙する)。"""
     assert generic_driver.get_acquisition_config() == {}
     assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# 強制トリガ(issue #53)
+# --------------------------------------------------------------------------
+
+
+def test_force_trigger_sends_tforce(driver: ScopeDriver, scope: FakeScope) -> None:
+    driver.single()
+    scope.command_log.clear()
+
+    driver.force_trigger()
+
+    assert ":TFORce" in scope.command_log
+    assert driver.get_trigger_status() == "STOP"
+
+
+def test_force_trigger_unsupported_on_generic(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """プロファイル未宣言のニモニックは送らない(AGENTS.md ルール2)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.force_trigger()
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []

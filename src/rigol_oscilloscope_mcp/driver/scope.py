@@ -3459,6 +3459,12 @@ class ScopeDriver:
     def single(self) -> None:
         self.session.write_checked(":SINGle")
 
+    def force_trigger(self) -> None:
+        """強制トリガ。トリガ条件が満たされなくても1回取り込ませる(issue #53)。"""
+        self.session.write_checked(
+            self._required_dialect("force_trigger_command", "forcing a trigger")
+        )
+
     def autoset(self) -> None:
         """オートセットアップ。信号系統を大きく変えるため、承認は上位の責務。
 

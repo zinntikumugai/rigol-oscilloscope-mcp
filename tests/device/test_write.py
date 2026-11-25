@@ -2116,3 +2116,66 @@ def test_configure_acquisition_adc_bits_round_trip(
     _report(f"[acquisition] adc_bits=16 applied={result['applied']}")
 
     assert result["applied"] == {"mode": "high_resolution", "adc_bits": 16}
+
+
+# --------------------------------------------------------------------------
+# 強制トリガと取り込み完了待ち(issue #53)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sweep_before(request: pytest.FixtureRequest, driver: ScopeDriver) -> Iterator[dict]:
+    """掃引モードと取り込み状態を控え、teardownで必ず戻す。
+
+    **`:SINGle` は掃引モードを SINGle に書き換える**(実機実測)ので、シングルを
+    使うテストは掃引モードごと復元しなければならない。
+    """
+    before = {
+        "sweep_mode": get_trigger_dict(driver)["sweep_mode"],
+        "running": get_acquisition_dict(driver)["running"],
+    }
+    tag = request.node.name
+    _report(f"[before:{tag}] sweep={before}")
+    try:
+        yield before
+    finally:
+        driver.configure_trigger(sweep_mode=before["sweep_mode"])
+        if before["running"]:
+            driver.run()
+        else:
+            driver.stop()
+        after = {
+            "sweep_mode": get_trigger_dict(driver)["sweep_mode"],
+            "running": get_acquisition_dict(driver)["running"],
+        }
+        _report(f"[restore:{tag}] sweep 復元後={after}")
+        assert after == before, f"掃引モード/取り込み状態が復元されていません: {after}"
+
+
+def test_force_trigger_finishes_a_waiting_single(
+    control: ControlService,
+    driver: ScopeDriver,
+    trigger_before: dict,
+    sweep_before: dict,
+) -> None:
+    """成立しないトリガ条件でシングル → WAIT のまま → 強制トリガで STOP。
+
+    トリガレベルを信号の外へ置く方法は使えない(**レベルは画面範囲へクランプ
+    される**: `:TRIGger:EDGE:LEVel 10` → 0.225V。実機実測)。代わりに
+    「幅5〜10秒のパルス」という成立し得ない条件を使う。種別・掃引モードは
+    fixture が元へ戻す。
+    """
+    control.configure_trigger(
+        driver,
+        type="pulse",
+        sweep_mode="normal",
+        settings={"when": "between", "upper_width_s": 10.0, "lower_width_s": 5.0},
+    )
+    waiting = control.single(driver, wait_s=0.5)
+    _report(f"[force] single(wait_s=0.5)={waiting}")
+    assert waiting["completed"] is False
+    assert waiting["trigger_status"] == "WAIT"
+
+    forced = control.force_trigger(driver, wait_s=2.0)
+    _report(f"[force] force_trigger(wait_s=2.0)={forced}")
+    assert forced == {"result": "ok", "trigger_status": "STOP", "completed": True}
