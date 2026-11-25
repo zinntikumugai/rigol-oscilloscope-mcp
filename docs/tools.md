@@ -89,6 +89,7 @@ API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。「500 mV」「20 us」等の�
 | `profile` | object | `name` / `confidence` |
 | `capabilities` | object | プロファイルのcapabilitiesブロックそのまま |
 | `options` | object \| null | 導入済みライセンスオプション(意味的な名前 → `true` / `false`)。判定できなかった項目は `null` |
+| `hardware` | object \| null | 機器自身の申告(issue #55): `analog_channels`(`:SYSTem:RAMount?` の実測ch数。プロファイル宣言値ではない)/ `autoset_available`(AUTO機能が有効かつロックされていない)。プロファイルの `hardware_info` 未宣言なら `null`(照会しない) |
 | `clock` | object \| null | 機器時刻とホスト時刻の突き合わせ(issue #54。下記)。時計クエリを持たない機種では `null` |
 | `unsupported_vendor` | bool | 製造者がRIGOLでない場合 `true` |
 
@@ -194,6 +195,8 @@ Auto Setupは利用者の設定を大きく上書きするため、confirmトー
 
 ニモニックは世代で分岐する(MHO900/DHO系: `:AUToset` / 旧世代: `:AUToscale`)ため、dialect `autoset_command` の宣言必須 — 未宣言の機種では送信せず `UNSUPPORTED_FEATURE`。経緯と実機プローブは [verification/mho98-autoset.md](verification/mho98-autoset.md)(かつての `:AUToscale` ハードコードはMHO900に存在しない未定義ヘッダだった)。
 
+
+**AUTO機能の可否確認(issue #55):** 承認(confirmトークン)を消費した**後**、`:AUToset` を送る**前**に `:AUToset:ENAble?` / `:LOCK?` を読み、無効またはロック中なら実行せず `UNSUPPORTED_FEATURE` を返す(承認前は1コマンドも送らない不変条件を保つため、確認は承認後)。プロファイルの `hardware_info` 未宣言の機種では確認しない
 ---
 
 ## 5. 測定・データ取得

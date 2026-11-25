@@ -1038,6 +1038,16 @@ class ControlService:
         )
 
         with self._audited("autoset", {}) as record:
+            # 承認後・実行前に AUTO機能の可否を確かめる(issue #55)。承認前は
+            # 1コマンドも送らない不変条件を保つため、ここで初めて読む
+            if driver.autoset_available() is False:
+                raise ScopeError(
+                    ErrorCode.UNSUPPORTED_FEATURE,
+                    "Auto Setup is disabled or locked on the device "
+                    "(the AUTO function is turned off on the front panel), "
+                    "so it was not run. Ask the human user to enable it first.",
+                    {"autoset_available": False},
+                )
             # before はチャンネル4本分(28クエリ)を避け、水平軸とトリガに絞る。
             # 記録専用なので、監査無効時はクエリごと省く
             if self._audit.enabled:

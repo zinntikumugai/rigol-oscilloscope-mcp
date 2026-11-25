@@ -312,6 +312,9 @@ def create_server(
         device minus host, in seconds) and carries a warning when they differ;
         it is null when the model has no clock query. This tool never sets the
         clock.
+        hardware is what the device itself reports: analog_channels (the real
+        channel count) and autoset_available (false when the AUTO function is
+        disabled or locked on the device); null when the model cannot report it.
         """
         driver = manager.require_scope()
         status = manager.status()
@@ -326,6 +329,7 @@ def create_server(
             "capabilities": dict(driver.profile.capabilities),
             "options": options,
             "clock": service.clock_check(driver),
+            "hardware": driver.get_hardware_info(),
             "unsupported_vendor": status.unsupported_vendor,
         }
 

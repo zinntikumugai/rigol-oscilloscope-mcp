@@ -186,6 +186,15 @@ def test_get_capabilities_reports_the_device_clock(server) -> None:
     assert clock["warning"] is None
 
 
+def test_get_capabilities_reports_hardware_info(server) -> None:
+    """機器自身が申告するアナログch数と autoset の可否(issue #55)。"""
+    connected(server)
+
+    hardware = payload(call(server, "get_capabilities"))["hardware"]
+
+    assert hardware == {"analog_channels": 4, "autoset_available": True}
+
+
 def test_get_capabilities_reports_installed_options(server) -> None:
     connected(server)
 

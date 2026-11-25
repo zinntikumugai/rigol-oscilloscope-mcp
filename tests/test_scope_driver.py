@@ -4434,3 +4434,37 @@ def test_get_device_time_is_none_on_generic(
     """DHO800/900 には :SYSTem:DATE / TIME が無い。未宣言なら1クエリも送らない。"""
     assert generic_driver.get_device_time() is None
     assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# 機器メタ情報(issue #55)
+# --------------------------------------------------------------------------
+
+
+def test_get_hardware_info_reads_channels_and_autoset(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    assert driver.get_hardware_info() == {"analog_channels": 4, "autoset_available": True}
+    assert sent(scope, "?") == [
+        ":SYSTem:RAMount?",
+        ":AUToset:ENAble?",
+        ":AUToset:LOCK?",
+    ]
+
+
+@pytest.mark.parametrize(("enabled", "locked"), [(False, False), (True, True), (False, True)])
+def test_autoset_is_unavailable_when_disabled_or_locked(
+    driver: ScopeDriver, scope: FakeScope, enabled: bool, locked: bool
+) -> None:
+    scope.autoset_enabled = enabled
+    scope.autoset_locked = locked
+
+    assert driver.autoset_available() is False
+
+
+def test_get_hardware_info_is_none_on_generic(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    assert generic_driver.get_hardware_info() is None
+    assert generic_driver.autoset_available() is None
+    assert scope.command_log == []

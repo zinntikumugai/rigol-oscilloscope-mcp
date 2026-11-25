@@ -958,6 +958,30 @@ class ScopeDriver:
                 {"date": date.strip(), "time": clock.strip()},
             ) from None
 
+    def get_hardware_info(self) -> dict | None:
+        """機器自身が申告する実アナログch数と autoset の可否(issue #55)。
+
+        未宣言の機種では1クエリも送らず None。`analog_channels` はプロファイルの
+        宣言値ではなく実測値(2chモデルの判別に使える。#24)。
+        """
+        if not self.profile.supports("hardware_info"):
+            return None
+        channels = int(parse_nr3(self.session.query(":SYSTem:RAMount?")))
+        return {"analog_channels": channels, "autoset_available": self.autoset_available()}
+
+    def autoset_available(self) -> bool | None:
+        """AUTO機能が有効かつロックされていないか。未宣言の機種では None。
+
+        ガイド3.2.6-7: ロック(`LOCK ON`)または無効化(`ENAble OFF`)されると
+        AUTO機能は働かない。承認を得た autoset が空振りしないよう実行前に確かめる
+        (autoset 自体は実機実行禁止のため、無効時の機器の反応は未観測)。
+        """
+        if not self.profile.supports("hardware_info"):
+            return None
+        enabled = parse_bool(self.session.query(":AUToset:ENAble?"))
+        locked = parse_bool(self.session.query(":AUToset:LOCK?"))
+        return enabled and not locked
+
     def installed_options(self) -> dict[str, bool | None]:
         """導入済みオプションを意味的な名前で返す(不明な項目は None)。
 
