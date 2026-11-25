@@ -2184,3 +2184,51 @@ def test_force_trigger_finishes_a_waiting_single(
         "completed": True,
         "interrupted": False,
     }
+
+
+def test_force_trigger_interrupts_a_waiting_single_on_the_device(
+    audit_path: Path, driver: ScopeDriver, trigger_before: dict, sweep_before: dict
+) -> None:
+    """待機中のロック解放と割り込みを実機のタイミングで確かめる(PR #59 レビュー)。
+
+    サーバーと同じく Tool 全体をロックで囲み、`single(wait_s=5)` の待機中に
+    別スレッドから `force_trigger` を打つ。待機側は割り込みを `interrupted` で
+    知らせ、5秒を待たずに返る。
+    """
+    import threading
+
+    from rigol_oscilloscope_mcp.server import unlocked_sleep
+
+    lock = threading.RLock()
+    service = ControlService(
+        ConfirmTokenStore(), AuditLogger(audit_path), sleep=unlocked_sleep(lock, lambda: driver)
+    )
+    with lock:
+        service.configure_trigger(
+            driver,
+            type="pulse",
+            sweep_mode="normal",
+            settings={"when": "between", "upper_width_s": 10.0, "lower_width_s": 5.0},
+        )
+    results: dict = {}
+
+    def waiter() -> None:
+        with lock:
+            results["single"] = service.single(driver, wait_s=5.0)
+
+    thread = threading.Thread(target=waiter)
+    started = time.monotonic()
+    thread.start()
+    time.sleep(0.5)
+    with lock:  # 待機側がロックを手放していなければここで5秒待たされる
+        results["force"] = service.force_trigger(driver, wait_s=2.0)
+    thread.join(timeout=10)
+    elapsed = time.monotonic() - started
+    _report(f"[force] interrupt: {results} elapsed={elapsed:.2f}s")
+
+    assert results["force"]["completed"] is True
+    assert results["single"]["interrupted"] is True
+    # 実機実測: 割り込み直後の観測はまだ WAIT のことがある(STOP への遷移に
+    # 約0.25秒)。だから「STOP を見たか」ではなく interrupted で判断させる
+    assert results["single"]["completed"] == (results["single"]["trigger_status"] == "STOP")
+    assert elapsed < 4.0

@@ -71,6 +71,14 @@
 - **`:SINGle` は掃引モードを `SINGle` に書き換える**(`:TRIGger:SWEep?` → `SING`)。プローブ後に `AUTO` + `:RUN` へ戻した。device_write の fixture も掃引モードと取り込み状態を復元する
 - **トリガレベルは画面範囲へクランプされる**: CH1 50mV/div で `:TRIGger:EDGE:LEVel 10` → 読み戻し `2.250000E-1`。「レベルを信号の外へ置いてトリガさせない」手は使えないため、テストでは成立し得ないパルス幅条件(5〜10秒)で WAIT を作った
 
-### 2.4 スイート実行
+### 2.4 待機中の割り込み(PR #59 レビュー対応の実機確認)
 
-- write(`-m device_write -k force_trigger`): **1 passed**。`single(wait_s=0.5)` → `completed: false` / `WAIT`、`force_trigger(wait_s=2.0)` → `completed: true` / `STOP`。トリガ種別・掃引モード・取り込み状態の復元漏れゼロ(パルス種別配下の幅設定は既存のトリガテストと同じく復元対象外)
+サーバーと同じく Tool 全体をロックで囲んだ状態で、成立しないトリガ条件の `single(wait_s=5)` を待機させ、0.5秒後に別スレッドから `force_trigger(wait_s=2)` を打った:
+
+- `force_trigger` → `completed: true` / `STOP`
+- 待機していた `single` → **`interrupted: true`** / `trigger_status: WAIT` / `completed: false`。全体の所要 **0.89秒**(5秒を待たずに返った = 待機側はロックを手放していた)
+- 割り込み直後の `single` 側の観測は **まだ WAIT**(STOP への遷移に約0.25秒かかる)。呼び出し側は `completed` ではなく `interrupted` で「別の操作が割り込んだ」と判断する必要がある
+
+### 2.5 スイート実行
+
+- write(`-m device_write -k force_trigger`): **2 passed**(割り込みテストを含む)。`single(wait_s=0.5)` → `completed: false` / `WAIT`、`force_trigger(wait_s=2.0)` → `completed: true` / `STOP`。トリガ種別・掃引モード・取り込み状態の復元漏れゼロ(パルス種別配下の幅設定は既存のトリガテストと同じく復元対象外)
