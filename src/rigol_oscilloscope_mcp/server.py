@@ -614,7 +614,8 @@ def create_server(
         enabled), reset=true (zero the counters), running=true (start counting).
         Items are sent in that order. Then poll get_mask_result.
         A failed frame stops the acquisition on this device (observed), so
-        get_mask_result reports acquisition_running; call run to continue.
+        get_mask_result reports acquisition_running. To continue, call run and then
+        configure_mask(running=true): run alone does not restart the mask counting.
         """
         return control.configure_mask(
             manager.require_scope(),

@@ -2364,6 +2364,8 @@ def mask_before(
                 source=before["source"], x_margin=before["x_margin"], y_margin=before["y_margin"]
             ),
             lambda: driver.configure_mask(enabled=before["enabled"]),
+            # 最後に試験の実行状態を戻す(元が走っていたなら再開する)
+            lambda: driver.configure_mask(running=before["running"]),
         ):
             try:
                 step()

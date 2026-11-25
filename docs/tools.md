@@ -1124,7 +1124,7 @@ MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標
 - 返却: `requested` / `applied` / `mask`(設定後の `get_mask_result`)
 - 実機実測:
   - 試験が無効だと `:MASK:CREate` は `-200`(沈黙はしない。`SCPI_ERROR` として返る)
-  - **不合格のフレームが出ると、マスク試験と取り込みの両方が止まる**(本体の Stop on Fail 相当。ガイドにSCPIは無い)。続けるには `run` と `configure_mask(running=true)`
+  - **不合格のフレームが出ると、マスク試験と取り込みの両方が止まる**(本体の Stop on Fail 相当。ガイドにSCPIは無い)。続けるには `run` の後に `configure_mask(running=true)`(`run` だけでは取り込みは再開するがマスク試験は止まったまま)
   - 余白の単位はガイド上 div だが、**実機の既定値は 2.4 / 4.8 と読める**(ガイドの既定は 0.24 / 0.48 div)。2.8 も受理し、最小付近は丸められる(X 0.005 → 0.1、Y 0.36 → 0.4)。ホスト側では値域を決め打ちせず、read-back(`applied`)を返す
   - `:MASK:OPERate STOP` してもカウンタは残る。`:MASK:CREate` と `:MASK:RESet` で0に戻る
 - プロファイルの capability `mask_test`。未宣言なら送信ゼロで `UNSUPPORTED_FEATURE`

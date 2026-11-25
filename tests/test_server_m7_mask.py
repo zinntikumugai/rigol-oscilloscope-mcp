@@ -104,6 +104,8 @@ def test_configure_mask_warns_that_a_failure_stops_acquisition(server) -> None:
 
     assert "stops the acquisition" in description
     assert "get_mask_result" in description
+    # run だけではマスク試験は止まったまま(実機実測)。再開手順を案内する
+    assert "configure_mask(running=true)" in description
 
 
 # --------------------------------------------------------------------------
