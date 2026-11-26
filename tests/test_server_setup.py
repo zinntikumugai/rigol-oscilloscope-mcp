@@ -111,21 +111,14 @@ def test_default_setup_names_do_not_collide_within_a_second(server) -> None:
     assert first != second
 
 
-def test_restore_setup_rejects_a_huge_file_before_reading_it(
-    server, config: Config, monkeypatch
-) -> None:
-    """上限を超えるファイルは読み込む前に拒否する(メモリを食わない。Copilotレビュー)。"""
-    from pathlib import Path as _Path
-
+def test_restore_setup_rejects_a_huge_file(server, config: Config) -> None:
+    """上限を超えるファイルは上限+1バイトだけ読んで拒否する(stat→read間の差替えも防ぐ)。"""
     connected(server)
     big = config.screenshot_dir / "huge.stp"
     big.write_bytes(b"\0" * (300 * 1024))
-    reads: list[str] = []
-    original = _Path.read_bytes
-    monkeypatch.setattr(_Path, "read_bytes", lambda self: reads.append(str(self)) or original(self))
 
     result = data(server, "restore_setup", {"path": "huge.stp"})
 
     assert result["error"] is True
     assert result["code"] == ErrorCode.INVALID_PARAMETER
-    assert not [r for r in reads if r.endswith("huge.stp")]
+    assert "too large" in result["message"]

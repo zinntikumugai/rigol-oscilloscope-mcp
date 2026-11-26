@@ -1678,17 +1678,17 @@ def create_server(
         """
         driver = manager.require_scope()
         source = service.resolve_read_path(path, resolved_config)
-        # 上限を超えるファイルは読み込む前に拒否する(巨大なファイルでメモリを食わない)
-        size = source.stat().st_size
-        if size > SETUP_MAX_BYTES:
+        # 上限+1バイトまでしか読まない(stat→readの間にファイルが伸びても巨大な読込をしない)
+        with source.open("rb") as f:
+            data = f.read(SETUP_MAX_BYTES + 1)
+        if len(data) > SETUP_MAX_BYTES:
             raise ScopeError(
                 ErrorCode.INVALID_PARAMETER,
-                f"the file is too large to be a setup file ({size} bytes, at most "
-                f"{SETUP_MAX_BYTES})",
-                {"path": str(source), "size": size, "max": SETUP_MAX_BYTES},
+                f"the file is too large to be a setup file (more than {SETUP_MAX_BYTES} bytes)",
+                {"path": str(source), "max": SETUP_MAX_BYTES},
             )
         return control.restore_setup(
-            driver, manager.generation, str(source), source.read_bytes(), confirm_token
+            driver, manager.generation, str(source), data, confirm_token
         )
 
     @_register
