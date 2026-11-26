@@ -576,6 +576,8 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `capture_waveform` | READ_ONLY | 1 |
 | `analyze_waveform` | READ_ONLY | 4 |
 | `capture_screenshot` | READ_ONLY | 1 |
+| `configure_logic_analyzer` | SAFE_WRITE | 中(#86) |
+| `get_logic_analyzer` | READ_ONLY | 中(#86) |
 | `configure_channel` | SAFE_WRITE(50ΩはRESTRICTED) | 2 |
 | `configure_timebase` | SAFE_WRITE | 2 |
 | `configure_trigger` | SAFE_WRITE | 2 |
@@ -613,9 +615,9 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `configure_acquisition` | SAFE_WRITE | M6 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は50(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2 + Phase M6: 2 + Phase M7: 4 + 中優先(#70-#72): 4。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**、Phase M5(トリガ種別)は**15章**、Phase M6(取得モード)は**16章**(`force_trigger` は4章)、Phase M7(イベント検索)は**17章**、Pass/Fail試験は**18章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
+登録Tool数は52(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2 + Phase M6: 2 + Phase M7: 4 + 中優先(#70-#72): 4 + ロジックアナライザ(#86): 2。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**、Phase M5(トリガ種別)は**15章**、Phase M6(取得モード)は**16章**(`force_trigger` は4章)、Phase M7(イベント検索)は**17章**、Pass/Fail試験は**18章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
 
-将来(Phase 4の残り): `:PERiod` / `:VOLTage:HIGH`/`:LOW`(恒久スキップ。`frequency_hz`/`amplitude_vpp`+`offset_v`で表現可能なため)、DHOファミリの `:SOURce`(番号なし・DGモジュール)対応、Logic Analyzer。
+将来(Phase 4の残り): `:PERiod` / `:VOLTage:HIGH`/`:LOW`(恒久スキップ。`frequency_hz`/`amplitude_vpp`+`offset_v`で表現可能なため)、DHOファミリの `:SOURce`(番号なし・DGモジュール)対応。Logic Analyzer の設定は20章(issue #86)。
 
 ---
 
@@ -1227,4 +1229,34 @@ MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標
 - 返却: `result` / `note` / `timebase`(復元後の時間軸)
 - 実機実測: 応答はガイドの言う ASCII ではなくバイナリ(約3KB)。書き戻しは約1.7秒で終わり、時間軸などが保存時の値へ戻る
 - capability `system_setup` と方言 `setup_header`(mho98 のみ)
+
+---
+
+## 20. ロジックアナライザ(issue #86)
+
+デジタルch D0〜D15(ロジックプローブ)の設定。**デジタル波形の点列そのものは取り出せない**(`:WAVeform:SOURce D0` は実機で `-200`。ガイド3.28.1 の値域も CH / MATH のみ)。観測は D0〜D15 をソースにした `configure_decode` / `configure_trigger` / `configure_meter`(カウンタ)と `capture_screenshot` で行う。
+
+### `configure_logic_analyzer` — SAFE_WRITE
+
+| 引数 | 型 | 説明 |
+|---|---|---|
+| `enabled` | bool | LA 機能の有効化(`:LA:ENABle`) |
+| `pods` | object | ポッドごとの設定 `{"1": {"enabled": true, "threshold_v": 1.65}}`。POD1 = D0〜D7、POD2 = D8〜D15。しきい値 −15〜15V(3.3V ロジックなら 1.65V) |
+| `channels` | object | chごとの設定 `{"D3": {"enabled": false, "label": "SDA"}}`。ラベルは英数字と `_ . + -`(空白不可) |
+| `active` | string | 強調表示するch(`D0`〜`D15`) |
+| `autosort` | string | 上からの並び順 `d0_d15` / `d15_d0` |
+| `size` | string | 表示サイズ `small` / `medium` / `large`(`large` は有効なchが8本以下のときだけ。超えると機器が `-222` で拒否) |
+
+- 未指定の項目は変えない。何も指定しなければ `INVALID_PARAMETER`。不正な値が1つでもあれば1コマンドも送らない
+- `pods` / `channels` は **LA が有効なときだけ**指定できる(`enabled=false` と一緒、または `enabled` 省略で機器が無効なら `INVALID_PARAMETER`)。無効のあいだは読み戻しが全て 0 になり、効いたか確かめられないため。同じポッド・chを2通りの書き方で重複指定しても `INVALID_PARAMETER`
+- ラベルの長さに上限は設けない(ガイドに記載なし。実機は36文字をそのまま受け付けた)
+- **送る順は固定**: LA 全体 → ポッド → ch → アクティブch → 並び順 → サイズ。実機実測: **ポッドの表示を切り替えるとそのポッドの8chが揃って切り替わる**ので、chの指定はポッドの後に送る。サイズは有効なch数に依存するので最後に送る
+- 返却: `requested` / `applied`(読み戻した値。引数と同じ形)/ `changed`
+
+### `get_logic_analyzer` — READ_ONLY
+
+`enabled` / `active` / `autosort` / `size` / `pods`(`{"1": {"enabled", "threshold_v"}}`)/ `channels`(`{"D0": {"enabled", "label"}}`)を返す。**LA が無効のあいだはポッド・chの有効が全て `false` と読める**(有効に戻すと元の状態に戻る。実機実測)。
+
+- capability `logic_analyzer` と方言 `la_autosort` / `la_sizes`(mho98 のみ)。ch数は `digital_channels`
+- 実機所見は [verification/mho98-m6.md](verification/mho98-m6.md) §18
 

@@ -360,3 +360,21 @@ BUS2 を IIS モードにして **`:BUS2:THReshold? I2SClk`**(ガイド3.4.9 に
 
 - セルフレビュー後の再確認(2026-11-26): FlexRay トリガの `frame_type="null"`(YAML の素の `null` キーが None になっていた不具合を修正)を書き込み → 読み戻し `null` → 元へ戻した(No error)。`-k "decode or option or i2s or flexray or m1553"` **12 passed**、戻し忘れ0件
 - 機器の不具合の記録: この確認の前に、BUS1 だけ「データソース USER → `:BITX` 書き込み → `:SOURce?`」で `-232` を積んで沈黙する状態になった(BUS2 は同じ手順で正常、BUS2 でオプション3種の設定往復をしても再現せず、`:SYSTem:SETup` の復元でも直らなかった)。**機器の再起動で解消**し、その後は同じテストを続けて流しても再発しない。原因は不明
+
+## 18. ロジックアナライザ(issue #86、2026-11-26)
+
+検証用 ESP32 ボード(rigol-oscilloscope-mcp_check-esp32)を D0〜D15 に接続した状態で確かめた(ボードは `idle`。信号を使う検証は issue #87)。
+
+| 操作 | 結果 | 所見 |
+|---|---|---|
+| `:LA:ENABle?` / `:ACTive?` / `:AUTosort?` / `:SIZE?` / `:POD<n>:DISPlay?` / `:POD<n>:THReshold?` / `:DIGital:ENABle? D<n>` / `:DIGital:LABel? D<n>` | `1` / `D0` / `D15D0` / `MED` / `1` / `0.000000` / `1` / `D0` | 11本すべて No error |
+| `:LA:POD1:THReshold 1.65` | 読み戻し `1.650000E0` | |
+| `:LA:DIGital:LABel D0,TX` | 読み戻し `TX` | 引数の区切りは空白なしの `,` で通る |
+| 16ch 有効のまま `:LA:SIZE LARGe` | **`-222`** | ガイドどおり8ch以下のときだけ。POD2 を消すと通る |
+| D15 を無効にして `:LA:ACTive D15` | **受理**(読み戻し `D15`) | ガイドの「有効なchだけ」と違う |
+| `:LA:POD2:DISPlay OFF` → `ON` | D8〜D15 が揃って 0 → 1 | **ポッドの表示はその8chをまとめて切り替える**。ch1本を ON にしてもポッドの表示は 0 のまま |
+| `:LA:ENABle OFF` → `ON` | 無効のあいだポッド・chは全て 0、有効に戻すと元の状態 | 無効のあいだは元の状態を読めない |
+| `:WAVeform:SOURce D0` / `D1`(RUN・STOP、NORMal・RAW) | **`-200`** | デジタル波形の点列は取り出せない。`LA` は `-222` |
+
+- write(`-k logic_analyzer`): **1 passed**。しきい値 1.65V・ラベル・ch無効化・アクティブch・並び順を書いて読み戻し、元の状態へ戻して一致を確認
+

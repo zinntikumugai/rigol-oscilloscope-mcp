@@ -793,3 +793,14 @@ def test_timebase_extras_answer(driver: ScopeDriver) -> None:
     assert -500 <= extras["href_position"] <= 500
     assert isinstance(extras["delay_enabled"], bool)
     assert driver.session.drain_error_queue() == []
+
+
+def test_get_logic_analyzer_answers(driver: ScopeDriver) -> None:
+    """ロジックアナライザの設定が全項目読めること(issue #86)。値は機器の状態次第。"""
+    state = driver.get_logic_analyzer()
+    _report(f"[la] enabled={state['enabled']} pods={state['pods']} active={state['active']}")
+
+    assert set(state["pods"]) == {"1", "2"}
+    assert list(state["channels"]) == [f"D{n}" for n in range(16)]
+    assert state["size"] in ("small", "medium", "large")
+    assert driver.session.drain_error_queue() == []

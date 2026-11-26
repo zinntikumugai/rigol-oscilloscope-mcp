@@ -106,7 +106,7 @@ LLMに `:CHAN1:SCAL 1` のようなSCPI文字列を直接生成・送信させ�
 
 ### 3.3 将来対応(Phase 4以降)
 
-Logic Analyzer(D0–D15)、ホスト側高度解析(FFT等)。予定の詳細は [roadmap.md](roadmap.md) に記録し、着手時に要件へ昇格させる。
+ホスト側高度解析(FFT等)。Logic Analyzer(D0–D15)の設定は `configure_logic_analyzer` / `get_logic_analyzer` で対応済み(issue #86。デジタル波形の点列は機器が転送できないため、デコード・トリガ・カウンタ・スクリーンショットで観測する)。予定の詳細は [roadmap.md](roadmap.md) に記録し、着手時に要件へ昇格させる。
 
 ### 3.4 非対象
 

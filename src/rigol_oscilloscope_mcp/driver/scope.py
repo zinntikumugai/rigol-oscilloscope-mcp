@@ -227,6 +227,31 @@ _AUTOSET_OPTION_ITEMS: tuple[tuple[str, str, object], ...] = (
     ("keep_coupling", ":KEEPcoup", "bool"),
 )
 
+#: ロジックアナライザ(ガイド3.13。issue #86)。**送る順はこの表の並び**: LA 全体 →
+#: ポッド → ch → アクティブch → 並び順 → サイズ。実機実測: ポッドの表示を切り替える
+#: とそのポッドの8chが揃って切り替わる(chの指定より先に送る)、LARGe は有効なch
+#: が8本以下のときだけ(chの指定より後に送る)
+_LA_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("enabled", ":ENABle", "bool"),
+)
+_LA_TAIL_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("active", ":ACTive", "dchannel"),
+    ("autosort", ":AUTosort", ("enum", "la_autosort", "the logic analyzer channel order")),
+    ("size", ":SIZE", ("enum", "la_sizes", "the logic analyzer waveform size")),
+)
+_LA_POD_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("enabled", ":DISPlay", "bool"),
+    ("threshold_v", ":THReshold", ("frange", -15.0, 15.0)),
+)
+#: ch別の項目は `<パス> D<n>,<値>` / `<パス>? D<n>`(`_command_plan` の argument)
+#: ラベルの長さはガイドに上限が無く、実機も36文字をそのまま受け付けた(文字種だけ検証する)
+_LA_CHANNEL_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("enabled", ":DIGital:ENABle", "bool"),
+    ("label", ":DIGital:LABel", "label"),
+)
+#: 1ポッドあたりのデジタルch数(POD1 = D0-D7、POD2 = D8-D15)
+LA_POD_WIDTH = 8
+
 #: 設定ファイル(:SYSTem:SETup)の上限サイズ。実機の設定は約3KB。これを大きく
 #: 超えるものは設定ファイルではないとみなして送らない
 SETUP_MAX_BYTES = 256 * 1024
@@ -909,6 +934,27 @@ def _math_int(value: object, key: str, low: int, high: int | None) -> str:
     return str(value)
 
 
+def _la_mapping(value: object, key: str) -> dict:
+    """`pods` / `channels` の引数(未指定は空)。"""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise _invalid(f"{key} must be an object: {value!r}", {"key": key, "value": value})
+    return value
+
+
+def _la_pod_number(name: object, count: int) -> int:
+    """ポッド番号(`1` / `"1"` / `"pod1"`)を検証する。"""
+    text = str(name).strip().lower().removeprefix("pod")
+    # isdigit() は上付き数字なども真になり int() で落ちるので ASCII の数字だけ受ける
+    if not re.fullmatch(r"[0-9]+", text) or not 1 <= int(text) <= count:
+        raise _invalid(
+            f"pods key must be 1-{count} (POD1 = D0-D7, POD2 = D8-D15): {name!r}",
+            {"key": "pods", "value": name},
+        )
+    return int(text)
+
+
 def _reference_label(value: object, key: str) -> str:
     """リファレンスのラベル文字列を**送信前**に検証する(ガイド3.20.5)。
 
@@ -1156,6 +1202,156 @@ class ScopeDriver:
             key: parse_bool(self.session.query(f":AUToset{path}?"))
             for key, path, _ in _AUTOSET_OPTION_ITEMS
         }
+
+    # -- ロジックアナライザ(issue #86)----------------------------------------
+
+    def _digital_channel(self, value: object, key: str) -> str:
+        """`D0`-`D<デジタルch数-1>` を検証して大文字の送信形へ(大小は問わない)。"""
+        count = self.digital_channels
+        text = value.strip().upper() if isinstance(value, str) else ""
+        match = re.fullmatch(r"D(\d{1,2})", text)
+        if match is None or int(match.group(1)) >= count:
+            raise _invalid(
+                f"{key} must be a digital channel D0-D{count - 1}: {value!r}",
+                {"key": key, "value": value},
+            )
+        return f"D{int(match.group(1))}"
+
+    def _la_pod_count(self) -> int:
+        return self.digital_channels // LA_POD_WIDTH
+
+    def _la_plan(
+        self,
+        enabled: object,
+        pods: object,
+        channels: object,
+        tail: dict,
+    ) -> list:
+        """送信計画を組む(検証はここで全て済ませる。1つでも不正なら何も送らない)。
+
+        各要素は (返却先, キー, set, query, 変換)。返却先は None(全体)/
+        ("pods", "<n>") / ("channels", "D<n>")。
+        """
+        plan: list[tuple[object, str, str, str, object]] = []
+
+        def add(target: object, entries: list) -> None:
+            plan.extend((target, *entry) for entry in entries)
+
+        add(None, self._command_plan(":LA", 0, _LA_ITEMS, {"enabled": enabled}))
+        seen: set[str] = set()
+
+        def once(name: str, original: object) -> str:
+            # "1" と "pod1"、"D3" と "d3" のような同じ対象の重複は、どちらが効くかが
+            # 辞書の順で決まり、返却でも1つにまとまって見えなくなる
+            if name in seen:
+                raise _invalid(
+                    f"{name} is specified more than once: {original!r}",
+                    {"key": name, "value": original},
+                )
+            seen.add(name)
+            return name
+
+        for name, settings in _la_mapping(pods, "pods").items():
+            number = _la_pod_number(name, self._la_pod_count())
+            once(f"pod{number}", name)
+            add(("pods", str(number)), self._la_entries(
+                f":LA:POD{number}", _LA_POD_ITEMS, settings, f"pods[{name!r}]", None
+            ))
+        for name, settings in _la_mapping(channels, "channels").items():
+            channel = once(self._digital_channel(name, "channels key"), name)
+            add(("channels", channel), self._la_entries(
+                ":LA", _LA_CHANNEL_ITEMS, settings, f"channels[{name!r}]", channel
+            ))
+        add(None, self._command_plan(":LA", 0, _LA_TAIL_ITEMS, tail))
+        return plan
+
+    def _la_entries(
+        self, prefix: str, items: tuple, settings: object, where: str, argument: str | None
+    ) -> list:
+        if not isinstance(settings, dict):
+            raise _invalid(f"{where} must be an object of settings: {settings!r}", {"key": where})
+        allowed = [key for key, _, _ in items]
+        unknown = sorted(str(key) for key in settings if key not in allowed)
+        if unknown:
+            raise _invalid(
+                f"{where} has unknown settings: {unknown}",
+                {"key": where, "unknown": unknown, "allowed": allowed},
+            )
+        entries = self._command_plan(prefix, 0, items, settings, argument=argument)
+        if not entries:
+            # 空の設定(`{}` や値が全て null)は何も変えないので、成功に見せず拒否する
+            raise _invalid(
+                f"{where} has nothing to change (specify at least one of {allowed})",
+                {"key": where, "allowed": allowed},
+            )
+        return entries
+
+    def configure_logic_analyzer(
+        self,
+        *,
+        enabled: bool | None = None,
+        pods: dict | None = None,
+        channels: dict | None = None,
+        active: str | None = None,
+        autosort: str | None = None,
+        size: str | None = None,
+    ) -> dict:
+        """ロジックアナライザを設定する(issue #86)。指定された項目だけを送る。
+
+        `pods` は `{"1": {"enabled", "threshold_v"}}`、`channels` は
+        `{"D3": {"enabled", "label"}}`。返却も同じ形(読み戻した値)。
+        """
+        self._require("logic_analyzer", "the logic analyzer")
+        plan = self._la_plan(
+            enabled, pods, channels, {"active": active, "autosort": autosort, "size": size}
+        )
+        if (pods or channels) and not (
+            enabled if enabled is not None else parse_bool(self.session.query(":LA:ENABle?"))
+        ):
+            # 実機実測: LA が無効のあいだはポッド・chが全て 0 と読め、読み戻しで
+            # 効いたかどうかを確かめられない
+            raise _invalid(
+                "pods and channels can only be set while the logic analyzer is on; "
+                "pass enabled=true as well",
+                {"enabled": enabled},
+            )
+        applied: dict[str, object] = {}
+        for target, key, set_cmd, query, from_scpi in plan:
+            value = from_scpi(self.session.set_and_verify(set_cmd, query))
+            if target is None:
+                applied[key] = value
+            else:
+                group, name = target
+                applied.setdefault(group, {}).setdefault(name, {})[key] = value
+        return applied
+
+    def get_logic_analyzer(self) -> dict:
+        """ロジックアナライザの設定を読む(書き込みは無い)。
+
+        実機実測: LA が無効のあいだはポッド・chの有効は全て 0 と読める(有効に
+        戻すと元の状態に戻る)。
+        """
+        self._require("logic_analyzer", "the logic analyzer")
+        query = self.session.query
+        state: dict[str, object] = {"enabled": parse_bool(query(":LA:ENABle?"))}
+        for key, path, kind in _LA_TAIL_ITEMS:
+            _, from_scpi = self._converter(kind, 0)
+            state[key] = from_scpi(query(f":LA{path}?"))
+        state["pods"] = {
+            str(n): {
+                "enabled": parse_bool(query(f":LA:POD{n}:DISPlay?")),
+                "threshold_v": parse_nr3(query(f":LA:POD{n}:THReshold?")),
+            }
+            for n in range(1, self._la_pod_count() + 1)
+        }
+        state["channels"] = {
+            f"D{n}": {
+                "enabled": parse_bool(query(f":LA:DIGital:ENABle? D{n}")),
+                "label": query(f":LA:DIGital:LABel? D{n}").strip().strip('"'),
+            }
+            for n in range(self.digital_channels)
+        }
+        return state
 
     def autoset_available(self) -> bool | None:
         """AUTO機能が有効かつロックされていないか。未宣言の機種では None。
@@ -3316,6 +3512,11 @@ class ScopeDriver:
             return (
                 (lambda value, key: self._reference_source(value, key)),
                 _math_source_readback,
+            )
+        if kind == "dchannel":
+            return (
+                (lambda value, key: self._digital_channel(value, key)),
+                (lambda text: text.strip().upper()),
             )
         if kind == "label":
             # 実測(firmware 00.01.00): `:REFerence:LABel:CONTent 1,TESTLBL` の

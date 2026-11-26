@@ -1684,6 +1684,46 @@ def create_server(
         )
 
     @_register
+    def configure_logic_analyzer(
+        enabled: bool | None = None,
+        pods: dict | None = None,
+        channels: dict | None = None,
+        active: str | None = None,
+        autosort: str | None = None,
+        size: str | None = None,
+    ) -> dict:
+        """Set up the logic analyzer (digital channels D0-D15). Omitted items are
+        left unchanged. pods sets each channel group: {"1": {"enabled": true,
+        "threshold_v": 1.65}} (POD1 = D0-D7, POD2 = D8-D15; threshold -15 to 15 V,
+        use about half the logic supply, e.g. 1.65 for 3.3 V logic). Turning a pod
+        on or off turns all its 8 channels on or off. channels sets single
+        channels after the pods: {"D3": {"enabled": false, "label": "SDA"}}
+        (label: letters, digits, _ . + -). active picks the highlighted channel,
+        autosort is "d0_d15" or "d15_d0" (top to bottom), size is "small",
+        "medium" or "large" (large needs 8 or fewer enabled channels). The
+        digital waveform data itself cannot be downloaded; observe it with
+        configure_decode (sources D0-D15), triggers, the counter or a screenshot.
+        """
+        return control.configure_logic_analyzer(
+            manager.require_scope(),
+            enabled=enabled,
+            pods=pods,
+            channels=channels,
+            active=active,
+            autosort=autosort,
+            size=size,
+        )
+
+    @_register
+    def get_logic_analyzer() -> dict:
+        """Read the logic analyzer setup: whether it is on, each pod's on/off and
+        threshold, each channel's on/off and label, the active channel, the order
+        and the size. While the logic analyzer is off, every pod and channel
+        reads as off (they come back when it is turned on again).
+        """
+        return manager.require_scope().get_logic_analyzer()
+
+    @_register
     def save_setup(path: str | None = None) -> dict:
         """Save the whole instrument setup to a file on the host (default name
         scope_setup_<time with milliseconds>.stp in the default directory). Use it before changing

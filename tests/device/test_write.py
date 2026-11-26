@@ -2780,6 +2780,8 @@ def test_configure_autoset_options_round_trip(
         driver.configure_autoset_options(**before)
         assert driver.get_autoset_options() == before
 
+
+# --------------------------------------------------------------------------
 # 測定ヒストグラム(issue #71)
 # --------------------------------------------------------------------------
 
@@ -2949,3 +2951,67 @@ def test_host_analyses_on_the_calibration_square_wave(
     finally:
         driver.set_channel_scale("CH1", ch1_scale)
         driver.set_timebase_scale(timebase)
+
+
+# --------------------------------------------------------------------------
+# ロジックアナライザ(issue #86)
+# --------------------------------------------------------------------------
+
+
+def _restore_logic_analyzer(driver: ScopeDriver, before: dict) -> None:
+    """読んだ状態へ戻す。ポッドの表示は8chをまとめて切り替えるので、ポッド → ch の順"""
+    from rigol_oscilloscope_mcp.driver.scope import _REFERENCE_LABEL_RE
+
+    # 前面パネルで付けたラベルは MCP が受け付ける文字種(英数字と _ . + -)とは限らない。
+    # 受け付けないラベルは書き戻さない(テストもそのchのラベルには触れない)
+    channels = {
+        name: {
+            key: value
+            for key, value in settings.items()
+            if key != "label" or _REFERENCE_LABEL_RE.fullmatch(value)
+        }
+        for name, settings in before["channels"].items()
+    }
+    driver.configure_logic_analyzer(
+        enabled=True,
+        pods=before["pods"],
+        channels=channels,
+        active=before["active"],
+        autosort=before["autosort"],
+        size=before["size"],
+    )
+    if not before["enabled"]:
+        driver.configure_logic_analyzer(enabled=False)
+
+
+def test_logic_analyzer_round_trip(control: ControlService, driver: ScopeDriver) -> None:
+    before = driver.get_logic_analyzer()
+    _report(f"[la] before={before}")
+    if not before["enabled"]:
+        # 無効のあいだはポッド・chが全て 0 と読め、元の状態を控えられない
+        pytest.skip("ロジックアナライザが無効(前面パネルで有効にしてから流す)")
+    from rigol_oscilloscope_mcp.driver.scope import _REFERENCE_LABEL_RE
+
+    # 書き換えるのは D1 のラベルだけ。MCP が受け付けない文字種(前面パネルで付けた
+    # 空白入り等)なら書き戻せないので、変える前に skip する。他のchのラベルには
+    # 触れないので、最後の全体比較はそのまま成り立つ
+    if not _REFERENCE_LABEL_RE.fullmatch(before["channels"]["D1"]["label"]):
+        pytest.skip(f"D1 のラベル {before['channels']['D1']['label']!r} は書き戻せない文字を含む")
+    try:
+        result = control.configure_logic_analyzer(
+            driver,
+            pods={"1": {"threshold_v": 1.65}, "2": {"threshold_v": 1.65}},
+            channels={"D1": {"label": "TX"}, "D15": {"enabled": False}},
+            active="D1",
+            autosort="d0_d15" if before["autosort"] == "d15_d0" else "d15_d0",
+        )
+        _report(f"[la] applied={result['applied']}")
+        state = driver.get_logic_analyzer()
+        assert state["pods"]["1"]["threshold_v"] == pytest.approx(1.65)
+        assert state["channels"]["D1"]["label"] == "TX"
+        assert state["channels"]["D15"]["enabled"] is False
+        assert state["active"] == "D1"
+        assert driver.session.drain_error_queue() == []
+    finally:
+        _restore_logic_analyzer(driver, before)
+        assert driver.get_logic_analyzer() == before
