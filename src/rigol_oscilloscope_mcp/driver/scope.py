@@ -1277,7 +1277,14 @@ class ScopeDriver:
                 f"{where} has unknown settings: {unknown}",
                 {"key": where, "unknown": unknown, "allowed": allowed},
             )
-        return self._command_plan(prefix, 0, items, settings, argument=argument)
+        entries = self._command_plan(prefix, 0, items, settings, argument=argument)
+        if not entries:
+            # 空の設定(`{}` や値が全て null)は何も変えないので、成功に見せず拒否する
+            raise _invalid(
+                f"{where} has nothing to change (specify at least one of {allowed})",
+                {"key": where, "allowed": allowed},
+            )
+        return entries
 
     def configure_logic_analyzer(
         self,

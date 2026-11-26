@@ -199,6 +199,8 @@ def test_control_service_requires_something_to_change(driver: ScopeDriver, tmp_p
         {"pods": {"1": {"enabled": True}, "pod1": {"enabled": False}}},
         {"channels": {"D3": {"enabled": True}, "d3": {"enabled": False}}},
         {"pods": {"²": {"enabled": True}}},
+        {"pods": {"1": {}}},
+        {"channels": {"D2": {"label": None}}},
     ],
 )
 def test_duplicate_or_odd_keys_are_rejected(driver: ScopeDriver, scope: FakeScope, kwargs) -> None:
