@@ -4814,3 +4814,77 @@ def test_configure_acquisition_rejects_undeclared_memory_depth(
 
 def test_get_acquisition_config_includes_memory_depth(driver: ScopeDriver) -> None:
     assert driver.get_acquisition_config()["memory_depth"] == 10_000
+
+
+# --------------------------------------------------------------------------
+# チャンネルの追加属性(issue #67)
+# --------------------------------------------------------------------------
+
+
+def test_configure_channel_extras_sends_items_in_table_order(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    applied = driver.configure_channel_extras(
+        "CH2",
+        delay_calibration_s=2e-8,
+        bias_v=0.1,
+        label="TEST2",
+        label_display=True,
+        units="ampere",
+        vernier=True,
+        invert=True,
+    )
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":CHANnel2")]
+    assert writes == [
+        ":CHANnel2:INVert ON",
+        ":CHANnel2:VERNier ON",
+        ":CHANnel2:UNITs AMPere",
+        ":CHANnel2:LABel:CONTent TEST2",
+        ":CHANnel2:LABel:SHOW ON",
+        ":CHANnel2:POSition 0.1",
+        ":CHANnel2:TCALibrate 2e-08",
+    ]
+    assert applied == {
+        "invert": True,
+        "vernier": True,
+        "units": "ampere",
+        "label": "TEST2",
+        "label_display": True,
+        "bias_v": 0.1,
+        "delay_calibration_s": 2e-8,
+    }
+
+
+def test_get_channel_extras_reads_all_items(driver: ScopeDriver) -> None:
+    assert driver.get_channel_extras("CH1") == {
+        "invert": False,
+        "vernier": False,
+        "units": "volt",
+        "label": "CH1",
+        "label_display": False,
+        "bias_v": 0.0,
+        "delay_calibration_s": 0.0,
+    }
+
+
+def test_configure_channel_extras_rejects_a_label_that_could_inject(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_channel_extras("CH2", label="A;*RST")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_channel_extras_unsupported_on_generic(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """未宣言の機種では読み取りも含め1コマンドも送らない。"""
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.configure_channel_extras("CH1", invert=True)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert generic_driver.get_channel_extras("CH1") == {}
+    assert scope.command_log == []

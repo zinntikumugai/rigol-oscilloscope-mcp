@@ -2545,3 +2545,61 @@ def test_configure_acquisition_memory_depth_round_trip(
     limit = {1: 500_000_000, 2: 250_000_000}.get(shown, 125_000_000)
     assert clamped["applied"]["memory_depth"] == limit
     assert driver.session.drain_error_queue() == []
+
+
+# --------------------------------------------------------------------------
+# チャンネルの追加属性(issue #67)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def channel_extras_before(
+    request: pytest.FixtureRequest, driver: ScopeDriver
+) -> Iterator[dict]:
+    """CH2 の追加属性を控え、teardownで必ず書き戻す。"""
+    before = driver.get_channel_extras(TEST_CHANNEL)
+    tag = request.node.name
+    _report(f"[before:{tag}] extras={before}")
+    try:
+        yield before
+    finally:
+        failure: Exception | None = None
+        try:
+            driver.configure_channel_extras(TEST_CHANNEL, **before)
+        except Exception as exc:  # 復元は最後まで試みる
+            failure = exc
+        after = driver.get_channel_extras(TEST_CHANNEL)
+        drift = _diff(before, after)
+        _report(f"[restore:{tag}] extras 復元後={after}")
+        assert failure is None, f"チャンネル追加属性の復元に失敗: {failure!r}"
+        assert not drift, f"チャンネル追加属性が復元されていません: {drift}"
+
+
+def test_configure_channel_extras_round_trip(
+    control: ControlService, driver: ScopeDriver, channel_extras_before: dict
+) -> None:
+    result = control.configure_channel(
+        driver,
+        0,
+        TEST_CHANNEL,
+        invert=True,
+        vernier=True,
+        units="ampere",
+        label="TEST2",
+        label_display=True,
+        bias_v=0.1,
+        delay_calibration_s=2e-8,
+    )
+    _report(f"[channel] extras applied={result['applied']}")
+
+    assert result["applied"] == {
+        "invert": True,
+        "vernier": True,
+        "units": "ampere",
+        "label": "TEST2",
+        "label_display": True,
+        "bias_v": pytest.approx(0.1),
+        "delay_calibration_s": pytest.approx(2e-8),
+    }
+    assert result["changed"] is True
+    assert driver.session.drain_error_queue() == []

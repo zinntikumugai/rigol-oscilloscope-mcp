@@ -767,3 +767,14 @@ def test_hardware_info_answers(driver: ScopeDriver) -> None:
     assert info["analog_channels"] == driver.analog_channels  # MHO98 は 4
     assert isinstance(info["autoset_available"], bool)
     assert driver.session.drain_error_queue() == []
+
+
+def test_channel_extras_answer(driver: ScopeDriver) -> None:
+    """チャンネルの追加属性の読み取り(issue #67)。"""
+    extras = driver.get_channel_extras("CH1")
+    _report(f"[channel] CH1 extras={extras}")
+
+    assert extras["units"] in ("volt", "ampere", "watt", "unknown")
+    assert isinstance(extras["label"], str)
+    assert isinstance(extras["invert"], bool)
+    assert driver.session.drain_error_queue() == []

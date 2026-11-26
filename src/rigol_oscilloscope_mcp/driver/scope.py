@@ -185,6 +185,19 @@ _MASK_ITEMS: tuple[tuple[str, str, object], ...] = (
     ("y_margin", ":Y", "number"),
 )
 
+#: チャンネルの追加属性(ガイド3.6。issue #67)。**この並びがそのまま送信順**。
+#: ラベルは中身を先に書いてから表示を切り替える
+_CHANNEL_EXTRA_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("invert", ":INVert", "bool"),
+    ("vernier", ":VERNier", "bool"),
+    ("units", ":UNITs", ("enum", "channel_units", "the channel unit")),
+    ("label", ":LABel:CONTent", "label"),
+    ("label_display", ":LABel:SHOW", "bool"),
+    ("bias_v", ":POSition", "number"),
+    ("delay_calibration_s", ":TCALibrate", "number"),
+)
+CHANNEL_EXTRA_KEYS = tuple(key for key, _, _ in _CHANNEL_EXTRA_ITEMS)
+
 # 機器が「測定不能」を示すために返す番兵値(±9.9E37 前後)
 INVALID_MEASUREMENT = 9.0e37
 
@@ -1555,6 +1568,38 @@ class ScopeDriver:
                 {"value": value, "allowed": list(allowed)},
             )
         return token
+
+    def configure_channel_extras(self, channel: str, **values: object) -> dict:
+        """チャンネルの追加属性を設定する(issue #67)。None の項目は変更しない。
+
+        `channel_units` の宣言がゲート(未宣言なら送信前に UNSUPPORTED_FEATURE)。
+        """
+        number = self._channel_number(channel)
+        self._afg_enum("channel_units", "the channel unit")
+        unknown = sorted(key for key in values if key not in CHANNEL_EXTRA_KEYS)
+        if unknown:
+            raise _invalid(
+                f"unknown channel attributes: {unknown}",
+                {"unknown": unknown, "allowed": list(CHANNEL_EXTRA_KEYS)},
+            )
+        plan = self._command_plan(
+            f":CHANnel{number}", number, _CHANNEL_EXTRA_ITEMS, values
+        )
+        return {
+            key: from_scpi(self.session.set_and_verify(set_cmd, query))
+            for key, set_cmd, query, from_scpi in plan
+        }
+
+    def get_channel_extras(self, channel: str) -> dict:
+        """チャンネルの追加属性を読む。**未宣言の機種では1クエリも送らず空dict**。"""
+        number = self._channel_number(channel)
+        if not isinstance(self.profile.dialect.get("channel_units"), dict):
+            return {}
+        extras: dict[str, object] = {}
+        for key, path, kind in _CHANNEL_EXTRA_ITEMS:
+            _, from_scpi = self._converter(kind, number)
+            extras[key] = from_scpi(self.session.query(f":CHANnel{number}{path}?"))
+        return extras
 
     def set_timebase_scale(self, s_per_div: float) -> float:
         readback = self.session.set_and_verify(

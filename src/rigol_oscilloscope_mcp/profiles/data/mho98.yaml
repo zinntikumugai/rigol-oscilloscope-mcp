@@ -272,6 +272,13 @@ dialect:
     high_resolution: HRESolution
   # ADC分解能(ガイド3.3.5)。high_resolution モードでだけ効く(他モードは12bit)。
   # DHO800/900 には無い(:ACQuire:HRESolution が別綴りで在る)ため方言化
+  # チャンネルの表示単位(ガイド3.6.12。issue #67)。これの宣言がチャンネルの追加属性
+  # (反転・微調整・単位・ラベル・バイアス・遅延補正)のゲート。応答は短形(VOLT / AMP)
+  channel_units:
+    volt: VOLTage
+    ampere: AMPere
+    watt: WATT
+    unknown: UNKNown
   acquire_bits: [14, 16]
   # メモリ深さの選択肢(ガイド3.3.2。issue #66)。"auto" は別に受け付ける。実機実測:
   # ch数で決まる上限(4ch時125M)を超えるとエラーなしで上限へ丸められる / AUTO の

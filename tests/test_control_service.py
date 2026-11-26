@@ -228,6 +228,17 @@ def test_configure_channel_all_none_sends_nothing(
 # --- 監査ログ ---------------------------------------------------------------
 
 
+def test_configure_channel_applies_extra_attributes(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    """反転・単位などの追加属性も同じ呼び出しで設定でき、changed に反映される(#67)。"""
+    result = service.configure_channel(driver, 0, "CH2", invert=True, units="ampere")
+
+    assert result["requested"] == {"invert": True, "units": "ampere"}
+    assert result["applied"] == {"invert": True, "units": "ampere"}
+    assert result["changed"] is True
+
+
 def test_configure_channel_writes_single_audit_row(
     service: ControlService, driver: ScopeDriver, audit_path: Path
 ) -> None:

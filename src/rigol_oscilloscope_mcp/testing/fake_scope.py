@@ -449,6 +449,17 @@ _CHANNEL_PROPS: tuple[tuple[str, str], ...] = (
     ("impedance", "IMPedance"),
 )
 
+#: チャンネルの追加属性(ガイド3.6。issue #67)。ラベルの既定は "CH<n>"(実機)
+_CHANNEL_EXTRA_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("invert", "INVert", "bool", False),
+    ("vernier", "VERNier", "bool", False),
+    ("units", "UNITs", ("WATT", "AMPere", "VOLTage", "UNKNown"), "VOLT"),
+    ("label", "LABel:CONTent", "str", None),
+    ("label_show", "LABel:SHOW", "bool", False),
+    ("bias", "POSition", "nr3", 0.0),
+    ("delay_cal", "TCALibrate", "nr3", 0.0),
+)
+
 _TRIGGER_STATUS = {"RUN": "TD", "STOP": "STOP", "SINGLE": "WAIT"}
 
 # ---------------------------------------------------------------------------
@@ -946,6 +957,13 @@ class FakeScope:
             }
             for n in range(1, 5)
         }
+        self.channel_extras: dict[int, dict] = {
+            n: {
+                key: (f"CH{n}" if key == "label" else default)
+                for key, _, _, default in _CHANNEL_EXTRA_PROPS
+            }
+            for n in range(1, 5)
+        }
         # デコードバス(4本)。モード切替では各プロトコルの設定を消さない
         # (実機でも設定は保持される)。
         self.buses: dict[int, dict] = {
@@ -1137,6 +1155,11 @@ class FakeScope:
                         k, int(m.group(1)), m.group(2)
                     ),
                 )
+            )
+
+        for n in range(1, 5):
+            entries += self._prop_entries(
+                rf":?{_mn('CHANnel')}{n}", _CHANNEL_EXTRA_PROPS, self.channel_extras[n]
             )
 
         timebase = rf":?{_mn('TIMebase')}:{_mn('MAIN')}"
