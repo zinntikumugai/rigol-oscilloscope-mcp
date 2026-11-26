@@ -35,6 +35,10 @@ capabilities:
   # 3.2.2-5。issue #70)。設定の書き込み・読み戻しは実機で確認済み(autoset の
   # 実行そのものは実機で禁止のまま)
   autoset_options: true
+  # 設定の一括保存・復元(:SYSTem:SETup。ガイド3.24.20。issue #72)。実機実測: 応答は
+  # ガイドの言う ASCII ではなくバイナリ(約3KB)。先頭4バイトが9バイト目以降の
+  # CRC32(LE)、次の4バイトが全体長−8(LE)。書き戻すと設定が戻る
+  system_setup: true
   # Pass/Fail(マスク)試験(ガイド3.15。issue #57)。:MASK:OUTPut:*(背面AUX出力)
   # は対象外。実機実測: 試験が無効だと :MASK:CREate は -200、不合格が出ると
   # 取り込みが止まる
@@ -303,6 +307,8 @@ dialect:
   # CAN-FD デコード(:BUS<n>:CAN:FDBaud / :FDSPoint。issue #69)。CAN-FD オプションが
   # 導入済みのときだけ扱う(未ライセンスだと読み取りでも -222 を積むため)
   decode_can_fd: true
+  # :SYSTem:SETup のヘッダ形式。復元時、これに合わない(壊れた・別の)データは送らない
+  setup_header: crc32_length
   acquire_bits: [14, 16]
   # メモリ深さの選択肢(ガイド3.3.2。issue #66)。"auto" は別に受け付ける。実機実測:
   # ch数で決まる上限(4ch時125M)を超えるとエラーなしで上限へ丸められる / AUTO の

@@ -40,8 +40,10 @@ EXPECTED = {
     "configure_mask": "SAFE_WRITE",
     "get_mask_result": "READ_ONLY",
     "configure_autoset": "SAFE_WRITE",
-
     "get_measurement_histogram": "READ_ONLY",
+
+    "save_setup": "READ_ONLY",
+    "restore_setup": "RESTRICTED_WRITE",
     "autoset": "RESTRICTED_WRITE",
     "configure_decode": "SAFE_WRITE",
     "get_decode_result": "READ_ONLY",
@@ -117,4 +119,4 @@ def test_dangerous_and_restricted_sets() -> None:
         for tool, cls in TOOL_CLASSES.items()
         if cls in (OperationClass.RESTRICTED_WRITE, OperationClass.DANGEROUS_WRITE)
     }
-    assert needs_confirm == {"autoset", "enable_afg", "raw_scpi"}
+    assert needs_confirm == {"autoset", "enable_afg", "raw_scpi", "restore_setup"}

@@ -573,6 +573,8 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `configure_mask` | SAFE_WRITE | M7 |
 | `get_measurement_histogram` | READ_ONLY | 中(#71) |
 | `get_mask_result` | READ_ONLY | M7 |
+| `save_setup` | READ_ONLY | 中(#72) |
+| `restore_setup` | RESTRICTED_WRITE | 中(#72) |
 | `autoset` | RESTRICTED_WRITE | 2 |
 | `recommend_setup`(未実装・スキルで代替) | READ_ONLY | 3 |
 | `configure_decode` | SAFE_WRITE | 4 |
@@ -597,7 +599,7 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `configure_acquisition` | SAFE_WRITE | M6 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は48(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2 + Phase M6: 2 + Phase M7: 4。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**、Phase M5(トリガ種別)は**15章**、Phase M6(取得モード)は**16章**(`force_trigger` は4章)、Phase M7(イベント検索)は**17章**、Pass/Fail試験は**18章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
+登録Tool数は50(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2 + Phase M6: 2 + Phase M7: 4 + 中優先(#70-#72): 4。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**、Phase M5(トリガ種別)は**15章**、Phase M6(取得モード)は**16章**(`force_trigger` は4章)、Phase M7(イベント検索)は**17章**、Pass/Fail試験は**18章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
 
 将来(Phase 4の残り): `:PERiod` / `:VOLTage:HIGH`/`:LOW`(恒久スキップ。`frequency_hz`/`amplitude_vpp`+`offset_v`で表現可能なため)、DHOファミリの `:SOURce`(番号なし・DGモジュール)対応、Logic Analyzer。
 
@@ -1184,4 +1186,26 @@ MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標
 ### `get_mask_result` — READ_ONLY / Phase M7
 
 返却: `enabled` / `running` / `source` / `x_margin` / `y_margin` / `total` / `passed` / `failed` / `acquisition_running`(不合格で取り込みが止まったかどうかを見分けるため)。
+
+---
+
+## 19. 設定の一括保存・復元(issue #72)
+
+機器の設定一式(`:SYSTem:SETup`、ガイド3.24.20)をホストのファイルへ保存し、後で書き戻す。たくさんの設定を変える前に保存しておけば、元へ戻せる。
+
+### `save_setup` — READ_ONLY
+
+`path`(省略時はデフォルト保存先の `scope_setup_<ミリ秒までの時刻>.stp`。同じ秒に続けて保存しても上書きしない)へ保存し、`saved_path` / `size_bytes` を返す。保存先は `capture_screenshot` と同じ許可ルート規約に従う。機器の設定は変えない。
+
+### `restore_setup` — RESTRICTED_WRITE
+
+`path` のファイルを書き戻す。**現在の設定がすべて置き換わる**ので承認(confirmトークン)が必要。
+
+- 読込元も許可ルート内に限る(外なら `INVALID_PARAMETER`)
+- 承認(confirmトークン)は**ファイルの中身(SHA-256)**に結びつく。承認を求めた後でファイルが差し替わったら、その承認では復元しない
+- 復元は取り込み条件も書き換えるので、待機中の `single` / `force_trigger` には割り込みとして扱われる(`interrupted: true`)
+- 承認より前に、中身が**壊れていない設定ファイルか**を確かめる(実機実測のヘッダ: 先頭4バイトが9バイト目以降の CRC32(LE)、次の4バイトが全体長−8(LE))。合わなければ送らない。上限 256KB。**どの機種で保存したかは判別できない**(ヘッダに機種を示す値が無い)ので、同じ機器で `save_setup` したファイルだけを使う前提
+- 返却: `result` / `note` / `timebase`(復元後の時間軸)
+- 実機実測: 応答はガイドの言う ASCII ではなくバイナリ(約3KB)。書き戻しは約1.7秒で終わり、時間軸などが保存時の値へ戻る
+- capability `system_setup` と方言 `setup_header`(mho98 のみ)
 

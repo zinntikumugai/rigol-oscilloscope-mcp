@@ -27,6 +27,7 @@ import time
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import asdict
+from datetime import datetime
 from functools import wraps
 from typing import Any
 
@@ -34,6 +35,7 @@ from mcp.server.fastmcp import FastMCP, Image
 
 from . import service
 from .config import Config, load_config
+from .driver.scope import SETUP_MAX_BYTES
 from .errors import ErrorCode, ScopeError
 from .safety import AuditLogger, ConfirmTokenStore, OperationClass, classify
 from .service import ConnectionManager, ConnectionStatus, ControlService
@@ -1647,6 +1649,48 @@ def create_server(
             enabled_channels_only=enabled_channels_only,
             overlay=overlay,
             keep_coupling=keep_coupling,
+        )
+
+    @_register
+    def save_setup(path: str | None = None) -> dict:
+        """Save the whole instrument setup to a file on the host (default name
+        scope_setup_<time with milliseconds>.stp in the default directory). Use it before changing
+        many settings, so restore_setup can bring them back. The file is a binary
+        blob specific to this model; it is not human readable.
+        """
+        driver = manager.require_scope()
+        # ミリ秒まで含める(同じ秒に続けて保存しても上書きしない。スクリーンショットと同じ)
+        stem = "scope_setup_" + datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        target = service.resolve_write_path(path, resolved_config, stem, "stp")
+        data = driver.read_setup()
+        target.write_bytes(data)
+        return {"saved_path": str(target), "size_bytes": len(data)}
+
+    @_register
+    def restore_setup(path: str, confirm_token: str | None = None) -> dict:
+        """Restore the whole instrument setup from a file saved with save_setup.
+
+        This replaces every current setting, so it needs the confirmation flow:
+        the first call does not execute and returns a confirm_token, so ask the
+        human user whether to proceed and then call again with the same path plus
+        that confirm_token. Before anything is sent, the file's header (length and
+        CRC32) is checked, which rejects other kinds of files and damaged ones.
+        The check cannot tell which model saved the file, so only restore files
+        that save_setup wrote from this instrument.
+        """
+        driver = manager.require_scope()
+        source = service.resolve_read_path(path, resolved_config)
+        # 上限+1バイトまでしか読まない(stat→readの間にファイルが伸びても巨大な読込をしない)
+        with source.open("rb") as f:
+            data = f.read(SETUP_MAX_BYTES + 1)
+        if len(data) > SETUP_MAX_BYTES:
+            raise ScopeError(
+                ErrorCode.INVALID_PARAMETER,
+                f"the file is too large to be a setup file (more than {SETUP_MAX_BYTES} bytes)",
+                {"path": str(source), "max": SETUP_MAX_BYTES},
+            )
+        return control.restore_setup(
+            driver, manager.generation, str(source), data, confirm_token
         )
 
     @_register

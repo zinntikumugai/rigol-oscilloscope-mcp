@@ -2818,3 +2818,35 @@ def test_measurement_histogram_accumulates(
     finally:
         driver.configure_measurement(histogram_enabled=False)
         driver.set_channel_scale("CH1", ch1_scale)
+
+
+# --------------------------------------------------------------------------
+# 設定の一括保存・復元(issue #72)
+# --------------------------------------------------------------------------
+
+
+def test_restore_setup_brings_the_settings_back(
+    control: ControlService, driver: ScopeDriver, manager: ConnectionManager
+) -> None:
+    """保存 → 時間軸を変える → 承認つきで復元 → 時間軸が戻る。
+
+    念のため、最後に時間軸も直接元へ戻す(復元が失敗しても状態を残さない)。
+    """
+    saved = driver.read_setup()
+    before = get_timebase_dict(driver)["scale_s_per_div"]
+    _report(f"[setup] saved {len(saved)} bytes, magic={saved[:4].hex()} timebase={before}")
+    try:
+        driver.set_timebase_scale(before * 5)
+        with pytest.raises(ScopeError) as excinfo:
+            control.restore_setup(driver, manager.generation, "bench.stp", saved)
+        token = excinfo.value.detail["confirm_token"]
+
+        result = control.restore_setup(
+            driver, manager.generation, "bench.stp", saved, confirm_token=token
+        )
+        _report(f"[setup] restored: {result}")
+
+        assert result["timebase"]["scale_s_per_div"] == pytest.approx(before)
+        assert driver.session.drain_error_queue() == []
+    finally:
+        driver.set_timebase_scale(before)

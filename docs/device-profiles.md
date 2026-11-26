@@ -61,8 +61,8 @@
 | `hardware_info` | true | 機器自身の申告(`:SYSTem:RAMount?` / `:AUToset:ENAble?` / `:LOCK?`)の可否。`get_capabilities` の `hardware` と、autoset 実行前の可否確認が使う。**未宣言なら照会せず `hardware: null`**。mho98のみ。`:SYSTem:MODules?` は実態と合わないため使わない([verification/mho98-m6.md](verification/mho98-m6.md) §4) |
 | `mask_test` | true | Pass/Fail(マスク)試験(`:MASK`。`:OUTPut:*` を除く)の可否。`configure_mask` / `get_mask_result` が使う。**未宣言なら送信ゼロで `UNSUPPORTED_FEATURE`**。mho98のみ |
 | `autoset_options` | true | オートセットの挙動設定(`:AUToset:PEAK` / `:OPENch` / `:OVERlap` / `:KEEPcoup`)の可否。`configure_autoset` と `get_capabilities` の `hardware.autoset_options` が使う。mho98のみ |
-
 | `measurement_histogram` | true | 測定ヒストグラム(`:MEASure:HISTogram`、3.17.31-32)の可否。`get_measurement_histogram` と `configure_measurement(histogram_enabled=...)` が使う。**`histogram`(3.11 の波形ヒストグラム)とは別サブシステムなので別に宣言する**。mho98のみ |
+| `system_setup` | true | 設定の一括保存・復元(`:SYSTem:SETup`)の可否。`save_setup` / `restore_setup` が使う。方言 `setup_header`(ヘッダ形式。mho98 は `crc32_length`)が揃わないと復元しない。mho98のみ |
 | `histogram` | true | 波形ヒストグラム(`:HISTogram`)の可否。`configure_histogram` / `get_histogram_result` が使う。**未宣言ならヒストグラム操作自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) |
 
 未対応機能のToolが呼ばれた場合、実機へコマンドを送らず `UNSUPPORTED_FEATURE` を返す(理由は4.2参照)。
@@ -83,7 +83,6 @@
 | `search_modes` / `search_edge_slopes` / `search_pulse_polarities` / `search_pulse_when` | イベント検索(`:SEARch`)の種別と条件の値。**`search_modes` が未宣言なら `configure_search` / `get_search_results` は送信ゼロで `UNSUPPORTED_FEATURE`** | mho98: `edge` / `pulse`(ガイド3.22)。**範囲外の `:SEARch:VALue?` は実機を沈黙させる**ため、読み出しは停止中・`1..COUNt?` に限る |
 | `channel_units` | `:CHANnel<n>:UNITs` の値。**チャンネルの追加属性(反転・微調整・単位・ラベル・バイアス・遅延補正)のゲート**を兼ね、未宣言なら `configure_channel` の追加属性は送信ゼロで `UNSUPPORTED_FEATURE`、`get_channel` も読まない | mho98: `volt` / `ampere` / `watt` / `unknown`(ガイド3.6.12。応答は短形 `VOLT` / `AMP`) |
 | `timebase_modes` / `timebase_href_modes` | `:TIMebase:MODE` と `:HREFerence:MODE` の値。**`timebase_modes` が水平軸の拡張項目(遅延掃引・水平基準・微調整・自動ROLL)のゲート** | mho98: `main` / `roll`(XY は実機で無視されるため不在)と、`center` / `left` / `right` / `trigger` / `user`(ガイド3.26) |
-
 | `decode_can_fd` | true なら CAN デコードに CAN-FD のデータフェーズ設定(`fd_baud_bps` / `fd_sample_point_percent`)を足す。**CAN-FD オプションが導入済みのときだけ**読み書きする(未ライセンスだと読み取りでも `-222` を積むため) | mho98: true(ガイド3.4.14.4 / 3.4.14.6)。実機は 12.3Mbps もエラーなしで受理するので、値域 1〜10Mbps はホスト側で検証する |
 | `acquire_types` | `:ACQuire:TYPE` の値(`normal` / `peak` / `average` / `high_resolution`)。**未宣言 = `configure_acquisition` が送信ゼロで `UNSUPPORTED_FEATURE`、`get_acquisition_state` も設定クエリを送らない** | mho98: 4種(ガイド3.3.3。応答は短形 `NORM` / `PEAK` / `AVER` / `HRES`)。DHO系は実機未検証のため不在 |
 | `acquire_bits` | `:ACQuire:BITS` の選択肢(リスト)。未宣言なら `adc_bits` を扱わない | mho98: `[14, 16]`(3.3.5)。**high_resolution モード以外では書き込みが `-200`**(実機実測)。DHO800/900 には無い(`:ACQuire:HRESolution` が別綴り) |

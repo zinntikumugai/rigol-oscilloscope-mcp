@@ -15,8 +15,10 @@ phase0の実機検証(docs/verification/mho98-phase0.md)で観測した応答形
 from __future__ import annotations
 
 import io
+import json
 import math
 import re
+import zlib
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime
@@ -1113,6 +1115,32 @@ class FakeScope:
 
     # -- 公開API ----------------------------------------------------------
 
+    def _setup_bytes(self) -> bytes:
+        """設定一式(時間軸とチャンネル)を実機と同じヘッダで包んだもの。
+
+        実機実測: 先頭4バイトが9バイト目以降の CRC32(LE)、次の4バイトが全体長−8。
+        """
+        payload = json.dumps({"timebase": self.timebase, "channels": self.channels}).encode()
+        return (
+            zlib.crc32(payload).to_bytes(4, "little")
+            + len(payload).to_bytes(4, "little")
+            + payload
+        )
+
+    def handle_block(self, command: str, payload: bytes) -> None:
+        """バイナリブロックの書き込み(`:SYSTem:SETup #N...`)。"""
+        self.command_log.append(f"{command} #{len(str(len(payload)))}{len(payload)}<binary>")
+        if re.fullmatch(rf":?{_mn('SYSTem')}:{_mn('SETup')}", command.strip(), re.IGNORECASE) is None:
+            raise self._silent(COMMAND_ERROR)
+        if len(payload) <= 8 or zlib.crc32(payload[8:]) != int.from_bytes(payload[:4], "little"):
+            self.error_queue.append(EXECUTE_ERROR)
+            return None
+        state = json.loads(payload[8:])
+        self.timebase.update(state["timebase"])
+        for number, channel in state["channels"].items():
+            self.channels[int(number)].update(channel)
+        return None
+
     def handle(self, command: str) -> bytes | None:
         """SCPIコマンド1件を処理する。
 
@@ -1342,6 +1370,8 @@ class FakeScope:
                 rf"{waveform}:{_mn('DATA')}\?",
                 lambda m: _block(self._waveform_payload),
             ),
+            # 設定一式(3.24.20)。実機は CRC32 + 長さのヘッダつきバイナリ
+            (rf":?{_mn('SYSTem')}:{_mn('SETup')}\?", lambda m: _block(self._setup_bytes())),
             # スクリーンショット。DHO800/900は形式引数を取る(既定BMP、ガイド3.9.7)
             (
                 rf":?{_mn('DISPlay')}:{_mn('DATA')}\?(?:\s+(?:BMP|PNG|JPG))?",

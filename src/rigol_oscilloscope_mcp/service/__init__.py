@@ -6,7 +6,7 @@ from .connection import ConnectionManager, ConnectionStatus
 from .control import AUTOSET_NOTE, ControlService
 from .decode import get_decode_result
 from .measurement import get_measurement_statistics, get_meter_value, measure
-from .paths import allowed_roots, resolve_write_path
+from .paths import allowed_roots, resolve_read_path, resolve_write_path
 from .screenshot import SUPPORTED_FORMATS, ScreenshotResult, capture_screenshot
 from .state import (
     VALID_SECTIONS,
@@ -42,6 +42,7 @@ __all__ = [
     "get_timebase_dict",
     "get_trigger_dict",
     "measure",
+    "resolve_read_path",
     "resolve_write_path",
     "waveform_fft",
     "waveform_stats",

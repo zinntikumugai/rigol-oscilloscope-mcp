@@ -2536,3 +2536,19 @@ def test_existing_tools_also_reject_no_op_action_flags(
 
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
     assert scope.command_log == []
+
+
+def test_restore_setup_counts_as_an_acquisition_operation(
+    service: ControlService, driver: ScopeDriver
+) -> None:
+    """待機中の single に割り込んだ復元を、別の取り込み操作として数える(Copilotレビュー)。"""
+    data = driver.read_setup()
+    token = None
+    with pytest.raises(ScopeError) as excinfo:
+        service.restore_setup(driver, 0, "bench.stp", data)
+    token = excinfo.value.detail["confirm_token"]
+    epoch = service._acquisition_epoch
+
+    service.restore_setup(driver, 0, "bench.stp", data, confirm_token=token)
+
+    assert service._acquisition_epoch == epoch + 1
