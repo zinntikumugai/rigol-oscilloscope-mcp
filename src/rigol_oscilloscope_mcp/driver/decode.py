@@ -338,6 +338,39 @@ DECODE_ITEMS: dict[str, dict[str, DecodeItem]] = {
         ),
         "threshold_v": _threshold("LIN"),
     },
+    # -- オプション必須(issue #74。ガイド3.4.16-3.4.18)。プロファイルの
+    # `decode_option_protocols` と導入済みのライセンスが揃ったときだけ使う --
+    "i2s": {
+        "clock_source": _item(":SOURce:CLOCk", _source(allow_off=False)),
+        "data_source": _item(":SOURce:DATA", _source(allow_off=False)),
+        "ws_source": _item(":SOURce:WSELect", _source(allow_off=False)),
+        "alignment": _item(
+            ":ALIGnment", _enum((("i2s", "IIS"), ("left", "LJ"), ("right", "RJ")))
+        ),
+        "clock_slope": _item(":CLOCk:SLOPe", _enum(_SLOPE)),
+        "word_bits": _item(":RWIDth", _int_range(4, 32)),
+        "receive_bits": _item(":RECewidth", _int_range(4, 32)),
+        "ws_low": _item(":WSLow", _enum((("left", "LEFT"), ("right", "RIGHt")))),
+        "endian": _item(":ENDian", _enum(_ENDIAN)),
+        "polarity": _item(":POLarity", _enum(_POSNEG)),
+        # **実機実測**: ガイドの `I2SClk` を送ると -222 を積んで沈黙する。I2S モードでは
+        # SPI と同じ `CLK` がクロックのしきい値として通る
+        "clock_threshold_v": _threshold("CLK"),
+        "data_threshold_v": _threshold("DATA"),
+        "ws_threshold_v": _threshold("WS"),
+    },
+    "flexray": {
+        "source": _item(":SOURce", _source(allow_off=False)),
+        "baud_bps": _item(":BAUD", _choice((2_500_000, 5_000_000, 10_000_000))),
+        "sample_point_percent": _item(":SPOint", _int_range(10, 90)),
+        "signal_type": _item(":STYPe", _enum((("bp", "BP"), ("bm", "BM"), ("rt", "RT")))),
+        "channel": _item(":CHANnel", _enum((("a", "A"), ("b", "B")))),
+        "threshold_v": _threshold("FLEX"),
+    },
+    "m1553": {
+        "source": _item(":SOURce", _source(allow_off=False)),
+        "threshold_v": _threshold("1553"),
+    },
     # **この並びがそのまま送信順**。`bus`(データソース)は `bus_width` の前提
     # なので必ず先に置く(ガイド3.4.10.4 の Remark。実機実測 mho98-phase4.md 5章)
     "parallel": {

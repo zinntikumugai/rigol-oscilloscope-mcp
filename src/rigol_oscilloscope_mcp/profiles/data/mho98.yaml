@@ -138,6 +138,30 @@ dialect:
     spi: SPI
     can: CAN
     lin: LIN
+  # オプション必須のトリガ(ガイド3.27.25-27。issue #74)。option は option_types の
+  # キー。導入済みのときだけ使う。実機実測: :TRIGger:MODE? は FLEX / IIS / M1553
+  trigger_option_types:
+    flexray: {token: FLEXray, option: flexray}
+    i2s: {token: IIS, option: audio_i2s}
+    m1553: {token: M1553, option: mil_std_1553}
+  trigger_flexray_channels: {a: A, b: B}
+  trigger_flexray_when: {frame: FRAMe, symbol: SYMBol, error: ERRor, tss: TSS}
+  trigger_flexray_positions: {tss: TSS, fss: FSS, fes: FES, dts: DTS}
+  trigger_flexray_frames: {null: "NULL", sync: SYNC, startup: STAR, any: ANY}
+  trigger_flexray_symbols: {cas: CAS, wus: WUS}
+  trigger_flexray_errors: {header: HEAD, trailer: TRAiler, decode: DECode, any: ANY}
+  trigger_i2s_alignments: {i2s: IIS, left: LJ, right: RJ}
+  trigger_i2s_audio: {left: LEFT, right: RIGHt, either: EITHer}
+  trigger_compare_ops:
+    equal: EQUal
+    not_equal: NOTequal
+    less: LESSthan
+    greater: GREaterthan
+    in_range: INRange
+    out_of_range: OUTRange
+  trigger_m1553_when: {sync_break: SYNCbreak, data: DATA, command: CMD, status: STATus, error: ERRor}
+  trigger_m1553_syncs: {data: DATA, status: STATus, all: ALL}
+  trigger_m1553_errors: {sync: SYNC, error: ERR}
   # シリアルバストリガの列挙(ガイド3.27.20-24)。デコード側(:BUS<n>)とは
   # **別サブシステム**なので値も別に宣言する(綴りが違うものがある)
   trigger_rs232_when: # 3.27.20.4
@@ -369,6 +393,12 @@ dialect:
     can: CAN
     lin: LIN
     parallel: PARallel
+  # オプション必須のデコード(ガイド3.4.16-3.4.18。issue #74)。option は option_types
+  # のキー。導入済みのときだけ使う(未導入なら送信前に UNSUPPORTED_FEATURE)
+  decode_option_protocols:
+    i2s: {token: IIS, option: audio_i2s}
+    flexray: {token: FLEXray, option: flexray}
+    m1553: {token: M1553, option: mil_std_1553}
   decode_formats:
     hex: HEX
     ascii: ASCii

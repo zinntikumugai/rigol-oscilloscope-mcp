@@ -1297,9 +1297,10 @@ def test_configure_decode_parallel_rejects_bad_bit_sources_sends_nothing(
 def test_configure_decode_unknown_protocol_sends_nothing(
     driver: ScopeDriver, scope: FakeScope
 ) -> None:
-    """オプション必須のプロトコル(i2s等)は宣言が無い = 送信前に拒否。"""
+    """宣言の無いプロトコルは送信前に拒否(オプション必須の i2s 等は issue #74 で
+    導入済みのときだけ使えるようになった。ここでは宣言の無い名前で確かめる)。"""
     with pytest.raises(ScopeError) as excinfo:
-        driver.configure_decode(1, "i2s")
+        driver.configure_decode(1, "usb")
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert "uart" in excinfo.value.message
@@ -1512,11 +1513,11 @@ def test_get_decode_config_uses_threshold_query_form(
 def test_get_decode_config_reports_unsupported_mode_as_is(
     driver: ScopeDriver, scope: FakeScope
 ) -> None:
-    """オプション必須プロトコルに設定されたバスは、生の名前だけ返す。
-
-    ライセンス適用後に `:BUS1:MODE?` が `IIS` を返しても読み取りが壊れず、かつ
-    未確認ニモニック(`:BUS1:IIS:...`)を1件も送らないこと。
+    """**ライセンスが無い**オプション必須プロトコルに設定されたバスは、生の名前
+    だけ返し、配下(`:BUS1:IIS:...`)を1件も送らない(導入済みなら読む。#74)。
     """
+    scope = FakeScope(options={"CAN-FD": True})
+    driver = make_driver(scope)
     scope.buses[1]["mode"] = "IIS"
 
     config = driver.get_decode_config(1)
@@ -5236,3 +5237,134 @@ def test_setup_unsupported_on_generic(generic_driver: ScopeDriver, scope: FakeSc
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# オプション必須のデコード(I2S / FlexRay / MIL-STD-1553。issue #74)
+# --------------------------------------------------------------------------
+
+
+def test_configure_decode_i2s(driver: ScopeDriver, scope: FakeScope) -> None:
+    applied = driver.configure_decode(
+        1,
+        "i2s",
+        settings={
+            "clock_source": "CH1",
+            "data_source": "CH2",
+            "ws_source": "CH3",
+            "alignment": "left",
+            "word_bits": 16,
+            "endian": "msb",
+        },
+    )
+
+    assert ":BUS1:MODE IIS" in scope.command_log
+    assert ":BUS1:IIS:SOURce:CLOCk CHANnel1" in scope.command_log
+    assert ":BUS1:IIS:ALIGnment LJ" in scope.command_log
+    assert applied["protocol"] == "i2s"
+    assert applied["settings"]["word_bits"] == 16
+    assert applied["settings"]["alignment"] == "left"
+
+
+def test_configure_decode_flexray_and_m1553(driver: ScopeDriver, scope: FakeScope) -> None:
+    flex = driver.configure_decode(
+        2, "flexray", settings={"baud_bps": 5_000_000, "signal_type": "bm", "channel": "b"}
+    )
+    aero = driver.configure_decode(3, "m1553", settings={"source": "CH2"})
+
+    assert flex["settings"] == {"baud_bps": 5_000_000, "signal_type": "bm", "channel": "b"}
+    assert aero["settings"] == {"source": "CH2"}
+    assert ":BUS3:MODE M1553" in scope.command_log
+
+
+def test_get_decode_config_reads_an_option_protocol(driver: ScopeDriver) -> None:
+    driver.configure_decode(1, "flexray")
+
+    config = driver.get_decode_config(1)
+
+    assert config["protocol"] == "flexray"
+    assert config["settings"]["baud_bps"] == 10_000_000
+
+
+def test_option_decode_without_the_license_sends_nothing() -> None:
+    """未ライセンスなら送信前に UNSUPPORTED_FEATURE(読むのはオプションの照会だけ)。"""
+    scope = FakeScope(options={"CAN-FD": True})
+    driver = make_driver(scope)
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "i2s")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert [c for c in scope.command_log if "?" not in c] == []
+    assert not [c for c in scope.command_log if c.startswith(":BUS")]
+
+
+def test_option_decode_unknown_setting_is_rejected(driver: ScopeDriver, scope: FakeScope) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "m1553", settings={"baud_bps": 1_000_000})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert not [c for c in scope.command_log if c.startswith(":BUS")]
+
+
+# --------------------------------------------------------------------------
+# オプション必須のトリガ(I2S / FlexRay / MIL-STD-1553。issue #74)
+# --------------------------------------------------------------------------
+
+
+def test_configure_trigger_i2s(driver: ScopeDriver, scope: FakeScope) -> None:
+    applied = driver.configure_trigger(
+        type="i2s",
+        settings={"when": "greater", "audio": "right", "data_bits": 16, "data": 1000},
+    )
+
+    assert ":TRIGger:MODE IIS" in scope.command_log
+    assert ":TRIGger:IIS:WHEN GREaterthan" in scope.command_log
+    assert applied["type"] == "i2s"
+    assert applied["audio"] == "right"
+    assert applied["data"] == 1000
+
+
+def test_configure_trigger_flexray_and_m1553(driver: ScopeDriver, scope: FakeScope) -> None:
+    flex = driver.configure_trigger(
+        type="flexray", settings={"when": "error", "error_type": "trailer", "channel": "b"}
+    )
+    aero = driver.configure_trigger(
+        type="m1553", settings={"when": "data", "data_compare": "in_range", "data": 1234}
+    )
+
+    assert flex["error_type"] == "trailer"
+    assert aero["data"] == 1234
+    assert ":TRIGger:MODE M1553" in scope.command_log
+
+
+def test_get_trigger_reads_an_option_type(driver: ScopeDriver) -> None:
+    driver.configure_trigger(type="flexray")
+
+    state = driver.get_trigger()
+
+    assert state.type == "flexray"
+    assert state.settings["baud_bps"] == 10_000_000
+
+
+def test_option_trigger_without_the_license_sends_nothing() -> None:
+    scope = FakeScope(options={"CAN-FD": True})
+    driver = make_driver(scope)
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_trigger(type="m1553")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert [c for c in scope.command_log if "?" not in c] == []
+
+
+def test_get_trigger_of_an_unlicensed_option_type_reads_no_subtree() -> None:
+    scope = FakeScope(options={"CAN-FD": True})
+    driver = make_driver(scope)
+    scope.trigger["mode"] = "IIS"
+
+    state = driver.get_trigger()
+
+    assert state.type == "IIS"
+    assert state.settings == {}
+    assert sent(scope, ":IIS") == []

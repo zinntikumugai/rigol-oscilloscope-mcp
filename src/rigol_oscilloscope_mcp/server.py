@@ -795,6 +795,21 @@ def create_server(
           (sync/id/checksum), frame_id (0-63), data. **lin data reads back as a
           binary mask string** ("01100100", or "XXXXXXXX" while unset) rather
           than the integer the other protocols return
+        - flexray / i2s / m1553 need their license option (FlexRay /
+          Audio / Aero); without it the call is rejected before sending.
+          flexray: source, level_v, baud_bps (2500000/5000000/10000000),
+          channel (a/b), when (frame/symbol/error/tss), position
+          (tss/fss/fes/dts), frame_type (null/sync/startup/any), symbol
+          (cas/wus), error_type (header/trailer/decode/any).
+          i2s: clock_source, data_source, ws_source, clock_level_v,
+          ws_level_v, data_level_v, clock_slope (rising/falling), alignment
+          (i2s/left/right), when (equal/not_equal/less/greater/in_range/
+          out_of_range), audio (left/right/either), data_bits (4-32), user_bits
+          (4-data_bits; data is clipped to this width, so set it too), data.
+          m1553: source, when (sync_break/data/command/status/error),
+          polarity, sync_type (data/status/all), error_type (sync/error),
+          data_compare (same operators as i2s when), data (0-65535),
+          level_a_v, level_b_v
 
         The serial types pair with configure_decode: trigger on the moment
         (a NACK, an error frame, one address) and decode to read what happened
@@ -945,6 +960,10 @@ def create_server(
         protocol is uart / i2c / spi / can / lin / parallel (options such as
         I2S, FlexRay and MIL-STD-1553 are not supported; CAN-FD is set through the
         can settings below).
+
+        protocol is uart / i2c / spi / can / lin / parallel, plus i2s / flexray /
+        m1553 when their license option is installed (rejected before sending
+        otherwise).
         data_format is hex / ascii / dec / bin. Source values are "CH1"-"CH4",
         "D0"-"D15" or "off".
 
@@ -970,6 +989,14 @@ def create_server(
         - lin: source, baud_bps, parity_enabled, standard (v1x/v2x/mixed),
           threshold_v. Example: {"source": "CH1", "baud_bps": 19200,
           "standard": "v2x"}
+        - i2s: clock_source, data_source, ws_source, alignment (i2s/left/
+          right), clock_slope (rising/falling), word_bits (4-32), receive_bits
+          (4-32), ws_low (left/right), endian, polarity, clock_threshold_v,
+          data_threshold_v, ws_threshold_v
+        - flexray: source, baud_bps (2500000/5000000/10000000),
+          sample_point_percent (10-90), signal_type (bp/bm/rt), channel (a/b),
+          threshold_v
+        - m1553: source, threshold_v
         - parallel: clk_source, clk_slope, bus (d7_d0/d15_d8/d15_d0/d0_d7/
           d8_d15/d0_d15/ch1-ch4/user), bus_width (1-16), bit_sources, endian,
           polarity. bus is the data source; the digital groups list the MSB

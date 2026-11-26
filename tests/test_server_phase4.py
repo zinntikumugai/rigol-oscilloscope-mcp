@@ -176,7 +176,7 @@ def test_configure_decode_parallel_user_bus_end_to_end(server) -> None:
 def test_configure_decode_unknown_protocol_returns_error_dict(server) -> None:
     connected(server)
 
-    result = data(server, "configure_decode", {"protocol": "i2s"})
+    result = data(server, "configure_decode", {"protocol": "usb"})
 
     assert result["error"] is True
     assert result["code"] == ErrorCode.UNSUPPORTED_FEATURE

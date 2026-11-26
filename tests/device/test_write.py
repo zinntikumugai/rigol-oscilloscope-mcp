@@ -2850,3 +2850,66 @@ def test_restore_setup_brings_the_settings_back(
         assert driver.session.drain_error_queue() == []
     finally:
         driver.set_timebase_scale(before)
+
+
+# --------------------------------------------------------------------------
+# オプション必須のデコード・トリガ(I2S / FlexRay / MIL-STD-1553。issue #74)
+# 信号源が無いので、設定の往復(書き込み → 読み戻し → 元へ戻す)まで
+# --------------------------------------------------------------------------
+
+OPTION_DECODE_SETTINGS = {
+    "i2s": {"alignment": "left", "word_bits": 16, "ws_low": "right", "endian": "lsb"},
+    "flexray": {"baud_bps": 5_000_000, "signal_type": "bm", "channel": "b"},
+    "m1553": {"source": "CH2"},
+}
+OPTION_TRIGGER_SETTINGS = {
+    "i2s": {"when": "greater", "audio": "right", "data_bits": 16, "user_bits": 16, "data": 1000},
+    "flexray": {"when": "error", "error_type": "trailer", "channel": "b"},
+    "m1553": {"when": "data", "data_compare": "in_range", "data": 1234},
+}
+OPTION_KEYS = {"i2s": "audio_i2s", "flexray": "flexray", "m1553": "mil_std_1553"}
+
+
+@pytest.mark.parametrize("protocol", sorted(OPTION_DECODE_SETTINGS))
+def test_option_decode_round_trip(
+    control: ControlService, driver: ScopeDriver, decode_before: dict, protocol: str
+) -> None:
+    if not driver.installed_options().get(OPTION_KEYS[protocol]):
+        pytest.skip(f"{protocol} のオプションが導入されていない")
+    control.configure_decode(driver, DECODE_BUS, protocol)
+    sub_before = driver.get_decode_config(DECODE_BUS)["settings"]
+    _report(f"[decode] {protocol} before={sub_before}")
+    try:
+        result = control.configure_decode(
+            driver, DECODE_BUS, protocol, settings=OPTION_DECODE_SETTINGS[protocol]
+        )
+        applied = result["applied"]["settings"]
+        _report(f"[decode] {protocol} applied={applied}")
+        assert applied == OPTION_DECODE_SETTINGS[protocol]
+        assert driver.session.drain_error_queue() == []
+    finally:
+        control.configure_decode(driver, DECODE_BUS, protocol, settings=sub_before)
+        assert driver.get_decode_config(DECODE_BUS)["settings"] == sub_before
+
+
+@pytest.mark.parametrize("trigger_type", sorted(OPTION_TRIGGER_SETTINGS))
+def test_option_trigger_round_trip(
+    control: ControlService, driver: ScopeDriver, trigger_before: dict, trigger_type: str
+) -> None:
+    if not driver.installed_options().get(OPTION_KEYS[trigger_type]):
+        pytest.skip(f"{trigger_type} のオプションが導入されていない")
+    control.configure_trigger(driver, type=trigger_type)
+    sub_before = get_trigger_dict(driver)["settings"]
+    _report(f"[trigger] {trigger_type} before={sub_before}")
+    try:
+        result = control.configure_trigger(
+            driver, type=trigger_type, settings=OPTION_TRIGGER_SETTINGS[trigger_type]
+        )
+        applied = result["applied"]
+        _report(f"[trigger] {trigger_type} applied={applied}")
+        for key, value in OPTION_TRIGGER_SETTINGS[trigger_type].items():
+            assert applied[key] == value, key
+        assert driver.session.drain_error_queue() == []
+    finally:
+        control.configure_trigger(driver, type=trigger_type, settings=sub_before)
+        assert get_trigger_dict(driver)["settings"] == sub_before

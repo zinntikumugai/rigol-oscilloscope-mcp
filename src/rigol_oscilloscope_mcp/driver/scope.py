@@ -415,6 +415,49 @@ _TRIGGER_LIN_ITEMS: tuple[tuple[str, str, object], ...] = (
     # が実機は違う。他プロトコル(CAN等)の `:DATA?` は素の整数を返す
     ("data", ":DATA", "bitmask"),
 )
+# -- オプション必須(issue #74。ガイド3.27.25-27)。実機で全項目の読み取りを確認
+# した項目だけを載せる。値域や意味がガイドで決まらない項目(FlexRay の ID 比較、
+# I2S の UWIDth / DMIN / DMAX、1553 の DMIN / DMAX / DRTA / DBIT / WINDow、各種
+# CODE)は扱わない
+_TRIGGER_FLEXRAY_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("level_v", ":LEVel", "number"),
+    ("baud_bps", ":BAUD", ("choice", (2_500_000, 5_000_000, 10_000_000))),
+    ("channel", ":CH", ("enum", "trigger_flexray_channels", "the FlexRay channel")),
+    ("when", ":WHEN", ("enum", "trigger_flexray_when", "the FlexRay trigger condition")),
+    ("position", ":POS", ("enum", "trigger_flexray_positions", "the FlexRay trigger position")),
+    ("frame_type", ":FRAMe", ("enum", "trigger_flexray_frames", "the FlexRay frame type")),
+    ("symbol", ":SYMBol", ("enum", "trigger_flexray_symbols", "the FlexRay symbol")),
+    ("error_type", ":ERRor", ("enum", "trigger_flexray_errors", "the FlexRay error")),
+)
+_TRIGGER_I2S_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("clock_source", ":SOURce:CLOCk", "tsource"),
+    ("data_source", ":SOURce:DATA", "tsource"),
+    ("ws_source", ":SOURce:WSELect", "tsource"),
+    ("clock_level_v", ":CLEVel", "number"),
+    ("ws_level_v", ":SLEVel", "number"),
+    ("data_level_v", ":DLEVel", "number"),
+    ("clock_slope", ":CLOCk:SLOPe", ("enum", "trigger_edge_slopes", "the I2S clock edge")),
+    ("alignment", ":ALIGnment", ("enum", "trigger_i2s_alignments", "the I2S alignment")),
+    ("when", ":WHEN", ("enum", "trigger_compare_ops", "the I2S trigger condition")),
+    ("audio", ":AUDio", ("enum", "trigger_i2s_audio", "the I2S audio channel")),
+    ("data_bits", ":WIDTh", ("int", 4, 32)),
+    # 比較に使うデータの幅(4〜data_bits。3.27.26.5)。**実機実測**: これが小さいと
+    # data が 2^user_bits − 1 に丸められる(4ビットのまま 1000 を書くと 15)
+    ("user_bits", ":UWIDth", ("int", 4, 32)),
+    ("data", ":DATA", ("int", 0, 2**32 - 1)),
+)
+_TRIGGER_M1553_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("source", ":SOURce", "tsource"),
+    ("when", ":WHEN", ("enum", "trigger_m1553_when", "the MIL-STD-1553 trigger condition")),
+    ("polarity", ":POLarity", ("enum", "trigger_polarities", "the 1553 polarity")),
+    ("sync_type", ":SYNC", ("enum", "trigger_m1553_syncs", "the 1553 sync type")),
+    ("error_type", ":ERRor", ("enum", "trigger_m1553_errors", "the 1553 error")),
+    ("data_compare", ":DATComp", ("enum", "trigger_compare_ops", "the 1553 data comparison")),
+    ("data", ":DATValue", ("int", 0, 65535)),
+    ("level_a_v", ":ALEVel", "number"),
+    ("level_b_v", ":BLEVel", "number"),
+)
 #: 種別 → (SCPI接頭辞, 項目表)。**この表に無い種別は扱わない**(不在がゲート)
 _TRIGGER_SUBTREES: dict[str, tuple[str, tuple[tuple[str, str, object], ...]]] = {
     "edge": (":TRIGger:EDGE", _TRIGGER_EDGE_ITEMS),
@@ -433,6 +476,11 @@ _TRIGGER_SUBTREES: dict[str, tuple[str, tuple[tuple[str, str, object], ...]]] = 
     "spi": (":TRIGger:SPI", _TRIGGER_SPI_ITEMS),
     "can": (":TRIGger:CAN", _TRIGGER_CAN_ITEMS),
     "lin": (":TRIGger:LIN", _TRIGGER_LIN_ITEMS),
+    # オプション必須。プロファイルの trigger_option_types と導入済みのライセンスが
+    # 揃ったときだけ使う(_trigger_types_with)
+    "flexray": (":TRIGger:FLEXray", _TRIGGER_FLEXRAY_ITEMS),
+    "i2s": (":TRIGger:IIS", _TRIGGER_I2S_ITEMS),
+    "m1553": (":TRIGger:M1553", _TRIGGER_M1553_ITEMS),
 }
 #: 種別に依らない共通設定(サブツリーを持たない)
 _TRIGGER_COMMON_ITEMS: tuple[tuple[str, str, object], ...] = (
@@ -795,6 +843,13 @@ def _pow2_token(value: object, key: str, low: int, high: int) -> str:
             {"key": key, "value": value},
         )
     return token
+
+
+def _token_matches(response: str, mnemonic: str) -> bool:
+    """応答トークンが mnemonic の短形〜長形のどれかか(`FLEX` と `FLEXray` 等)。"""
+    short = "".join(c for c in mnemonic if c.isupper() or c.isdigit())
+    text = response.strip().upper()
+    return short and text.startswith(short) and mnemonic.upper().startswith(text)
 
 
 def _acquire_value(key: str, value: object) -> object:
@@ -1206,6 +1261,25 @@ class ScopeDriver:
             return {}
         return {n: v for n, v in declared.items() if n in _TRIGGER_SUBTREES}
 
+    def _trigger_types_with(
+        self, name: str | None = None, token: str | None = None
+    ) -> dict[str, str]:
+        """宣言済みの種別に、指定されたオプション必須の種別を(導入済みなら)足す。
+
+        オプションの照会は、オプション必須の名前やトークンが関わるときだけ行う。
+        """
+        types = dict(self._declared_trigger_types())
+        for option_name, spec in self._option_protocols("trigger_option_types").items():
+            if option_name not in _TRIGGER_SUBTREES:
+                continue
+            mnemonic = str(spec.get("token", ""))
+            matches = name == option_name or (
+                token is not None and _token_matches(token, mnemonic)
+            )
+            if matches and self._option_installed(str(spec.get("option", ""))):
+                types[option_name] = mnemonic
+        return types
+
     def _writable_trigger_types(self) -> dict[str, str]:
         """書き込みに使う種別表。未宣言なら1コマンドも送らずに失敗する。"""
         types = self._declared_trigger_types()
@@ -1224,7 +1298,7 @@ class ScopeDriver:
         `edge` は rigol-generic が宣言しているので全機種で解決する。
         """
         raw = self.session.query(":TRIGger:MODE?").strip()
-        types = self._declared_trigger_types()
+        types = self._trigger_types_with(token=raw)
         _, from_scpi = profile_enum(tuple(types.items()))
         try:
             return from_scpi(raw)
@@ -2100,7 +2174,10 @@ class ScopeDriver:
         `source` / `level_v` / `slope` はサブツリーの項目キーと同名なので、
         `settings` に入れても同じ結果になる(既存の呼び出しとの互換のため残す)。
         """
-        types = self._writable_trigger_types()
+        self._writable_trigger_types()
+        types = self._trigger_types_with(name=type) if type is not None else (
+            self._declared_trigger_types()
+        )
         to_scpi_type, _ = profile_enum(tuple(types.items()))
 
         merged: dict = dict(settings or {})
@@ -2109,6 +2186,9 @@ class ScopeDriver:
                 merged[key] = value
 
         subtree_name = type if type is not None else self._trigger_type()
+        if type is None:
+            # 現在の種別がオプション必須なら、導入済みのときだけ書ける
+            types = self._trigger_types_with(name=subtree_name)
         # **ゲートは「プロファイルが宣言した種別」で行う。** モジュールの項目表
         # (_TRIGGER_SUBTREES)にあるだけでは足りない — 実機未検証の機種へ
         # `:TRIGger:MODE PULSe` を送ってしまう(AGENTS.mdルール2)
@@ -2178,6 +2258,39 @@ class ScopeDriver:
             )
         return protocols
 
+    def _option_protocols(self, dialect_key: str) -> dict[str, dict]:
+        """オプション必須の名前 → {token, option}(プロファイルの宣言のまま)。"""
+        declared = self.profile.dialect.get(dialect_key)
+        return declared if isinstance(declared, dict) else {}
+
+    def _option_installed(self, option: str) -> bool:
+        """オプションが導入済みか。照会できない機種(UNSUPPORTED_FEATURE)は False、
+        通信エラーなどはそのまま伝える(使えないと取り違えない)。"""
+        try:
+            return self.installed_options().get(option) is True
+        except ScopeError as exc:
+            if exc.code == ErrorCode.UNSUPPORTED_FEATURE:
+                return False
+            raise
+
+    def _decode_protocols_with(self, name: str | None = None, token: str | None = None) -> dict[str, str]:
+        """標準の表に、指定されたオプション必須プロトコルを(導入済みなら)足す。
+
+        オプションの照会は、オプション必須の名前やトークンが関わるときだけ行う
+        (標準プロトコルだけの呼び出しは従来どおり照会しない)。
+        """
+        protocols = dict(self._decode_protocols())
+        for option_name, spec in self._option_protocols("decode_option_protocols").items():
+            if option_name not in DECODE_ITEMS:
+                continue
+            mnemonic = str(spec.get("token", ""))
+            matches = name == option_name or (
+                token is not None and _token_matches(token, mnemonic)
+            )
+            if matches and self._option_installed(str(spec.get("option", ""))):
+                protocols[option_name] = mnemonic
+        return protocols
+
     def _decode_bus(self, bus: int) -> int:
         count = self.profile.capabilities.get("decode_buses")
         if not isinstance(count, int) or count < 1:
@@ -2240,8 +2353,8 @@ class ScopeDriver:
         並び**に固定する。パラレルの `:WIDTh` は `:BUS USER` が前提(ガイド
         3.4.10.4)なので、順序が呼び出し側の辞書順に左右されてはならない。
         """
-        protocols = self._decode_protocols()
         name = protocol.strip().lower() if isinstance(protocol, str) else protocol
+        protocols = self._decode_protocols_with(name=name)
         if name not in protocols:
             raise _unsupported(
                 f"protocol decode '{protocol}' is not supported on this model "
@@ -2522,8 +2635,9 @@ class ScopeDriver:
         prefix = f":BUS{number}"
         query = self.session.query
 
-        _, mode_from = profile_enum(tuple(protocols.items()))
         raw_mode = query(f"{prefix}:MODE?").strip()
+        protocols = self._decode_protocols_with(token=raw_mode) if raw_mode else protocols
+        _, mode_from = profile_enum(tuple(protocols.items()))
         try:
             protocol = mode_from(raw_mode)
         except ScopeError:
@@ -2566,13 +2680,13 @@ class ScopeDriver:
         プロトコル依存でガイドに記載が無いため、**列名は解釈せずそのまま返す**
         (時刻列だけは `time_s` として秒へ変換する)。
         """
-        protocols = self._decode_protocols()
         number = self._decode_bus(bus)
         prefix = f":BUS{number}"
         query = self.session.query
 
-        _, mode_from = profile_enum(tuple(protocols.items()))
         raw_mode = query(f"{prefix}:MODE?").strip()
+        protocols = self._decode_protocols_with(token=raw_mode)
+        _, mode_from = profile_enum(tuple(protocols.items()))
         try:
             protocol = mode_from(raw_mode)
         except ScopeError:

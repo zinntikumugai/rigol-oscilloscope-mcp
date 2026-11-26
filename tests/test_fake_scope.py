@@ -674,11 +674,13 @@ def test_bus5_is_silent(scope: FakeScope) -> None:
         ":BUS1:FLEXray:BAUD?",
         ":BUS1:M1553:SOURce?",
     ],
+
+    "command", [":BUS1:IIS:SCLK:SOURce?", ":BUS1:FLEXray:BOGus?", ":BUS1:M1553:BAUD?"]
 )
-def test_option_gated_decode_subtrees_are_not_modeled(
+def test_undefined_paths_under_option_protocols_are_silent(
     scope: FakeScope, command: str
 ) -> None:
-    """オプション必須プロトコルは実装しない(送れば沈黙する)。"""
+    """オプション必須プロトコルも、ガイドに無いパスは実機同様に沈黙する(issue #74)。"""
     with pytest.raises(SilentTimeout):
         scope.handle(command)
 
