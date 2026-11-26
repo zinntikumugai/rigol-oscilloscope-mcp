@@ -1673,8 +1673,10 @@ def create_server(
         This replaces every current setting, so it needs the confirmation flow:
         the first call does not execute and returns a confirm_token, so ask the
         human user whether to proceed and then call again with the same path plus
-        that confirm_token. The file is checked (it must look like a setup file
-        from this model) before anything is sent.
+        that confirm_token. Before anything is sent, the file's header (length and
+        CRC32) is checked, which rejects other kinds of files and damaged ones.
+        The check cannot tell which model saved the file, so only restore files
+        that save_setup wrote from this instrument.
         """
         driver = manager.require_scope()
         source = service.resolve_read_path(path, resolved_config)

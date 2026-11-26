@@ -1568,6 +1568,7 @@ class ScopeDriver:
         実機実測のヘッダ形式(`setup_header: crc32_length`): 先頭4バイトが9バイト
         目以降の CRC32(LE)、次の4バイトが全体長−8(LE)。両方が合うものだけを
         送る(画像など別のファイルや、壊れたファイルを機器へ送らない)。
+        どの機種で保存したかは判別できない(ヘッダに機種を示す値が無い)。
         """
         self._require("system_setup", "restoring the instrument setup")
         header = self._required_dialect("setup_header", "checking a setup file")
@@ -1588,7 +1589,7 @@ class ScopeDriver:
         checksum = int.from_bytes(data[:4], "little")
         if length != len(data) - 8 or checksum != zlib.crc32(bytes(data[8:])):
             raise _invalid(
-                "the data is not a valid setup file saved from this model "
+                "the data is not a valid setup file "
                 "(its length or checksum does not match)",
                 {"size": len(data), "length_field": length},
             )
