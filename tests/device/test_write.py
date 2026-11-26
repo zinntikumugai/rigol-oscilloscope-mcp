@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -3060,22 +3061,32 @@ def la_board(driver: ScopeDriver) -> Iterator[object]:
         driver.configure_logic_analyzer(
             pods={name: {"threshold_v": 1.65} for name in before["pods"]}
         )
+        pods = driver.get_logic_analyzer()["pods"]
+        assert all(p["threshold_v"] == pytest.approx(1.65) for p in pods.values()), pods
+        assert driver.session.drain_error_queue() == []
         yield set_mode
     finally:
-        _board_request("POST", "/api/stop")
-        _restore_logic_analyzer(driver, before)
-        assert driver.get_logic_analyzer() == before
+        try:
+            _board_request("POST", "/api/stop")
+        except Exception as exc:  # ボードが落ちても LA の復元は必ず行う
+            _report(f"[la-board] **ボードの停止に失敗**: {exc!r}")
+        finally:
+            _restore_logic_analyzer(driver, before)
+            assert driver.get_logic_analyzer() == before
 
 
 def _decoded(driver: ScopeDriver, column: str, attempts: int = 5) -> list[dict]:
     """イベントテーブルを読む。最初のトリガが来るまで少し待ち直す。"""
     from rigol_oscilloscope_mcp.service import get_decode_result
 
+    events: list[dict] = []
     for _ in range(attempts):
         time.sleep(1.0)
-        events = get_decode_result(driver, 1)["events"]
-        if events and events[0].get(column):
+        # 窓の端で切れた行は列が空になるので除く
+        events = [e for e in get_decode_result(driver, 1)["events"] if e.get(column)]
+        if events:
             return events
+    assert events, f"デコード結果に {column} のある行が {attempts} 秒待っても出ない"
     return events
 
 
@@ -3138,7 +3149,7 @@ def test_decode_on_digital_channels_matches_the_board(
     elif mode == "parallel":
         events = _decoded(driver, "data")
         _report(f"[la-board] parallel events={events}")
-        values = [int(e["data"], 16) for e in events]
+        values = [int(e["data"], 16) for e in events if re.fullmatch(r"[0-9A-Fa-f]+", e["data"])]
         assert len(values) >= 4
         assert all((b - a) % 256 == 1 for a, b in zip(values, values[1:])), values
     else:
