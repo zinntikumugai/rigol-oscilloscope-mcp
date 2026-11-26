@@ -5463,3 +5463,25 @@ def test_option_scan_stops_at_the_first_timeout(driver: ScopeDriver, monkeypatch
     assert set(options.values()) == {None}
     driver.installed_options()
     assert len(asked) == 2  # キャッシュされていない
+
+
+def test_option_scan_timeout_discards_earlier_results(driver: ScopeDriver, monkeypatch) -> None:
+    """走査の途中で timeout したら、それまでの結果も捨てる(接続が閉じているので
+    「導入済み」と見て書き込みへ進まない。Copilotレビュー)。"""
+    original = driver.session.query
+    seen = {"n": 0}
+
+    def query(command: str, *args, **kwargs):
+        if "OPTion" in command:
+            seen["n"] += 1
+            if seen["n"] > 1:
+                raise ScopeError(ErrorCode.TIMEOUT, "no response", {})
+        return original(command, *args, **kwargs)
+
+    monkeypatch.setattr(driver.session, "query", query)
+
+    assert set(driver.installed_options().values()) == {None}
+    seen["n"] = 0
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "i2s")
+    assert excinfo.value.code == ErrorCode.TIMEOUT

@@ -1199,22 +1199,19 @@ class ScopeDriver:
                 {"dialect": "option_types", "profile": self.profile.name},
             )
 
-        options: dict[str, bool | None] = dict.fromkeys(types)
-        timed_out = False
+        options: dict[str, bool | None] = {}
         for name, token in types.items():
             try:
                 response = self.session.query(f"{query} {token}").strip()
             except ScopeError as exc:
                 # 応答timeoutだけ None に降格する。切断等は全体の失敗なので伝播させる。
-                # timeout 後は実トランスポートが接続を閉じるので、残りは照会せず
-                # None のまま返す(キャッシュもしない)
+                # timeout 後は実トランスポートが接続を閉じるので、残りは照会せず、
+                # 途中までの結果も捨てて全て None で返す(キャッシュもしない)
                 if exc.code != ErrorCode.TIMEOUT:
                     raise
-                timed_out = True
-                break
+                return dict.fromkeys(types)
             options[name] = {"1": True, "0": False}.get(response)
-        if not timed_out:
-            self._options = options
+        self._options = options
         return dict(options)
 
     # -- 取得(READ_ONLY)-------------------------------------------------
