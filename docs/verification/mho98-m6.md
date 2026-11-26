@@ -168,3 +168,14 @@ CH1 = 校正信号(1kHz、約0.3Vpp)、CH1 0.1V/div、200µs/div、しきい値0
 
 - write(`-m device_write -k "mask or force_trigger or search"`): **5 passed**。マスク試験は CH1 の校正信号で `total=1, failed=1`(不合格で停止)を観測し、`total == passed + failed` を確認。無効時の `:MASK:CREate` が `-200` になることを再確認。マスク設定・掃引モード・取り込み状態の復元漏れゼロ
 
+
+## 7. 実機テスト全体の通し実行(2026-11-26)
+
+#52〜#57 のマージ後、既存分も含めた実機テスト(`-m "device or device_write"`)を初めて通しで流した。
+
+- 1回目: **74 passed / 2 failed / 2 errors / 5 skipped**
+  - `test_configure_cursor_round_trip` / `test_configure_histogram_round_trip`: 固定の位置(±200µs・±0.5V など)を書いていたが、機器は**画面範囲外の位置を黙って丸める**(2µs/div で -200µs → -50µs、50mV/div で -0.5V → -0.2V)。**作業開始前のコミット(54a1061)でも再現**し、今回の変更とは無関係
+  - ヒストグラムの復元判定: 元の値 -10ns を書き戻すと **-100ns に丸められる**(機器の分解能)。厳密一致の判定で復元漏れとみなしていた
+  - `test_configure_trigger_every_type_round_trips[spi]`: 単独では通る。ヒストグラムの後片付けが崩れた影響とみられる
+- 対応(issue #64): 検証位置を今の画面範囲(中心±2〜3div)から決め、範囲の復元判定は 1/10div の誤差を許容した
+- 2回目: **76 passed / 5 skipped / 失敗0**
