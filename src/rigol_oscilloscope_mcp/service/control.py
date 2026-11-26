@@ -432,6 +432,38 @@ class ControlService:
 
         return {"requested": requested, "applied": applied, "mask": after}
 
+    def configure_autoset(
+        self,
+        driver: ScopeDriver,
+        *,
+        peak_priority: bool | None = None,
+        enabled_channels_only: bool | None = None,
+        overlay: bool | None = None,
+        keep_coupling: bool | None = None,
+    ) -> dict:
+        """オートセットの挙動設定(SAFE_WRITE。issue #70)。autoset は実行しない。"""
+        requested = _specified(
+            {
+                "peak_priority": peak_priority,
+                "enabled_channels_only": enabled_channels_only,
+                "overlay": overlay,
+                "keep_coupling": keep_coupling,
+            }
+        )
+        if not requested:
+            raise _invalid(
+                "No item to change was specified (specify at least one of "
+                "peak_priority / enabled_channels_only / overlay / keep_coupling)",
+                {},
+            )
+        with self._audited("configure_autoset", requested) as record:
+            before = driver.get_autoset_options()
+            record.before(before)
+            applied = driver.configure_autoset_options(**requested)
+            after = driver.get_autoset_options()
+            record.after(after)
+        return {"requested": requested, "applied": applied, "changed": before != after}
+
     def configure_trigger(
         self,
         driver: ScopeDriver,

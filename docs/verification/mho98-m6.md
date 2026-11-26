@@ -266,3 +266,9 @@ CH1 0.1V/div・メイン 200µs/div で停止し、遅延掃引を 20µs/div・�
 
 - 未ライセンスの実機は FD 項目の読み取りに値を返しつつ `-222` を積む([mho98-unlicensed.md](mho98-unlicensed.md))。そのため FD 項目は、プロファイルの `decode_can_fd` 宣言と CAN-FD オプションが揃ったときだけ読み書きする
 - write(`-k can_fd`): **1 passed**。2Mbps / 70% を往復し、CAN 配下の値を元に戻した。前後比較の戻し忘れ0件
+
+## 13. オートセットの挙動設定(issue #70、2026-11-26)
+
+初期値: `:AUToset:PEAK?` → `1` / `:OPENch?` → `0` / `:OVERlap?` → `1` / `:KEEPcoup?` → `0`。4項目とも反転して書き込み → 読み戻し → 元へ戻した(すべて No error)。autoset の実行は行っていない。
+
+- write(`-k autoset_options`): **1 passed**。4項目を反転して往復し、元へ戻した。前後比較の戻し忘れ0件

@@ -28,6 +28,10 @@ capabilities:
   # 実機で応答確認済み(4 / 1 / 0)。:SYSTem:MODules? は実態と合わない(LAプローブ
   # 未接続でも LA=1、AFG内蔵なのに DG=0)ため使わない
   hardware_info: true
+  # オートセットの挙動設定(:AUToset:PEAK / :OPENch / :OVERlap / :KEEPcoup。ガイド
+  # 3.2.2-5。issue #70)。設定の書き込み・読み戻しは実機で確認済み(autoset の
+  # 実行そのものは実機で禁止のまま)
+  autoset_options: true
   # Pass/Fail(マスク)試験(ガイド3.15。issue #57)。:MASK:OUTPut:*(背面AUX出力)
   # は対象外。実機実測: 試験が無効だと :MASK:CREate は -200、不合格が出ると
   # 取り込みが止まる

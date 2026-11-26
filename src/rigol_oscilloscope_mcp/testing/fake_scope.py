@@ -471,6 +471,14 @@ _TIMEBASE_EXTRA_PROPS: tuple[tuple[str, str, object, object], ...] = (
     ("delay_offset", "DELay:OFFSet", "nr3", 0.0),
 )
 
+#: オートセットの挙動設定(ガイド3.2.2-5)。既定値は実機の初期応答
+_AUTOSET_OPTION_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("peak", "PEAK", "bool", True),
+    ("opench", "OPENch", "bool", False),
+    ("overlap", "OVERlap", "bool", True),
+    ("keepcoup", "KEEPcoup", "bool", False),
+)
+
 _TRIGGER_STATUS = {"RUN": "TD", "STOP": "STOP", "SINGLE": "WAIT"}
 
 # ---------------------------------------------------------------------------
@@ -1066,6 +1074,8 @@ class FakeScope:
         self.timebase: dict[str, float] = {"scale": 2.0e-4, "offset": 0.0}
         self.timebase_mode = "MAIN"
         self.timebase_extras: dict = {k: d for k, _, _, d in _TIMEBASE_EXTRA_PROPS}
+
+        self.autoset_options: dict = {k: d for k, _, _, d in _AUTOSET_OPTION_PROPS}
         self.trigger: dict[str, object] = {
             "mode": "EDGE",
             "sweep": "AUTO",
@@ -1185,6 +1195,10 @@ class FakeScope:
             (rf":?{_mn('TIMebase')}:{_mn('MODE')}\?", lambda m: self.timebase_mode.encode("ascii")),
             (rf":?{_mn('TIMebase')}:{_mn('MODE')}\s+{_VALUE}", lambda m: self._timebase_mode_write(m.group(1))),
         ]
+
+        entries += self._prop_entries(
+            rf":?{_mn('AUToset')}", _AUTOSET_OPTION_PROPS, self.autoset_options
+        )
         timebase = rf":?{_mn('TIMebase')}:{_mn('MAIN')}"
         trigger = rf":?{_mn('TRIGger')}"
         edge = rf"{trigger}:{_mn('EDGE')}"

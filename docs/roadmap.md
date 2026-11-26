@@ -174,7 +174,7 @@
 | 残りの標準トリガ種別(スロープ / ウィンドウ / Nthエッジ) | `:TRIGger:SLOPe` / `:WINDows` / `:NEDGe` | 用途が M5 の8種より狭い |
 | オプション必須のデコードとトリガ(I2S / FlexRay / MIL-STD-1553。CAN-FD のデコードは issue #69 で完了) | `:BUS<n>:IIS` ほか / `:TRIGger:FLEXray` / `:TRIGger:IIS` | 検証機はMHO900-BND適用済みで実機検証の障害は無いが、ライセンス前提のため1段下げ。**デコード側とトリガ側は対で着手するのが自然** |
 | ホスト側解析の拡充 | (SCPIなし。`analyze_waveform` の `analyses` 値を増やす) | THD、Jitter、Overshoot / Undershoot、Ringing、Noise、Signal Integrity。**Tool追加ではなく引数追加で済む**。実測で必要性が出た時点で |
-| オートセットの挙動制御 | `:AUToset:OPENch` / `:KEEPcoup` / `:PEAK` | 意図しないch無効化・カップリング巻き戻りを防げる。ただし **autoset 自体が実機実行禁止**のため書き込みの検証ができない |
+| ~~オートセットの挙動制御~~ | `:AUToset:OPENch` / `:KEEPcoup` / `:PEAK` / `:OVERlap` | **完了**(issue #70。`configure_autoset`)。設定の書き込みと読み戻しは実機で検証できた(autoset の実行は禁止のまま) |
 | 設定の一括保存・復元 | `:SYSTem:SETup` | 「変更前の状態を保存して後で戻す」= 実機writeテストの安全弁になり得る。中身は不透明でスキーマ不明なので**個別項目の読み取りには使えない** |
 | ~~遅延掃引(ズーム)~~ | `:TIMebase:DELay:*` | **完了**(issue #68。`configure_timebase` の `delay_*`)。V-6 は「ズーム中も `:WAVeform:DATA?` はメイン時間軸の全体を返す」で決着 |
 | オプションのライセンス投入 | `:SYSTem:OPTion:INSTall` / `:UNINstall` | 照会(`:STATus?`)は実装済み。投入は人間の作業 |

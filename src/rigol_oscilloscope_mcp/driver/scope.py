@@ -214,6 +214,15 @@ _TIMEBASE_EXTRA_ITEMS: tuple[tuple[str, str, object], ...] = (
 )
 TIMEBASE_EXTRA_KEYS = tuple(key for key, _, _ in _TIMEBASE_EXTRA_ITEMS)
 
+#: オートセットの挙動設定(ガイド3.2.2-5。issue #70)。autoset を実行するコマンド
+#: ではなく、実行したときの振る舞いを決めるスイッチ
+_AUTOSET_OPTION_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("peak_priority", ":PEAK", "bool"),
+    ("enabled_channels_only", ":OPENch", "bool"),
+    ("overlay", ":OVERlap", "bool"),
+    ("keep_coupling", ":KEEPcoup", "bool"),
+)
+
 # 機器が「測定不能」を示すために返す番兵値(±9.9E37 前後)
 INVALID_MEASUREMENT = 9.0e37
 
@@ -1058,7 +1067,32 @@ class ScopeDriver:
         if not self.profile.supports("hardware_info"):
             return None
         channels = int(parse_nr3(self.session.query(":SYSTem:RAMount?")))
-        return {"analog_channels": channels, "autoset_available": self.autoset_available()}
+        info: dict[str, object] = {
+            "analog_channels": channels,
+            "autoset_available": self.autoset_available(),
+        }
+        options = self.get_autoset_options()
+        if options:
+            info["autoset_options"] = options
+        return info
+
+    def configure_autoset_options(self, **values: object) -> dict:
+        """オートセットの挙動設定(issue #70)。**autoset 自体は実行しない**。"""
+        self._require("autoset_options", "the Auto Setup options")
+        plan = self._command_plan(":AUToset", 0, _AUTOSET_OPTION_ITEMS, values)
+        return {
+            key: from_scpi(self.session.set_and_verify(set_cmd, query))
+            for key, set_cmd, query, from_scpi in plan
+        }
+
+    def get_autoset_options(self) -> dict:
+        """オートセットの挙動設定を読む。未宣言の機種では1クエリも送らず空dict。"""
+        if not self.profile.supports("autoset_options"):
+            return {}
+        return {
+            key: parse_bool(self.session.query(f":AUToset{path}?"))
+            for key, path, _ in _AUTOSET_OPTION_ITEMS
+        }
 
     def autoset_available(self) -> bool | None:
         """AUTO機能が有効かつロックされていないか。未宣言の機種では None。
