@@ -937,9 +937,10 @@ def test_installed_options_without_type_table_sends_nothing(scope: FakeScope) ->
     assert scope.command_log == []
 
 
-@pytest.mark.parametrize("response", [b"YES", None])
+@pytest.mark.parametrize("response", [b"YES"])
 def test_installed_options_isolates_a_broken_type(response: bytes | None) -> None:
-    """1件が解釈不能/無応答でも、残りの結果は失われない。"""
+    """1件が解釈不能でも、残りの結果は失われない(無応答は接続が閉じるので
+    そこで打ち切る: test_option_scan_stops_at_the_first_timeout)。"""
     driver = make_driver(_BrokenOptionScope(response))
 
     options = driver.installed_options()
@@ -5315,7 +5316,7 @@ def test_option_decode_unknown_setting_is_rejected(driver: ScopeDriver, scope: F
 def test_configure_trigger_i2s(driver: ScopeDriver, scope: FakeScope) -> None:
     applied = driver.configure_trigger(
         type="i2s",
-        settings={"when": "greater", "audio": "right", "data_bits": 16, "data": 1000},
+        settings={"when": "greater", "audio": "right", "data_bits": 16, "user_bits": 16, "data": 1000},
     )
 
     assert ":TRIGger:MODE IIS" in scope.command_log
@@ -5440,3 +5441,25 @@ def test_fake_scope_does_not_accept_the_i2sclk_threshold_token() -> None:
     from rigol_oscilloscope_mcp.testing import fake_scope
 
     assert "I2SClk" not in fake_scope._THRESHOLD_TYPES
+
+
+def test_option_scan_stops_at_the_first_timeout(driver: ScopeDriver, monkeypatch) -> None:
+    """timeout 後は実トランスポートが接続を閉じるので、残りのオプションは照会しない
+    (Copilotレビュー)。結果はキャッシュしない。"""
+    original = driver.session.query
+    asked: list[str] = []
+
+    def query(command: str, *args, **kwargs):
+        if "OPTion" in command:
+            asked.append(command)
+            raise ScopeError(ErrorCode.TIMEOUT, "no response", {})
+        return original(command, *args, **kwargs)
+
+    monkeypatch.setattr(driver.session, "query", query)
+
+    options = driver.installed_options()
+
+    assert len(asked) == 1
+    assert set(options.values()) == {None}
+    driver.installed_options()
+    assert len(asked) == 2  # キャッシュされていない
