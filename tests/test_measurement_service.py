@@ -91,7 +91,8 @@ def test_measure_dedupes_preserving_order(driver: ScopeDriver, scope: FakeScope)
     result = measure(driver, "CH1", ["vpp", "frequency", "vpp", "frequency"])
 
     assert list(result["values"]) == ["vpp_v", "frequency_hz"]
-    assert len(scope.command_log) == 2
+    # 測定のクエリは2本のみ(重複しない)。表示単位の照会(:UNITs?)は別に1本
+    assert len([c for c in scope.command_log if c.startswith(":MEASure")]) == 2
 
 
 # --------------------------------------------------------------------------
@@ -304,3 +305,23 @@ def test_measure_does_not_warn_for_a_small_batch(driver: ScopeDriver) -> None:
     result = measure(driver, "CH1", ["frequency", "vpp"])
 
     assert result["warnings"] == []
+
+
+def test_measure_warns_when_the_channel_unit_is_not_volt(driver, scope) -> None:
+    """`units="ampere"` のchでは値は A だが、キー名は `*_v` のまま。警告で知らせる(#67)。"""
+    from rigol_oscilloscope_mcp.service.measurement import measure
+
+    scope.channel_extras[1]["units"] = "AMP"
+
+    result = measure(driver, "CH1", ["vpp"])
+
+    assert result["units"] == "ampere"
+    assert any("ampere" in w for w in result["warnings"])
+
+
+def test_measure_in_volts_has_no_unit_warning(driver) -> None:
+    from rigol_oscilloscope_mcp.service.measurement import measure
+
+    result = measure(driver, "CH1", ["vpp"])
+
+    assert "units" not in result

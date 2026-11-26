@@ -4888,3 +4888,15 @@ def test_channel_extras_unsupported_on_generic(
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert generic_driver.get_channel_extras("CH1") == {}
     assert scope.command_log == []
+
+
+@pytest.mark.parametrize("value", [1.0, -1.1e-7, 1.01e-7])
+def test_configure_channel_extras_checks_the_delay_calibration_range(
+    driver: ScopeDriver, scope: FakeScope, value: float
+) -> None:
+    """ガイド3.6.6: -100ns〜100ns。範囲外は送信前に拒否する(Copilotレビュー)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_channel_extras("CH2", delay_calibration_s=value)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []

@@ -2603,3 +2603,17 @@ def test_configure_channel_extras_round_trip(
     }
     assert result["changed"] is True
     assert driver.session.drain_error_queue() == []
+
+
+def test_measure_reports_the_channel_unit(
+    control: ControlService, driver: ScopeDriver, channel_extras_before: dict
+) -> None:
+    """`units="ampere"` のchの測定には単位と警告が付く(issue #67、レビュー対応)。"""
+    from rigol_oscilloscope_mcp.service import measure
+
+    control.configure_channel(driver, 0, TEST_CHANNEL, units="ampere")
+    result = measure(driver, TEST_CHANNEL, ["vpp"])
+    _report(f"[channel] measure with ampere units={result}")
+
+    assert result["units"] == "ampere"
+    assert any("ampere" in w for w in result["warnings"])

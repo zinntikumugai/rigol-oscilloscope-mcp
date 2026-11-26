@@ -194,7 +194,8 @@ _CHANNEL_EXTRA_ITEMS: tuple[tuple[str, str, object], ...] = (
     ("label", ":LABel:CONTent", "label"),
     ("label_display", ":LABel:SHOW", "bool"),
     ("bias_v", ":POSition", "number"),
-    ("delay_calibration_s", ":TCALibrate", "number"),
+    # ガイド3.6.6: -100ns〜100ns(範囲外は送信前に拒否)
+    ("delay_calibration_s", ":TCALibrate", ("frange", -100e-9, 100e-9)),
 )
 CHANNEL_EXTRA_KEYS = tuple(key for key, _, _ in _CHANNEL_EXTRA_ITEMS)
 
@@ -726,6 +727,18 @@ def _choice_token(value: object, key: str, allowed: tuple) -> str:
         )
     number = float(value)
     return str(int(number)) if number.is_integer() else str(number)
+
+
+def _float_in_range(value: object, key: str, low: float, high: float) -> str:
+    """`low`〜`high` の実数だけを受理して送信形へ。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise _invalid(f"{key} is not a number: {value!r}", {"key": key, "value": value})
+    if not low <= float(value) <= high:
+        raise _invalid(
+            f"{key} must be between {low:g} and {high:g}: {value!r}",
+            {"key": key, "value": value, "min": low, "max": high},
+        )
+    return format_number(float(value))
 
 
 def _memory_depth_token(value: object, key: str, allowed: tuple) -> str:
@@ -1569,10 +1582,11 @@ class ScopeDriver:
             )
         return token
 
-    def configure_channel_extras(self, channel: str, **values: object) -> dict:
-        """チャンネルの追加属性を設定する(issue #67)。None の項目は変更しない。
+    def plan_channel_extras(self, channel: str, **values: object) -> list:
+        """追加属性の送信計画。**検証だけを行い、1コマンドも送らない**。
 
-        `channel_units` の宣言がゲート(未宣言なら送信前に UNSUPPORTED_FEATURE)。
+        `channel_units` の宣言がゲート(未宣言なら UNSUPPORTED_FEATURE)。基本項目と
+        一緒に設定する呼び出し側は、基本項目を書く前にこれで検証する(部分更新を防ぐ)。
         """
         number = self._channel_number(channel)
         self._afg_enum("channel_units", "the channel unit")
@@ -1582,13 +1596,23 @@ class ScopeDriver:
                 f"unknown channel attributes: {unknown}",
                 {"unknown": unknown, "allowed": list(CHANNEL_EXTRA_KEYS)},
             )
-        plan = self._command_plan(
-            f":CHANnel{number}", number, _CHANNEL_EXTRA_ITEMS, values
-        )
+        return self._command_plan(f":CHANnel{number}", number, _CHANNEL_EXTRA_ITEMS, values)
+
+    def configure_channel_extras(self, channel: str, **values: object) -> dict:
+        """チャンネルの追加属性を設定する(issue #67)。None の項目は変更しない。"""
+        plan = self.plan_channel_extras(channel, **values)
         return {
             key: from_scpi(self.session.set_and_verify(set_cmd, query))
             for key, set_cmd, query, from_scpi in plan
         }
+
+    def channel_units(self, channel: str) -> str | None:
+        """チャンネルの表示単位(`volt` / `ampere` 等)。未宣言の機種では None(送信しない)。"""
+        number = self._channel_number(channel)
+        if not isinstance(self.profile.dialect.get("channel_units"), dict):
+            return None
+        _, from_scpi = self._afg_enum("channel_units", "the channel unit")
+        return from_scpi(self.session.query(f":CHANnel{number}:UNITs?"))
 
     def get_channel_extras(self, channel: str) -> dict:
         """チャンネルの追加属性を読む。**未宣言の機種では1クエリも送らず空dict**。"""
@@ -2971,6 +2995,13 @@ class ScopeDriver:
             allowed = kind[1]
             return (
                 (lambda value, key: _choice_token(value, key, allowed)),
+                parse_nr3,
+            )
+        if isinstance(kind, tuple) and kind[0] == "frange":
+            # 値域つきの実数(ガイドの Range 欄。範囲外は送信前に拒否)
+            _, low, high = kind
+            return (
+                (lambda value, key: _float_in_range(value, key, low, high)),
                 parse_nr3,
             )
         if isinstance(kind, tuple) and kind[0] == "mdepth":

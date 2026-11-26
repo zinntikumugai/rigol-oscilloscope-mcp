@@ -225,6 +225,9 @@ class ControlService:
         }
 
         extra_values = {key: value for key, value in requested.items() if key not in setters}
+        if extra_values:
+            # 追加項目は基本項目を書く**前に**検証する(不正なら1コマンドも書かない)
+            driver.plan_channel_extras(channel, **extra_values)
         with self._audited("configure_channel", args) as record:
             before = self._channel_snapshot(driver, channel, extra_values)
             record.before(before)

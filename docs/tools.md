@@ -154,13 +154,13 @@ API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。「500 mV」「20 us」等の�
 | `impedance` | `"1M"` \| `"50"` | 入力インピーダンス。**`"50"` はRESTRICTED_WRITE**(confirmトークン必須) |
 | `invert` | bool | 波形の反転(`:INVert`。issue #67) |
 | `vernier` | bool | 垂直感度の微調整(`:VERNier`) |
-| `units` | `"volt"` \| `"ampere"` \| `"watt"` \| `"unknown"` | 表示単位(`:UNITs`)。電流プローブなら `"ampere"` にすると測定値が A になる |
+| `units` | `"volt"` \| `"ampere"` \| `"watt"` \| `"unknown"` | 表示単位(`:UNITs`)。電流プローブなら `"ampere"` にする。`measure` の振幅系の値はその単位になるが**キー名は `*_v` のまま**なので、`measure` は volt 以外のとき `units` と警告を返却に添える |
 | `label` | string | チャンネルのラベル(`:LABel:CONTent`)。英数字と `_ . + -` のみ(送信前に検証) |
 | `label_display` | bool | ラベルの表示(`:LABel:SHOW`) |
 | `bias_v` | float | バイアス電圧(`:POSition`)。値域は垂直感度とインピーダンスで変わる(ガイド3.6.14) |
-| `delay_calibration_s` | float | チャンネル間の遅延補正(デスキュー、`:TCALibrate`)。-100ns〜100ns |
+| `delay_calibration_s` | float | チャンネル間の遅延補正(デスキュー、`:TCALibrate`)。-100ns〜100ns(範囲外は送信前に `INVALID_PARAMETER`) |
 
-追加属性(`invert` 以降)は基本項目の後に、表の順で送る。プロファイル方言 `channel_units` が未宣言の機種では送信ゼロで `UNSUPPORTED_FEATURE`。
+追加属性(`invert` 以降)は基本項目の後に、表の順で送る。**検証は基本項目を書く前に済ませる**(不正な追加属性があれば基本項目も含め1コマンドも書かない)。プロファイル方言 `channel_units` が未宣言の機種では送信ゼロで `UNSUPPORTED_FEATURE`。
 
 返却: `requested` / `applied`(read-back値)。機器はスケールを1-2-5にスナップするとは限らないため、LLMは `applied` を信頼する。
 

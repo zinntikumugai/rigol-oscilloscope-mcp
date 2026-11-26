@@ -239,6 +239,29 @@ def test_configure_channel_applies_extra_attributes(
     assert result["changed"] is True
 
 
+def test_configure_channel_validates_extras_before_any_write(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """不正な追加項目があれば、基本項目も含め1コマンドも書かない(部分更新を防ぐ)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        service.configure_channel(driver, 0, "CH2", coupling="AC", label="A;*RST")
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert [c for c in scope.command_log if "?" not in c] == []
+
+
+def test_configure_channel_unsupported_extras_write_nothing(
+    service: ControlService, scope: FakeScope
+) -> None:
+    generic = make_driver(scope, "rigol-generic")
+
+    with pytest.raises(ScopeError) as excinfo:
+        service.configure_channel(generic, 0, "CH1", coupling="AC", invert=True)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert [c for c in scope.command_log if "?" not in c] == []
+
+
 def test_configure_channel_writes_single_audit_row(
     service: ControlService, driver: ScopeDriver, audit_path: Path
 ) -> None:

@@ -523,7 +523,8 @@ def create_server(
 
         Extra attributes: invert (flip the waveform), vernier (fine scale steps),
         units ("volt" / "ampere" / "watt" / "unknown": set "ampere" for a current
-        probe so readings are in amps), label (letters, digits, _ . + -) and
+        probe; measure then reports values in that unit and says so, although
+        its keys keep the _v suffix), label (letters, digits, _ . + -) and
         label_display, bias_v (bias voltage, :POSition), delay_calibration_s
         (channel deskew, -100 ns to 100 ns).
         """
