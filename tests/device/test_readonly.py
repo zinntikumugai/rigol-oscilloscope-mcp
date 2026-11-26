@@ -766,6 +766,9 @@ def test_hardware_info_answers(driver: ScopeDriver) -> None:
     assert info is not None
     assert info["analog_channels"] == driver.analog_channels  # MHO98 は 4
     assert isinstance(info["autoset_available"], bool)
+    assert set(info["autoset_options"]) == {
+        "peak_priority", "enabled_channels_only", "overlay", "keep_coupling"
+    }
     assert driver.session.drain_error_queue() == []
 
 

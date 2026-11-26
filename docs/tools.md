@@ -221,6 +221,19 @@ Auto Setupは利用者の設定を大きく上書きするため、confirmトー
 
 
 **AUTO機能の可否確認(issue #55):** 承認(confirmトークン)を消費した**後**、`:AUToset` を送る**前**に `:AUToset:ENAble?` / `:LOCK?` を読み、無効またはロック中なら実行せず `UNSUPPORTED_FEATURE` を返す(承認前は1コマンドも送らない不変条件を保つため、確認は承認後)。プロファイルの `hardware_info` 未宣言の機種では確認しない
+
+### `configure_autoset` — SAFE_WRITE(issue #70)
+
+autoset を**実行せずに**、実行したときの振る舞いだけを設定する(ガイド3.2.2-5)。autoset を呼ぶ前に設定しておくと、意図しない変更を防げる。
+
+| 引数 | SCPI | 意味 |
+|---|---|---|
+| `peak_priority` | `:AUToset:PEAK` | オフセットの大きい信号でピーク・ピークを優先する |
+| `enabled_channels_only` | `:AUToset:OPENch` | 表示中のchだけを調べる(false だと信号の無いchを autoset が OFF にする) |
+| `overlay` | `:AUToset:OVERlap` | ch を重ねて表示する(false で上から順に並べる) |
+| `keep_coupling` | `:AUToset:KEEPcoup` | カップリングを保つ(false だと DC に戻る) |
+
+現在値は `get_capabilities` の `hardware.autoset_options`。capability `autoset_options`(mho98 のみ)。書き込みと読み戻しは実機で確認済み(autoset の実行は実機で禁止のまま)
 ---
 
 ## 5. 測定・データ取得
@@ -554,6 +567,7 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `configure_trigger` | SAFE_WRITE | 2 |
 | `run` / `stop` / `single` | SAFE_WRITE | 2 |
 | `force_trigger` | SAFE_WRITE | M6 |
+| `configure_autoset` | SAFE_WRITE | 中(#70) |
 | `configure_search` | SAFE_WRITE | M7 |
 | `get_search_results` | READ_ONLY | M7 |
 | `configure_mask` | SAFE_WRITE | M7 |
@@ -582,7 +596,7 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `configure_acquisition` | SAFE_WRITE | M6 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は46(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2 + Phase M6: 2 + Phase M7: 4。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**、Phase M5(トリガ種別)は**15章**、Phase M6(取得モード)は**16章**(`force_trigger` は4章)、Phase M7(イベント検索)は**17章**、Pass/Fail試験は**18章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
+登録Tool数は47(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2 + Phase M6: 2 + Phase M7: 4。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**、Phase M5(トリガ種別)は**15章**、Phase M6(取得モード)は**16章**(`force_trigger` は4章)、Phase M7(イベント検索)は**17章**、Pass/Fail試験は**18章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
 
 将来(Phase 4の残り): `:PERiod` / `:VOLTage:HIGH`/`:LOW`(恒久スキップ。`frequency_hz`/`amplitude_vpp`+`offset_v`で表現可能なため)、DHOファミリの `:SOURce`(番号なし・DGモジュール)対応、Logic Analyzer。
 

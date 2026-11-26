@@ -1608,6 +1608,29 @@ def create_server(
         return control.force_trigger(manager.require_scope(), wait_s)
 
     @_register
+    def configure_autoset(
+        peak_priority: bool | None = None,
+        enabled_channels_only: bool | None = None,
+        overlay: bool | None = None,
+        keep_coupling: bool | None = None,
+    ) -> dict:
+        """Set how Auto Setup behaves, without running it. Omitted items are left
+        unchanged. Set these before calling autoset to avoid surprises:
+        enabled_channels_only=true keeps autoset from turning off channels that
+        show no signal; keep_coupling=true keeps each channel's coupling instead
+        of resetting it to DC; overlay=false stacks channels top to bottom instead
+        of overlaying them; peak_priority favours the peak-to-peak range for
+        offset signals. Read the current values in get_capabilities (hardware).
+        """
+        return control.configure_autoset(
+            manager.require_scope(),
+            peak_priority=peak_priority,
+            enabled_channels_only=enabled_channels_only,
+            overlay=overlay,
+            keep_coupling=keep_coupling,
+        )
+
+    @_register
     def autoset(confirm_token: str | None = None) -> dict:
         """Run Auto Setup (autoscale).
 

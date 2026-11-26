@@ -4445,8 +4445,15 @@ def test_get_device_time_is_none_on_generic(
 def test_get_hardware_info_reads_channels_and_autoset(
     driver: ScopeDriver, scope: FakeScope
 ) -> None:
-    assert driver.get_hardware_info() == {"analog_channels": 4, "autoset_available": True}
-    assert sent(scope, "?") == [
+    info = driver.get_hardware_info()
+
+    assert info["analog_channels"] == 4
+    assert info["autoset_available"] is True
+    # 挙動設定(issue #70)も読む
+    assert set(info["autoset_options"]) == {
+        "peak_priority", "enabled_channels_only", "overlay", "keep_coupling"
+    }
+    assert sent(scope, "?")[:3] == [
         ":SYSTem:RAMount?",
         ":AUToset:ENAble?",
         ":AUToset:LOCK?",
@@ -5068,3 +5075,48 @@ def test_can_fd_is_skipped_without_the_license() -> None:
     assert "fd_baud_bps" not in settings
     assert not [c for c in scope.command_log if c.upper().startswith(":BUS1:CAN:FD")]
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+
+# オートセットの挙動設定(issue #70)
+# --------------------------------------------------------------------------
+
+
+def test_configure_autoset_options_round_trip(driver: ScopeDriver, scope: FakeScope) -> None:
+    applied = driver.configure_autoset_options(
+        keep_coupling=True, overlay=False, enabled_channels_only=True, peak_priority=False
+    )
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":AUToset")]
+    assert writes == [
+        ":AUToset:PEAK OFF",
+        ":AUToset:OPENch ON",
+        ":AUToset:OVERlap OFF",
+        ":AUToset:KEEPcoup ON",
+    ]
+    assert applied == {
+        "peak_priority": False,
+        "enabled_channels_only": True,
+        "overlay": False,
+        "keep_coupling": True,
+    }
+    # autoset 自体は実行しない
+    assert ":AUToset" not in scope.command_log
+
+
+def test_get_autoset_options_defaults(driver: ScopeDriver) -> None:
+    assert driver.get_autoset_options() == {
+        "peak_priority": True,
+        "enabled_channels_only": False,
+        "overlay": True,
+        "keep_coupling": False,
+    }
+
+
+def test_autoset_options_unsupported_on_generic(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.configure_autoset_options(overlay=False)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert generic_driver.get_autoset_options() == {}
+    assert scope.command_log == []

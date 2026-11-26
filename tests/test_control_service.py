@@ -294,6 +294,16 @@ def test_configure_timebase_extras_alone(service: ControlService, driver: ScopeD
     assert result["applied"] == {"delay_enabled": True}
     assert result["changed"] is True
 
+def test_configure_autoset_changes_only_the_options(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """挙動の設定だけを変え、autoset 自体は実行しない(承認も要らない。#70)。"""
+    result = service.configure_autoset(driver, keep_coupling=True)
+
+    assert result["applied"] == {"keep_coupling": True}
+    assert result["changed"] is True
+    assert ":AUToset" not in scope.command_log
+
 
 def test_configure_channel_writes_single_audit_row(
     service: ControlService, driver: ScopeDriver, audit_path: Path

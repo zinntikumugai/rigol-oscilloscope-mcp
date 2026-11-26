@@ -2760,3 +2760,22 @@ def test_configure_decode_can_fd_round_trip(
         control.configure_decode(driver, DECODE_BUS, "can", settings=can_before)
         restored = driver.get_decode_config(DECODE_BUS, include_can_fd=True)["settings"]
         assert restored == can_before
+
+# オートセットの挙動設定(issue #70。autoset 自体は実行しない)
+# --------------------------------------------------------------------------
+
+
+def test_configure_autoset_options_round_trip(
+    control: ControlService, driver: ScopeDriver
+) -> None:
+    before = driver.get_autoset_options()
+    _report(f"[autoset] options before={before}")
+    flipped = {key: not value for key, value in before.items()}
+    try:
+        result = control.configure_autoset(driver, **flipped)
+        _report(f"[autoset] applied={result['applied']}")
+        assert result["applied"] == flipped
+        assert driver.session.drain_error_queue() == []
+    finally:
+        driver.configure_autoset_options(**before)
+        assert driver.get_autoset_options() == before

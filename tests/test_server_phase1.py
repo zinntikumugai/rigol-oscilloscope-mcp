@@ -192,7 +192,16 @@ def test_get_capabilities_reports_hardware_info(server) -> None:
 
     hardware = payload(call(server, "get_capabilities"))["hardware"]
 
-    assert hardware == {"analog_channels": 4, "autoset_available": True}
+    assert hardware == {
+        "analog_channels": 4,
+        "autoset_available": True,
+        "autoset_options": {
+            "peak_priority": True,
+            "enabled_channels_only": False,
+            "overlay": True,
+            "keep_coupling": False,
+        },
+    }
 
 
 def test_get_channel_includes_extra_attributes(server) -> None:
