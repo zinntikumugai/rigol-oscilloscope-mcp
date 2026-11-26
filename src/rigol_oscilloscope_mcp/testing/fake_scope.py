@@ -752,12 +752,11 @@ _DVM_PROPS: tuple[tuple[str, str, object, object], ...] = (
 #: `:DVM:CURRent?` の値(DC 1V + 0.5Vpp正弦を当てた想定の代表値。要実機検証)
 _DVM_VALUES = {"ACRM": 0.35, "DC": 1.0, "DCRM": 1.06}
 
-#: メモリ深さの選択肢(ガイド3.3.2)と、4ch構成時の上限(実機実測)
+#: メモリ深さの選択肢(ガイド3.3.2)
 _MEMORY_DEPTHS = (
     1_000, 10_000, 100_000, 1_000_000, 10_000_000, 25_000_000, 50_000_000,
     100_000_000, 125_000_000, 200_000_000, 250_000_000, 500_000_000,
 )
-_MEMORY_DEPTH_LIMIT = 125_000_000
 #: 取得モード(ガイド3.3)。既定値はガイドの Default 欄と実機の初期応答に従う
 _ACQUIRE_PROPS: tuple[tuple[str, str, object, object], ...] = (
     ("mode", "TYPE", ("NORMal", "PEAK", "AVERages", "HRESolution"), "NORM"),
@@ -1885,8 +1884,8 @@ class FakeScope:
         return self.clock if self.clock is not None else datetime.now()
 
     def _memory_depth_write(self, token: str) -> None:
-        """**実機実測**: AUTO は実際の深さ(ここでは 20k)になる。4ch構成の上限
-        125M を超える値はエラーなしで丸める。一覧外は -222(沈黙しない)。"""
+        """**実機実測**: AUTO は実際の深さ(ここでは 20k)になる。表示ch数で決まる
+        上限を超える値はエラーなしで丸める。一覧外は -222(沈黙しない)。"""
         text = token.strip().upper()
         if text == "AUTO":
             self.memory_depth = 20_000
@@ -1900,8 +1899,13 @@ class FakeScope:
         if value not in _MEMORY_DEPTHS:
             self.error_queue.append(OUT_OF_RANGE)
             return None
-        self.memory_depth = min(value, _MEMORY_DEPTH_LIMIT)
+        self.memory_depth = min(value, self._memory_depth_limit())
         return None
+
+    def _memory_depth_limit(self) -> int:
+        """表示中のch数で決まる上限(ガイド3.3.2: 1ch 500M / 2ch 250M / 3-4ch 125M)。"""
+        shown = sum(1 for state in self.channels.values() if state["display"])
+        return {1: 500_000_000, 2: 250_000_000}.get(shown, 125_000_000)
 
     def _force_trigger(self) -> None:
         if self.acquisition == "SINGLE":

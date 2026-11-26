@@ -4785,11 +4785,20 @@ def test_configure_acquisition_memory_depth_auto(driver: ScopeDriver, scope: Fak
     assert isinstance(applied["memory_depth"], int)
 
 
-def test_configure_acquisition_reports_clamped_memory_depth(driver: ScopeDriver) -> None:
-    """**実機実測**: ch数で決まる上限を超えるとエラーなしで上限へ丸められる。"""
+@pytest.mark.parametrize(
+    ("shown", "limit"), [(1, 500_000_000), (2, 250_000_000), (4, 125_000_000)]
+)
+def test_configure_acquisition_reports_clamped_memory_depth(
+    driver: ScopeDriver, scope: FakeScope, shown: int, limit: int
+) -> None:
+    """**実機実測**: 表示中のch数で決まる上限(1ch 500M / 2ch 250M / 3-4ch 125M)を
+    超えるとエラーなしで上限へ丸められる。"""
+    for n in range(1, 5):
+        scope.channels[n]["display"] = n <= shown
+
     applied = driver.configure_acquisition(memory_depth=500_000_000)
 
-    assert applied["memory_depth"] == 125_000_000
+    assert applied["memory_depth"] == limit
 
 
 @pytest.mark.parametrize("depth", [12345, 0, "big", True, 1.5])
