@@ -533,7 +533,8 @@ BUS_COUNT = 4
 _BUS_MODES = ("PARallel", "RS232", "SPI", "IIC", "LIN", "CAN", "IIS", "FLEXray", "M1553")
 _BUS_FORMATS = ("HEX", "ASCii", "DEC", "BIN")
 
-#: 閾値の `<type>`(ライセンス必須プロトコルの種別は意図的に載せない)
+#: 閾値の `<type>`(実機で確認済みのトークンだけ。ガイドの `I2SClk` は実機が沈黙するので載せない。
+#: I2S のクロックは `CLK` を使う)
 _THRESHOLD_TYPES = (
     "TX", "RX", "SCL", "SDA", "CLK", "MISO", "MOSI", "CS", "CAN", "LIN", "PAL", "PALCLK",
     "FLEX", "1553", "DATA", "WS",

@@ -1045,7 +1045,7 @@ MATH演算の現在設定を読む。**書き込みは一切行わず**、表示
 
 ## 15. トリガ種別(Phase M5)
 
-MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標準搭載の11種**を `configure_trigger` の `type` + `settings` で開放している(オプション必須の IIS / FlexRay / MIL-STD-1553 と、用途が限定的な Video は対象外)。
+MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標準搭載の11種**を `configure_trigger` の `type` + `settings` で開放している(オプション必須の IIS / FlexRay / MIL-STD-1553 は導入済みのときだけ使える(issue #74、下記)。用途が限定的な Video は対象外)。
 
 新Toolは増やしていない。種別ごとの引数差は `configure_decode` と同じ `settings` オブジェクトで吸収する。
 

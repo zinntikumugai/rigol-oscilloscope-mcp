@@ -127,7 +127,7 @@
 
 `:SYSTem:OPTion:*` は**MHO900専用**でDHO800/900のガイドには存在しない。したがって `option_query` / `option_types` は `mho98.yaml` にのみ宣言し、`rigol-generic.yaml` には置かない — **キーの不在がそのままゲート**である(4.2の原則の適用例)。`*OPT?` はRigolオシロ全シリーズで未定義ヘッダのため使わない。`<type>` リスト外のトークン(実測: `AUTOA`)でもSCPIサーバーが沈黙するので、`option_types` に載っていないトークンを送ってはならない。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md)(未ライセンス状態でも `AFG50` / `RLU-05` は `1` を返す)。
 
-`decode_protocols` に載せるのは**標準搭載の6種のみ**。I2S(`IIS`)/ FlexRay / MIL-STD-1553(`M1553`)/ CAN-FD(`:BUS<n>:CAN:FDBaud`)はライセンスオプション必須のため意図的に載せず、**不在がそのままゲート**になる(未宣言のプロトコルは送信前に `UNSUPPORTED_FEATURE`)。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 3章(未ライセンス状態でも RS232/IIC/SPI/CAN/LIN/PAR は全て正常応答)。
+`decode_protocols` に載せるのは**標準搭載の6種のみ**。I2S(`IIS`)/ FlexRay / MIL-STD-1553(`M1553`)/ CAN-FD(`:BUS<n>:CAN:FDBaud`)はライセンスオプション必須のため `decode_protocols` には載せない。I2S / FlexRay / 1553 は `decode_option_protocols`、CAN-FD は `decode_can_fd` で別に宣言し、**オプションが導入済みのときだけ**使う(未導入・未宣言なら送信前に `UNSUPPORTED_FEATURE`)。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 3章(未ライセンス状態でも RS232/IIC/SPI/CAN/LIN/PAR は全て正常応答)。
 
 **AFGの機種差(`afg_*` を MHO98 にしか宣言しない理由):** MHO900シリーズの信号発生は**番号付きの `:SOURce<n>`**(n=1,2)だが、DHO800/900の内蔵ジェネレータは**番号なしの `:SOURce`** で、しかも別売のDGモジュール前提(有無は `:SYSTem:DGSTatus?` で照会する)という**別物の方言**である。共通化せず、検証済み機種のプロファイルにだけ宣言する(不在=非対応のゲート)。実測根拠は [verification/mho98-afg.md](verification/mho98-afg.md)。
 

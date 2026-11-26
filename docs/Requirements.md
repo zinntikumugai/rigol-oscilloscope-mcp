@@ -101,7 +101,7 @@ LLMに `:CHAN1:SCAL 1` のようなSCPI文字列を直接生成・送信させ�
 - Acquisition: Run / Stop / Single / Auto Setup(要承認)
 - Measurement: frequency, period, vpp, vmax, vmin, vavg, rms, duty, rise_time, fall_time
 - データ取得: 波形サンプル、スクリーンショット(ファイル保存 + 画像返却)、状態一括取得
-- シリアルプロトコルデコード(Phase 4で昇格): 標準搭載6種(UART/RS232、I²C、SPI、CAN、LIN、パラレル)のバス設定・表示・イベントテーブル(`configure_decode`)と、デコード結果(イベントテーブル)の取得(`get_decode_result`)。ライセンスオプション必須のプロトコル(I2S、FlexRay、MIL-STD-1553、CAN-FD)は非対象
+- シリアルプロトコルデコード(Phase 4で昇格): 標準搭載6種(UART/RS232、I²C、SPI、CAN、LIN、パラレル)のバス設定・表示・イベントテーブル(`configure_decode`)と、デコード結果(イベントテーブル)の取得(`get_decode_result`)。ライセンスオプション必須のプロトコル(I2S、FlexRay、MIL-STD-1553、CAN-FD)は、オプション導入済みのときだけ扱う(CAN-FD は issue #69、他3種は issue #74。トリガも同じ)
 - 信号発生(AFG。Phase 4で昇格): 内蔵ジェネレータ(`:SOURce<n>`)の設定(`configure_afg`: 波形13種・周波数・振幅Vpp・オフセット・位相・デューティ・対称性・出力インピーダンス・変調AM/FM/PM・ARBファイル選択)、状態取得(`get_afg_state`)、**出力制御**(`enable_afg` / `disable_afg`)、両チャンネルの**位相同期**(`sync_afg_phase`)。設定と出力制御は別Toolで、**実際に信号を外へ出す `enable_afg` のみ DANGEROUS_WRITE**(確認フロー必須)。出力OFFと位相同期は振幅・出力状態に触れない操作のため SAFE_WRITE
 
 ### 3.3 将来対応(Phase 4以降)
