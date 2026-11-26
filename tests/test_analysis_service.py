@@ -243,7 +243,9 @@ def test_analyze_unknown_analysis_is_invalid(driver: ScopeDriver, config: Config
         analyze_waveform(driver, config, "CH1", analyses=["bogus"])
 
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
-    assert excinfo.value.detail["valid"] == ["stats", "fft"]
+    assert excinfo.value.detail["valid"] == [
+        "stats", "fft", "pulse", "noise", "thd", "jitter"
+    ]
 
 
 def test_analyze_empty_analyses_is_invalid(driver: ScopeDriver, config: Config) -> None:
@@ -342,3 +344,154 @@ def test_analyze_rejects_an_fft_math_trace(
     assert "get_math_state" in excinfo.value.message
     assert "capture_waveform" in excinfo.value.message
     assert ":WAVeform:DATA?" not in scope.command_log
+
+
+# --------------------------------------------------------------------------
+# ホスト側解析の拡充(issue #73)。合成信号で期待値を確かめる
+# --------------------------------------------------------------------------
+
+import math as _math
+import random as _random
+
+
+def _square(points: int, period: int, low: float = 0.0, high: float = 1.0) -> list[float]:
+    return [high if (i % period) < period // 2 else low for i in range(points)]
+
+
+def test_pulse_overshoot_and_preshoot() -> None:
+    """矩形波の立ち上がり直後に +0.2V、立ち下がり直後に −0.1V のはね(振幅1V)。"""
+    from rigol_oscilloscope_mcp.service.analysis import waveform_pulse
+
+    samples = _square(4000, 400)
+    for start in range(0, 4000, 400):
+        samples[start] = 1.2  # 立ち上がりのオーバーシュート
+        samples[start + 200] = -0.1  # 立ち下がりのアンダーシュート
+
+    result = waveform_pulse(samples)
+
+    assert result["top_v"] == pytest.approx(1.0, abs=0.02)
+    assert result["base_v"] == pytest.approx(0.0, abs=0.02)
+    assert result["overshoot_percent"] == pytest.approx(20.0, abs=2.5)
+    assert result["preshoot_percent"] == pytest.approx(10.0, abs=2.5)
+
+
+def test_pulse_on_a_flat_signal_reports_no_amplitude() -> None:
+    from rigol_oscilloscope_mcp.service.analysis import waveform_pulse
+
+    result = waveform_pulse([0.5] * 1000)
+
+    assert result["overshoot_percent"] is None
+    assert "warning" in result
+
+
+def test_noise_estimate_recovers_white_noise() -> None:
+    """ゆっくりした正弦波 + σ=10mV の白色雑音。隣接差による推定で σ を取り出す。"""
+    from rigol_oscilloscope_mcp.service.analysis import waveform_noise
+
+    rng = _random.Random(7)
+    samples = [
+        _math.sin(2 * _math.pi * i / 20000) + rng.gauss(0.0, 0.01) for i in range(20000)
+    ]
+
+    result = waveform_noise(samples)
+
+    assert result["noise_rms_v"] == pytest.approx(0.01, rel=0.05)
+
+
+def test_thd_of_a_sine_with_known_harmonics() -> None:
+    """基本波 1V + 3次 0.1V + 5次 0.05V → THD = √(0.1²+0.05²)/1 = 11.18%。"""
+    from rigol_oscilloscope_mcp.service.analysis import waveform_thd
+
+    dt = 1e-6
+    f0 = 1000.0
+    samples = [
+        _math.sin(2 * _math.pi * f0 * i * dt)
+        + 0.1 * _math.sin(2 * _math.pi * 3 * f0 * i * dt)
+        + 0.05 * _math.sin(2 * _math.pi * 5 * f0 * i * dt)
+        for i in range(16384)
+    ]
+
+    result = waveform_thd(samples, dt)
+
+    assert result["fundamental_hz"] == pytest.approx(f0, rel=0.02)
+    assert result["thd_percent"] == pytest.approx(11.18, abs=0.6)
+    third = next(h for h in result["harmonics"] if h["order"] == 3)
+    assert third["amplitude_v"] == pytest.approx(0.1, rel=0.1)
+
+
+def test_jitter_of_a_square_wave_with_shifted_edges() -> None:
+    """周期 100 点の矩形波で、立ち上がりを交互に ±1 点ずらす → 周期は 98 / 102 点。"""
+    from rigol_oscilloscope_mcp.service.analysis import waveform_jitter
+
+    dt = 1e-6
+    samples: list[float] = []
+    for cycle in range(40):
+        shift = 1 if cycle % 2 else -1
+        width = 100 + 2 * shift if cycle else 100
+        samples += [1.0] * (width // 2) + [0.0] * (width - width // 2)
+
+    result = waveform_jitter(samples, dt)
+
+    assert result["cycles"] >= 30
+    assert result["period_mean_s"] == pytest.approx(100e-6, rel=0.02)
+    assert result["period_jitter_rms_s"] == pytest.approx(2e-6, rel=0.2)
+    assert result["cycle_to_cycle_jitter_rms_s"] > result["period_jitter_rms_s"]
+
+
+def test_jitter_needs_at_least_three_rising_edges() -> None:
+    from rigol_oscilloscope_mcp.service.analysis import waveform_jitter
+
+    result = waveform_jitter(_square(150, 100), 1e-6)
+
+    assert result["period_mean_s"] is None
+    assert "warning" in result
+
+
+def test_default_analyses_stay_stats_and_fft() -> None:
+    """analyses を省略したときの返却は従来どおり(stats / fft だけ)。"""
+    from rigol_oscilloscope_mcp.service.analysis import DEFAULT_ANALYSES, VALID_ANALYSES
+
+    assert DEFAULT_ANALYSES == ("stats", "fft")
+    assert {"pulse", "noise", "thd", "jitter"} <= set(VALID_ANALYSES)
+
+
+def test_thd_refuses_a_record_with_too_few_cycles() -> None:
+    """**実機で踏んだ不具合**: 2周期しか無い記録では基本波のビンが小さく、高調波の
+    探索範囲が基本波と重なって基本波を高調波として数えた(THD 183%)。周期が
+    足りなければ計算せずに警告する。"""
+    from rigol_oscilloscope_mcp.service.analysis import waveform_thd
+
+    dt = 2e-6
+    samples = [_math.sin(2 * _math.pi * 1000 * i * dt) for i in range(1000)]  # 2周期
+
+    result = waveform_thd(samples, dt)
+
+    assert result["thd_percent"] is None
+    assert "cycles" in result["warning"]
+
+
+def test_thd_of_a_square_wave_is_about_48_percent() -> None:
+    """理想の矩形波(奇数次のみ、振幅 1/n)の THD は約48%(10次まで数えると約45%)。"""
+    from rigol_oscilloscope_mcp.service.analysis import waveform_thd
+
+    dt = 1e-5
+    samples = _square(16000, 100)  # 1kHz・160周期
+
+    result = waveform_thd(samples, dt)
+
+    assert 40 < result["thd_percent"] < 50
+    orders = [h["order"] for h in result["harmonics"]]
+    assert orders == sorted(set(orders))
+
+
+def test_noise_estimate_ignores_sparse_edges() -> None:
+    """**実機で踏んだ不具合**: 矩形波だとエッジの段差が隣接差に入り、標準偏差では
+    雑音を過大に見積もった。中央絶対偏差なら、まばらなエッジに引っ張られない。"""
+    from rigol_oscilloscope_mcp.service.analysis import waveform_noise
+
+    rng = _random.Random(11)
+    samples = [value + rng.gauss(0.0, 0.01) for value in _square(20000, 50)]
+
+    result = waveform_noise(samples)
+
+    assert result["noise_rms_v"] == pytest.approx(0.01, rel=0.1)

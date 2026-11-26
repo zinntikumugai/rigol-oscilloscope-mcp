@@ -2913,3 +2913,39 @@ def test_option_trigger_round_trip(
     finally:
         control.configure_trigger(driver, type=trigger_type, settings=sub_before)
         assert get_trigger_dict(driver)["settings"] == sub_before
+
+
+# --------------------------------------------------------------------------
+# ホスト側解析の拡充(issue #73)。校正信号(1kHz 矩形波)に掛けて妥当性を見る
+# --------------------------------------------------------------------------
+
+
+def test_host_analyses_on_the_calibration_square_wave(
+    driver: ScopeDriver, device_config: Config
+) -> None:
+    """CH1 0.1V/div・2ms/div(約20周期)で 1kHz の校正信号を解析する。
+
+    矩形波なので THD は大きい(理想の矩形波は約48%)。ジッタの周期は 1ms。
+    """
+    from rigol_oscilloscope_mcp.service import analyze_waveform
+
+    ch1_scale = get_channel_dict(driver, "CH1")["scale_v_per_div"]
+    timebase = get_timebase_dict(driver)["scale_s_per_div"]
+    try:
+        driver.set_channel_scale("CH1", 0.1)
+        # 画面に約20周期入れる(THD・ジッタとも周期が要る)
+        driver.set_timebase_scale(2e-3)
+        time.sleep(0.5)
+        result = analyze_waveform(
+            driver, device_config, "CH1", analyses=["pulse", "noise", "thd", "jitter"]
+        )
+        _report(f"[analysis] {result}")
+
+        assert result["pulse"]["amplitude_v"] > 0.1
+        assert result["jitter"]["period_mean_s"] == pytest.approx(1e-3, rel=0.02)
+        assert result["thd"]["fundamental_hz"] == pytest.approx(1000, rel=0.05)
+        assert 30 < result["thd"]["thd_percent"] < 60
+        assert result["noise"]["noise_rms_v"] < result["pulse"]["amplitude_v"] / 10
+    finally:
+        driver.set_channel_scale("CH1", ch1_scale)
+        driver.set_timebase_scale(timebase)

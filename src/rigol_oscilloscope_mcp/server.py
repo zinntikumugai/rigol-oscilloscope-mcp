@@ -445,10 +445,19 @@ def create_server(
         """Analyze a waveform on the host and return only the summary.
 
         The raw samples are never returned; use capture_waveform when the data
-        itself is needed. analyses is a subset of ["stats", "fft"] (all of them
-        when omitted). stats gives min/max/mean/rms/std/vpp in volts; fft gives
-        the dominant frequency and the strongest peaks. Frequency accuracy is
-        limited by frequency_resolution_hz, so do not read more digits than that.
+        itself is needed. analyses is a subset of ["stats", "fft", "pulse",
+        "noise", "thd", "jitter"]; when omitted only "stats" and "fft" run.
+        stats gives min/max/mean/rms/std/vpp in volts; fft gives the dominant
+        frequency and the strongest peaks. Frequency accuracy is limited by
+        frequency_resolution_hz, so do not read more digits than that.
+        pulse gives top/base (histogram modes), overshoot_percent and
+        preshoot_percent for square waves and pulses. noise estimates the white
+        noise RMS from sample-to-sample differences (robust to occasional edges;
+        over-reads when edges fill most of the record).
+        thd gives total harmonic distortion in percent with the harmonics up to
+        the 10th (use a sine wave). jitter gives the period mean, period jitter
+        (RMS and pk-pk) and cycle-to-cycle jitter from interpolated rising edges;
+        capture many cycles for a meaningful number.
 
         channel is "CH1"-"CH4" or a math trace "MATH1"-"MATH4". A math trace
         using the fft operator is rejected: its x axis is already frequency, so
