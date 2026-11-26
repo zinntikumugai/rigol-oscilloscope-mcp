@@ -2990,6 +2990,13 @@ def test_logic_analyzer_round_trip(control: ControlService, driver: ScopeDriver)
     if not before["enabled"]:
         # 無効のあいだはポッド・chが全て 0 と読め、元の状態を控えられない
         pytest.skip("ロジックアナライザが無効(前面パネルで有効にしてから流す)")
+    from rigol_oscilloscope_mcp.driver.scope import _REFERENCE_LABEL_RE
+
+    # 書き換えるのは D1 のラベルだけ。MCP が受け付けない文字種(前面パネルで付けた
+    # 空白入り等)なら書き戻せないので、変える前に skip する。他のchのラベルには
+    # 触れないので、最後の全体比較はそのまま成り立つ
+    if not _REFERENCE_LABEL_RE.fullmatch(before["channels"]["D1"]["label"]):
+        pytest.skip(f"D1 のラベル {before['channels']['D1']['label']!r} は書き戻せない文字を含む")
     try:
         result = control.configure_logic_analyzer(
             driver,
