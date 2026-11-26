@@ -5119,4 +5119,72 @@ def test_autoset_options_unsupported_on_generic(
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert generic_driver.get_autoset_options() == {}
+
+# 測定ヒストグラム(issue #71)
+# --------------------------------------------------------------------------
+
+
+def test_configure_measurement_enables_the_measure_histogram(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    applied = driver.configure_measurement(histogram_enabled=True)
+
+    assert ":MEASure:HISTogram:ENABle ON" in scope.command_log
+    assert applied == {"histogram_enabled": True}
+
+
+def test_get_measurement_histogram_reads_the_statistics(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_measurement(histogram_enabled=True)
+
+    result = driver.get_measurement_histogram()
+
+    assert result["raw"].startswith('[["')
+    assert result["stats"]["item"] == "Vpp"
+    assert "unlabeled" in result
+
+
+def test_get_measurement_histogram_disabled_reads_nothing_more(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """無効時は統計を読まない(:HISTogram と同じ扱い。エラーキューを汚さない)。"""
+    result = driver.get_measurement_histogram()
+
+    assert result["raw"] == ""
+    assert result["warnings"]
+    assert not [c for c in scope.command_log if "RESULT" in c.upper()]
+
+
+def test_measure_histogram_unsupported_on_generic(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.get_measurement_histogram()
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert scope.command_log == []
+
+
+def test_measure_histogram_needs_its_own_declaration(scope: FakeScope) -> None:
+    """測定ヒストグラムは専用の宣言 `measurement_histogram` でゲートする(既存の
+    `histogram` は別サブシステムの波形ヒストグラム。Copilotレビュー)。"""
+    import dataclasses
+
+    base = load_profile("mho98")
+    profile = dataclasses.replace(
+        base,
+        capabilities={
+            k: v for k, v in base.capabilities.items() if k != "measurement_histogram"
+        },
+    )
+    driver = ScopeDriver(ScpiSession(FakeTransport(scope)), profile)
+    driver.session.transport.open()
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_measurement_histogram()
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    with pytest.raises(ScopeError):
+        driver.configure_measurement(histogram_enabled=True)
+    assert "histogram_enabled" not in driver.get_measurement_config()
+    assert not [c for c in scope.command_log if "HISTOGRAM" in c.upper()]

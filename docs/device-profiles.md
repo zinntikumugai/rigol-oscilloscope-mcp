@@ -61,6 +61,8 @@
 | `hardware_info` | true | 機器自身の申告(`:SYSTem:RAMount?` / `:AUToset:ENAble?` / `:LOCK?`)の可否。`get_capabilities` の `hardware` と、autoset 実行前の可否確認が使う。**未宣言なら照会せず `hardware: null`**。mho98のみ。`:SYSTem:MODules?` は実態と合わないため使わない([verification/mho98-m6.md](verification/mho98-m6.md) §4) |
 | `mask_test` | true | Pass/Fail(マスク)試験(`:MASK`。`:OUTPut:*` を除く)の可否。`configure_mask` / `get_mask_result` が使う。**未宣言なら送信ゼロで `UNSUPPORTED_FEATURE`**。mho98のみ |
 | `autoset_options` | true | オートセットの挙動設定(`:AUToset:PEAK` / `:OPENch` / `:OVERlap` / `:KEEPcoup`)の可否。`configure_autoset` と `get_capabilities` の `hardware.autoset_options` が使う。mho98のみ |
+
+| `measurement_histogram` | true | 測定ヒストグラム(`:MEASure:HISTogram`、3.17.31-32)の可否。`get_measurement_histogram` と `configure_measurement(histogram_enabled=...)` が使う。**`histogram`(3.11 の波形ヒストグラム)とは別サブシステムなので別に宣言する**。mho98のみ |
 | `histogram` | true | 波形ヒストグラム(`:HISTogram`)の可否。`configure_histogram` / `get_histogram_result` が使う。**未宣言ならヒストグラム操作自体を行わない**(`UNSUPPORTED_FEATURE`、送信ゼロ) |
 
 未対応機能のToolが呼ばれた場合、実機へコマンドを送らず `UNSUPPORTED_FEATURE` を返す(理由は4.2参照)。

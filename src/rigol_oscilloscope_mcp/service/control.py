@@ -981,6 +981,7 @@ class ControlService:
         statistics_count: int | None = None,
         statistics_reset: bool | None = None,
         statistics_items: list[str] | None = None,
+        histogram_enabled: bool | None = None,
     ) -> dict:
         """測定の前提設定を変える(SAFE_WRITE)。未指定の項目は変更しない。
 
@@ -1009,6 +1010,7 @@ class ControlService:
             "statistics_count": statistics_count,
             "statistics_reset": statistics_reset,
             "statistics_items": statistics_items,
+            "histogram_enabled": histogram_enabled,
         }
         # `statistics_enabled` は**設定**なので False も有効。一発動作
         # (`threshold_default` / `statistics_reset`)と空の `statistics_items`

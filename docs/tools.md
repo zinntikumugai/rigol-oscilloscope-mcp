@@ -571,6 +571,7 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `configure_search` | SAFE_WRITE | M7 |
 | `get_search_results` | READ_ONLY | M7 |
 | `configure_mask` | SAFE_WRITE | M7 |
+| `get_measurement_histogram` | READ_ONLY | 中(#71) |
 | `get_mask_result` | READ_ONLY | M7 |
 | `autoset` | RESTRICTED_WRITE | 2 |
 | `recommend_setup`(未実装・スキルで代替) | READ_ONLY | 3 |
@@ -596,7 +597,7 @@ Phase 3は**同梱スキルで実現した**(サーバー側Toolなし)。測定
 | `configure_acquisition` | SAFE_WRITE | M6 |
 | `raw_scpi` | DANGEROUS_WRITE | 開発用 |
 
-登録Tool数は47(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2 + Phase M6: 2 + Phase M7: 4。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**、Phase M5(トリガ種別)は**15章**、Phase M6(取得モード)は**16章**(`force_trigger` は4章)、Phase M7(イベント検索)は**17章**、Pass/Fail試験は**18章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
+登録Tool数は48(Phase 1: 12 + Phase 2: 7 + Phase 4: 9 + Phase M1: 2 + Phase M2: 6 + Phase M3: 2 + Phase M4: 2 + Phase M6: 2 + Phase M7: 4。`recommend_setup` / `raw_scpi` は未登録)。Phase M1(MATH演算)の詳細は**11章**、Phase M2(カーソル・計測器・ヒストグラム)は**12章**、Phase M3(リファレンス波形)は**13章**、Phase M4(測定の前提設定と統計)は**14章**、Phase M5(トリガ種別)は**15章**、Phase M6(取得モード)は**16章**(`force_trigger` は4章)、Phase M7(イベント検索)は**17章**、Pass/Fail試験は**18章**にある(いずれも既存章番号の参照を壊さないため末尾に追加している)。
 
 将来(Phase 4の残り): `:PERiod` / `:VOLTage:HIGH`/`:LOW`(恒久スキップ。`frequency_hz`/`amplitude_vpp`+`offset_v`で表現可能なため)、DHOファミリの `:SOURce`(番号なし・DGモジュール)対応、Logic Analyzer。
 
@@ -1024,6 +1025,17 @@ MATH演算の現在設定を読む。**書き込みは一切行わず**、表示
 - **統計は項目ごとの有効化が前提**。先に `configure_measurement` の `statistics_items` で有効化する
 - 番兵値(±9.9E37 相当)は `null` に変換し、その項目の全種別が `null` なら `warnings` に載せる
 
+
+### `get_measurement_histogram` — READ_ONLY(issue #71)
+
+**測定ヒストグラム**(`:MEASure:HISTogram`、ガイド3.17.31-32)。1つの測定項目の値が、取り込みを重ねる間にどう分布したかを返す。**波形ヒストグラム(`:HISTogram`、12章)とは別サブシステム**。
+
+- 有効化は `configure_measurement(histogram_enabled=true)`。対象は測定結果ビューで機器が選んだ項目(応答の `item` で分かる)。**実機実測**: 既に Frequency などが並んでいるとそちらが対象のままになるので、`clear_measurements` → 目的の項目だけを `measure` → 有効化、の順にする
+- 応答はラベルの無い16個の文字列(`[["92","1","0","Vpp","4","23hits","4hits","5.31mV",...]]`)。**各位置の意味はガイドに無い**。実機の応答を `:HISTogram` の13ラベルと照合し、並びと値が一致した位置(6〜15番目: `sum` / `peaks` / `max` / `min` / `pk_pk` / `mean` / `median` / `mode` / `bin_width` / `sigma`。Max − Min = Pk_Pk で整合)だけにラベルを付けて `stats` に入れる。SI接頭辞は基本単位へ換算し、`*_unit` を併記する
+- 意味の分からない位置(先頭の3値・5番目・最後の値)は `unlabeled` に生のまま返す。`raw` は常に返す
+- 無効のときは統計を読まない(`raw` は空、`warnings` に理由)
+
+**`:MEASure:COUNter`(3.17.25-27)は見送った**: 有効な 1kHz 信号(Vpp 0.32V)が見えている状態でも、`:MEASure:COUNter:VALue?` が `9.90E+37`(測定不能)のままで、動作を確認できなかった
 ---
 
 ## 15. トリガ種別(Phase M5)

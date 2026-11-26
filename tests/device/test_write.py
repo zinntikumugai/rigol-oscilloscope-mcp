@@ -2779,3 +2779,42 @@ def test_configure_autoset_options_round_trip(
     finally:
         driver.configure_autoset_options(**before)
         assert driver.get_autoset_options() == before
+
+# 測定ヒストグラム(issue #71)
+# --------------------------------------------------------------------------
+
+
+def test_measurement_histogram_accumulates(
+    control: ControlService, driver: ScopeDriver, measurement_before: dict
+) -> None:
+    """測定ヒストグラムを有効化し、機器が選んだ項目のヒット数が増えること。
+
+    各位置の意味はガイドに無い。実測で :HISTogram の13ラベルと並びが一致した
+    位置だけにラベルを付けている(Max − Min = Pk_Pk で整合を確かめる)。
+    """
+    from rigol_oscilloscope_mcp.service import measure
+
+    # 校正信号(約0.3V)が画面に収まるスケールにする(はみ出すと測定値が無効に
+    # なり、ヒットが溜まらない)。**利用者の測定項目は消さない**(一覧を読む手段が
+    # 無く元へ戻せないため)。対象は機器が選んだ項目なので、項目名は問わない
+    ch1_scale = get_channel_dict(driver, "CH1")["scale_v_per_div"]
+    driver.set_channel_scale("CH1", 0.1)
+    measure(driver, "CH1", ["vpp"])
+    control.configure_measurement(driver, histogram_enabled=True)
+    try:
+        time.sleep(2.0)
+        result = driver.get_measurement_histogram()
+        _report(f"[measure-histogram] {result}")
+        stats = result["stats"]
+        assert isinstance(stats["item"], str) and stats["item"]
+        assert {"sum", "max", "min", "pk_pk", "mean", "sigma"} <= set(stats)
+        # 機器が選んだ項目が無効な測定値(信号の無いch 等)だとヒットは溜まらない。
+        # 溜まっていれば Max − Min = Pk_Pk で位置の解釈を裏取りする
+        if stats["sum"] >= 1:
+            assert stats["pk_pk"] == pytest.approx(
+                stats["max"] - stats["min"], rel=0.05, abs=1e-4
+            )
+        assert driver.session.drain_error_queue() == []
+    finally:
+        driver.configure_measurement(histogram_enabled=False)
+        driver.set_channel_scale("CH1", ch1_scale)

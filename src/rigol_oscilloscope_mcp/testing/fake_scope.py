@@ -852,6 +852,12 @@ _MEASURE_SETUP_PROPS: tuple[tuple[str, str, object, object], ...] = (
     ("amp_base", "AMP:MANual:BASE", ("HISTogram", "MAXMin"), "HIST"),
     ("statistics_enabled", "STATistic:DISPlay", "bool", False),
     ("statistics_count", "STATistic:COUNt", ("int", 2, 100_000), 1000),
+    ("histogram_enabled", "HISTogram:ENABle", "bool", False),
+)
+#: 測定ヒストグラムの統計(3.17.32)。実機実測の応答(CH1 の Vpp)
+_MEASURE_HISTOGRAM_RESULT = (
+    '[["92","1","0","Vpp","0","43hits","8hits","327.3mV","323mV","4.296mV",'
+    '"324.7mV","324.5mV","324.2mV","32.3uV","1.11mV","3.23mV"]]'
 )
 #: `:MEASure:STATistic:ITEM? <type>,<item>` の応答。実機は科学表記の単一値を返す
 #: (ガイド3.17.8 の Example)。種別ごとに固定の係数を掛けて区別できるようにする。
@@ -1695,6 +1701,10 @@ class FakeScope:
                 lambda m: self._measure_threshold_default(),
             ),
             (rf"{stat}:{_mn('RESet')}", lambda m: self.statistic_items.clear()),
+            (
+                rf"{measure}:{_mn('HISTogram')}:{_mn('STATistics')}:{_mn('RESult')}\?",
+                lambda m: _MEASURE_HISTOGRAM_RESULT.encode("ascii"),
+            ),
             (
                 rf"{stat}:{_mn('ITEM')}\?\s+(\w+)\s*,\s*(\w+)"
                 rf"(?:\s*,\s*[^\s,]+)?(?:\s*,\s*[^\s,]+)?",

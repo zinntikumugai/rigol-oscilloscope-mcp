@@ -44,6 +44,7 @@ from .parsers import (
     parse_coupling,
     parse_fft_peaks,
     parse_histogram_result,
+    parse_measure_histogram,
     parse_nr3,
     to_scpi_impedance,
     to_scpi_slope,
@@ -135,6 +136,8 @@ _MEASURE_SETUP_ITEMS: tuple[tuple[str, str, object], ...] = (
     ("amp_base", ":AMP:MANual:BASE", ("enum", "measure_amp_methods", "the manual amplitude base method")),
     ("statistics_enabled", ":STATistic:DISPlay", "bool"),
     ("statistics_count", ":STATistic:COUNt", ("int", 2, 100_000)),
+    # 測定ヒストグラム(3.17.31。issue #71)。**:HISTogram(3.11)とは別サブシステム**
+    ("histogram_enabled", ":HISTogram:ENABle", "bool"),
 )
 _MEASURE_PREFIX = ":MEASure"
 #: read-back を持たない一発動作(ガイド3.17.18 / 3.17.7)
@@ -1352,6 +1355,7 @@ class ScopeDriver:
         statistics_count: int | None = None,
         statistics_reset: bool | None = None,
         statistics_items: list[str] | None = None,
+        histogram_enabled: bool | None = None,
     ) -> dict:
         """測定の前提設定(tools.md 14章)。None の項目は変更しない。
 
@@ -1373,6 +1377,7 @@ class ScopeDriver:
             "amp_base": amp_base,
             "statistics_enabled": statistics_enabled,
             "statistics_count": statistics_count,
+            "histogram_enabled": histogram_enabled,
         }
         # 統計の項目別有効化はソースを明示させる。省略すると機器は「最後に選んだ
         # ソース」を使い、呼び出し側から結果が予測できなくなる(ガイド3.17.8)
@@ -1383,7 +1388,9 @@ class ScopeDriver:
                 {"statistics_items": list(statistics_items)},
             )
 
-        plan = self._command_plan(_MEASURE_PREFIX, 0, _MEASURE_SETUP_ITEMS, values)
+        if histogram_enabled is not None:
+            self._require("measurement_histogram", "the measurement histogram")
+        plan = self._command_plan(_MEASURE_PREFIX, 0, self._measure_setup_items(), values)
         stat_commands = self._statistic_enable_commands(statistics_items, source)
 
         if not plan and not stat_commands and not threshold_default and not statistics_reset:
@@ -1431,10 +1438,40 @@ class ScopeDriver:
         """測定の前提設定を読む(一発動作は状態を持たないので含めない)。"""
         self._afg_enum("measure_areas", "the measurement range")
         config: dict[str, object] = {}
-        for key, path, kind in _MEASURE_SETUP_ITEMS:
+        for key, path, kind in self._measure_setup_items():
             _, from_scpi = self._converter(kind, 0)
             config[key] = from_scpi(self.session.query(f"{_MEASURE_PREFIX}{path}?"))
         return config
+
+    def _measure_setup_items(self) -> tuple[tuple[str, str, object], ...]:
+        """測定の前提設定の項目表。測定ヒストグラムは専用の宣言があるときだけ載せる。"""
+        if self.profile.supports("measurement_histogram"):
+            return _MEASURE_SETUP_ITEMS
+        return tuple(item for item in _MEASURE_SETUP_ITEMS if item[0] != "histogram_enabled")
+
+    def get_measurement_histogram(self) -> dict:
+        """測定ヒストグラムの統計(3.17.32。issue #71)。**生応答を必ず残す**。
+
+        無効なら統計を読まない(:HISTogram と同じ扱い)。どの測定項目の分布かは
+        応答の `item` で分かる。**実機実測**: 対象は測定結果ビューで機器が選んだ
+        項目で、既に別の項目が並んでいるとそちらのままになる(先に全消去して
+        から測るのが確実)。
+        """
+        self._require("measurement_histogram", "the measurement histogram")
+        if not parse_bool(self.session.query(f"{_MEASURE_PREFIX}:HISTogram:ENABle?")):
+            return {
+                "raw": "",
+                "warnings": [
+                    "the measurement histogram is disabled, so no statistics were "
+                    "read: enable it with configure_measurement(histogram_enabled=true)"
+                ],
+            }
+        raw = self.session.query(f"{_MEASURE_PREFIX}:HISTogram:STATistics:RESult?")
+        stats, unlabeled, warnings = parse_measure_histogram(raw)
+        result: dict[str, object] = {"raw": raw, "stats": stats, "unlabeled": unlabeled}
+        if warnings:
+            result["warnings"] = warnings
+        return result
 
     def get_measurement_statistics(
         self,
