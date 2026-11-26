@@ -297,7 +297,7 @@ autoset を**実行せずに**、実行したときの振る舞いだけを設�
 | 名前 | 型 | 必須 | 説明 |
 |---|---|---|---|
 | `channel` | string | – | 既定 `"CH1"`。`capture_waveform` と同じく `"MATH1"`〜`"MATH4"` も受理する(下記のとおりFFT演算のトレースのみ拒否) |
-| `analyses` | string[] | – | `"stats"` / `"fft"` の部分集合。省略時は全解析。未知の名前は `INVALID_PARAMETER`(`detail.valid` に有効名) |
+| `analyses` | string[] | – | `"stats"` / `"fft"` / `"pulse"` / `"noise"` / `"thd"` / `"jitter"` の部分集合。省略時は `stats` と `fft` だけ(追加の4種は明示したときだけ計算。詳細は下記)。未知の名前は `INVALID_PARAMETER`(`detail.valid` に有効名) |
 | `max_points` | int | – | `capture_waveform` と同一の意味(既定/上限は設定値。超過は丸めて `max_points_clamped: true`) |
 
 返却:
