@@ -1195,13 +1195,15 @@ MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標
 
 ### `save_setup` — READ_ONLY
 
-`path`(省略時はデフォルト保存先の `scope_setup_<時刻>.stp`)へ保存し、`saved_path` / `size_bytes` を返す。保存先は `capture_screenshot` と同じ許可ルート規約に従う。機器の設定は変えない。
+`path`(省略時はデフォルト保存先の `scope_setup_<ミリ秒までの時刻>.stp`。同じ秒に続けて保存しても上書きしない)へ保存し、`saved_path` / `size_bytes` を返す。保存先は `capture_screenshot` と同じ許可ルート規約に従う。機器の設定は変えない。
 
 ### `restore_setup` — RESTRICTED_WRITE
 
 `path` のファイルを書き戻す。**現在の設定がすべて置き換わる**ので承認(confirmトークン)が必要。
 
 - 読込元も許可ルート内に限る(外なら `INVALID_PARAMETER`)
+- 承認(confirmトークン)は**ファイルの中身(SHA-256)**に結びつく。承認を求めた後でファイルが差し替わったら、その承認では復元しない
+- 復元は取り込み条件も書き換えるので、待機中の `single` / `force_trigger` には割り込みとして扱われる(`interrupted: true`)
 - 承認より前に、中身が**壊れていないこの機種の設定ファイルか**を確かめる(実機実測のヘッダ: 先頭4バイトが9バイト目以降の CRC32(LE)、次の4バイトが全体長−8(LE))。合わなければ送らない。上限 256KB
 - 返却: `result` / `note` / `timebase`(復元後の時間軸)
 - 実機実測: 応答はガイドの言う ASCII ではなくバイナリ(約3KB)。書き戻しは約1.7秒で終わり、時間軸などが保存時の値へ戻る

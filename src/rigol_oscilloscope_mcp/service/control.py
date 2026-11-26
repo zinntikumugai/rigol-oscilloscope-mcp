@@ -15,6 +15,7 @@ Safety Layer(confirmトークン・監査ログ)とドライバの結合点。�
 
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Callable
 from dataclasses import asdict
@@ -1275,9 +1276,11 @@ class ControlService:
         機器へ1コマンドも送らない。
         """
         driver.check_setup(data)
+        # 承認はファイルの**中身**に結びつける(承認後に差し替わったら通さない)
+        digest = hashlib.sha256(bytes(data)).hexdigest()
         self._require_confirmation(
             "restore_setup",
-            {"path": path},
+            {"path": path, "sha256": digest},
             generation,
             confirm_token,
             description=_RESTORE_SETUP_DESCRIPTION,
@@ -1286,6 +1289,9 @@ class ControlService:
         with self._audited("restore_setup", {"path": path, "size_bytes": len(data)}) as record:
             if self._audit.enabled:
                 record.before({"timebase": get_timebase_dict(driver)})
+            # 復元は取り込み条件も書き換える。待機中の single / force_trigger に
+            # 割り込んだ操作として数える(失敗しても途中まで書き換わりうるので先に)
+            self._acquisition_epoch += 1
             driver.restore_setup(data)
             timebase = get_timebase_dict(driver)
             record.after({"timebase": timebase})

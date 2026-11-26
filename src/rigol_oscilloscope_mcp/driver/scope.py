@@ -1555,8 +1555,9 @@ class ScopeDriver:
     def restore_setup(self, data: bytes) -> None:
         """設定一式を書き戻す。**設定を大きく書き換える**ので承認は上位の責務。
 
-        送る前に、ヘッダ(CRC32と長さ)と上限サイズで、
-        設定ファイルかどうかを確かめる(画像など別のファイルを機器へ送らない)。
+        送る前に `check_setup` で、ヘッダ(CRC32 と全体長。プロファイルの
+        `setup_header`)と上限サイズを確かめる(別のファイルや壊れたファイルを
+        機器へ送らない)。
         """
         self.check_setup(data)
         self.session.write_block_checked(":SYSTem:SETup", bytes(data))

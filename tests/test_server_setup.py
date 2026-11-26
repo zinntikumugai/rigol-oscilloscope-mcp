@@ -82,3 +82,30 @@ def test_restore_setup_outside_the_allowed_roots_is_rejected(server) -> None:
 
     assert result["error"] is True
     assert result["code"] == ErrorCode.INVALID_PARAMETER
+
+
+def test_restore_token_is_bound_to_the_file_contents(server, scope: FakeScope) -> None:
+    """承認後にファイルが差し替わったら、その承認では復元しない(Copilotレビュー)。"""
+    connected(server)
+    saved = data(server, "save_setup", {"path": "bench"})
+    asked = data(server, "restore_setup", {"path": "bench.stp"})
+    token = asked["detail"]["confirm_token"]
+
+    # 承認を求めた後で、別の(正しい形の)設定ファイルに差し替える
+    data(server, "configure_timebase", {"scale_s_per_div": 1e-3})
+    data(server, "save_setup", {"path": "bench"})
+
+    result = data(server, "restore_setup", {"path": "bench.stp", "confirm_token": token})
+
+    assert result["error"] is True
+    assert not [c for c in scope.command_log if c.startswith(":SYSTem:SETup #")]
+    assert saved["saved_path"].endswith("bench.stp")
+
+
+def test_default_setup_names_do_not_collide_within_a_second(server) -> None:
+    connected(server)
+
+    first = data(server, "save_setup")["saved_path"]
+    second = data(server, "save_setup")["saved_path"]
+
+    assert first != second

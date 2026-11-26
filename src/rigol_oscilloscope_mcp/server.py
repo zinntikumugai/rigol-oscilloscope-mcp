@@ -27,6 +27,7 @@ import time
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import asdict
+from datetime import datetime
 from functools import wraps
 from typing import Any
 
@@ -1652,12 +1653,13 @@ def create_server(
     @_register
     def save_setup(path: str | None = None) -> dict:
         """Save the whole instrument setup to a file on the host (default name
-        scope_setup_<time>.stp in the default directory). Use it before changing
+        scope_setup_<time with milliseconds>.stp in the default directory). Use it before changing
         many settings, so restore_setup can bring them back. The file is a binary
         blob specific to this model; it is not human readable.
         """
         driver = manager.require_scope()
-        stem = "scope_setup_" + time.strftime("%Y%m%d_%H%M%S")
+        # ミリ秒まで含める(同じ秒に続けて保存しても上書きしない。スクリーンショットと同じ)
+        stem = "scope_setup_" + datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
         target = service.resolve_write_path(path, resolved_config, stem, "stp")
         data = driver.read_setup()
         target.write_bytes(data)
