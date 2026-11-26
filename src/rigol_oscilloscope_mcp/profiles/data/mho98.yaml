@@ -273,6 +273,13 @@ dialect:
   # ADC分解能(ガイド3.3.5)。high_resolution モードでだけ効く(他モードは12bit)。
   # DHO800/900 には無い(:ACQuire:HRESolution が別綴りで在る)ため方言化
   acquire_bits: [14, 16]
+  # メモリ深さの選択肢(ガイド3.3.2。issue #66)。"auto" は別に受け付ける。実機実測:
+  # ch数で決まる上限(4ch時125M)を超えるとエラーなしで上限へ丸められる / AUTO の
+  # 読み戻しは実際の深さ(数値)/ 一覧外の値は -222
+  acquire_memory_depths: [
+    1000, 10000, 100000, 1000000, 10000000, 25000000, 50000000, 100000000,
+    125000000, 200000000, 250000000, 500000000
+  ]
   # イベント検索(ガイド3.22。issue #56)。未宣言なら configure_search /
   # get_search_results は送信ゼロで UNSUPPORTED_FEATURE。実機実測: 範囲外の
   # :SEARch:VALue?(0件時の 0 など)はSCPIサーバーを沈黙させる(V-4)

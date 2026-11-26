@@ -752,6 +752,11 @@ _DVM_PROPS: tuple[tuple[str, str, object, object], ...] = (
 #: `:DVM:CURRent?` の値(DC 1V + 0.5Vpp正弦を当てた想定の代表値。要実機検証)
 _DVM_VALUES = {"ACRM": 0.35, "DC": 1.0, "DCRM": 1.06}
 
+#: メモリ深さの選択肢(ガイド3.3.2)
+_MEMORY_DEPTHS = (
+    1_000, 10_000, 100_000, 1_000_000, 10_000_000, 25_000_000, 50_000_000,
+    100_000_000, 125_000_000, 200_000_000, 250_000_000, 500_000_000,
+)
 #: 取得モード(ガイド3.3)。既定値はガイドの Default 欄と実機の初期応答に従う
 _ACQUIRE_PROPS: tuple[tuple[str, str, object, object], ...] = (
     ("mode", "TYPE", ("NORMal", "PEAK", "AVERages", "HRESolution"), "NORM"),
@@ -993,6 +998,7 @@ class FakeScope:
         self.counter["total"] = _COUNTER_TOTAL
         self.dvm: dict = {key: default for key, _, _, default in _DVM_PROPS}
         self.acquire: dict = {key: default for key, _, _, default in _ACQUIRE_PROPS}
+        self.memory_depth = int(float(MDEPTH))
         self.search: dict = {key: default for key, _, _, default in _SEARCH_PROPS}
         self.search_edge: dict = {k: d for k, _, _, d in _SEARCH_EDGE_PROPS}
         self.search_pulse: dict = {k: d for k, _, _, d in _SEARCH_PULSE_PROPS}
@@ -1153,7 +1159,11 @@ class FakeScope:
             (rf":?{_mn('ACQuire')}:{_mn('SRATe')}\?", lambda m: SRATE.encode("ascii")),
             (
                 rf":?{_mn('ACQuire')}:{_mn('MDEPth')}\?",
-                lambda m: MDEPTH.encode("ascii"),
+                lambda m: f"{self.memory_depth:.4E}".encode("ascii"),
+            ),
+            (
+                rf":?{_mn('ACQuire')}:{_mn('MDEPth')}\s+{_VALUE}",
+                lambda m: self._memory_depth_write(m.group(1)),
             ),
             # トリガ(共通)。種別ごとのサブツリーは _trigger_entries() が持つ
             (
@@ -1872,6 +1882,30 @@ class FakeScope:
 
     def _now(self) -> datetime:
         return self.clock if self.clock is not None else datetime.now()
+
+    def _memory_depth_write(self, token: str) -> None:
+        """**実機実測**: AUTO は実際の深さ(ここでは 20k)になる。表示ch数で決まる
+        上限を超える値はエラーなしで丸める。一覧外は -222(沈黙しない)。"""
+        text = token.strip().upper()
+        if text == "AUTO":
+            self.memory_depth = 20_000
+            return None
+        # ガイド3.3.2 の短縮表記(1k / 1M)も実機は受理する
+        multiplier = {"K": 1_000, "M": 1_000_000}.get(text[-1:], 1)
+        try:
+            value = int(float(text[:-1] if multiplier != 1 else text) * multiplier)
+        except ValueError:
+            value = -1
+        if value not in _MEMORY_DEPTHS:
+            self.error_queue.append(OUT_OF_RANGE)
+            return None
+        self.memory_depth = min(value, self._memory_depth_limit())
+        return None
+
+    def _memory_depth_limit(self) -> int:
+        """表示中のch数で決まる上限(ガイド3.3.2: 1ch 500M / 2ch 250M / 3-4ch 125M)。"""
+        shown = sum(1 for state in self.channels.values() if state["display"])
+        return {1: 500_000_000, 2: 250_000_000}.get(shown, 125_000_000)
 
     def _force_trigger(self) -> None:
         if self.acquisition == "SINGLE":

@@ -738,7 +738,8 @@ def test_acquisition_config_answers(driver: ScopeDriver) -> None:
     config = driver.get_acquisition_config()
     _report(f"[acquisition] config={config}")
 
-    assert set(config) == {"mode", "averages", "adc_bits"}
+    assert set(config) == {"mode", "averages", "adc_bits", "memory_depth"}
+    assert config["memory_depth"] >= 1000
     assert config["mode"] in ("normal", "peak", "average", "high_resolution")
     assert 2 <= config["averages"] <= 65536
     assert config["adc_bits"] in (14, 16)

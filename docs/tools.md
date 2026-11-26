@@ -1058,16 +1058,18 @@ MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標
 | `mode` | `normal` / `peak` / `average` / `high_resolution` | `:ACQuire:TYPE` |
 | `averages` | 2〜65536 の**2のべき乗のみ**(`average` モードで使われる) | `:ACQuire:AVERages` |
 | `adc_bits` | `14` / `16`(**`high_resolution` モードでのみ設定可**) | `:ACQuire:BITS` |
+| `memory_depth` | `"auto"` または点数(1000 / 10000 / 100000 / 1M / 10M / 25M / 50M / 100M / 125M / 200M / 250M / 500M)(issue #66) | `:ACQuire:MDEPth` |
 
 - 未指定の項目は変更しない。1つも指定しなければ `INVALID_PARAMETER`
-- **送信順は `mode` → `averages` → `adc_bits` に固定**(`adc_bits` はモードが先に決まっていないと受理されない)
+- メモリ深さ(実機実測): 上限は表示中のch数で決まり(1ch 500M / 2ch 250M / 3〜4ch 125M。実機で2ch → 250M、4ch → 125M を確認)、**超えた値はエラーなしで上限へ丸められる**ので `applied` を見る。**`"auto"` の読み戻しは実際の深さ(数値)**で、AUTO かどうかは読み取りでは区別できない。一覧外の値は送信前に `INVALID_PARAMETER`
+- **送信順は `mode` → `averages` → `adc_bits` → `memory_depth` に固定**(`adc_bits` はモードが先に決まっていないと受理されない)
 - 返却: `requested` / `applied`(read-back)/ `changed`
 - 実機実測で判明した制約(いずれも**送信前に `INVALID_PARAMETER`** で弾く。機器のエラーキューを汚さない):
   - `averages` の非2のべき乗は `-200` で拒否される。ガイド3.3.1 の「近い2のべき乗へ切り下げ」は前面パネルのテンキー入力の話で、SCPIには当てはまらない
   - `adc_bits` は `high_resolution` 以外のモードでは同じ値でも `-200`。`mode` を同時指定しなければ現在モードを1回だけ読んで判定する
 - プロファイル方言 `acquire_types`(必須ゲート)/ `acquire_bits`(分解能の選択肢)。未宣言の機種では送信ゼロで `UNSUPPORTED_FEATURE`
 
-読み取りは `get_acquisition_state`(1章ではなく2章の既存Tool)に `mode` / `averages` / `adc_bits` として載る。
+読み取りは `get_acquisition_state`(1章ではなく2章の既存Tool)に `mode` / `averages` / `adc_bits` / `memory_depth` として載る。
 
 ---
 

@@ -170,7 +170,7 @@
 | **Logic Analyzer(D0〜D15)** | `:LA:ENABle` / `:LA:DIGital:ENABle` / `:LA:POD<n>:THReshold` | **デジタル波形の点列転送は不可**(`:WAVeform:SOURce` の値域はガイド3.28.1に `{CHANnel1-4\|MATH1-4}` と逐語で書かれ D0-D15 を含まない。`:LA` 配下も8コマンドのみで `DATA?` 相当が無い)。**一方 D0〜D15 は「ソース」として各所で受理される** — `:MEASure:ITEM`(3.17.2)の Remarks は逐語で *"After the logic probe is connected, the available sources also include digital channels (D0-D15)."*。`configure_decode` / `measure` / `configure_meter` / `configure_math` / `configure_reference` が該当し、結果はデコード表・測定値として読める。**とくに `bus_width > 4` のパラレルデコードはアナログ4chでは成立せず、`:LA` の有効化が事実上の前提。** ロジックプローブの物理接続はMCPから確認できないため `requires_physical_confirmation` の対象。[V-2](#16-着手前に潰す実機検証項目) で確定させる |
 | 測定の前提設定(2ソース指定・Vtop/Vbase算出方式・振幅アルゴリズム) | `:MEASure:SOURce`、`:MEASure:SETup:*` | M4 の位相/遅延・振幅系測定の精度を決める |
 | **`:MEASure` 系統の周波数カウンタ・ヒストグラム** | `:MEASure:COUNter:VALue?`(3.17.27)/ `:MEASure:HISTogram:STATistics:RESult?`(3.17.32) | **実装済みの `:COUNter`(3.7)/ `:HISTogram`(3.11)とは別サブシステム。** 数値が取れるためAI価値は高いが既存Toolと機能が重なる。**取り違えると未定義ヘッダを送る事故になる**ので、着手時は節番号で区別すること |
-| メモリ深さの設定(現在は読みのみ) | `:ACQuire:MDEPth` | 取得点数を目的に合わせられる |
+| ~~メモリ深さの設定~~ | `:ACQuire:MDEPth` | **完了**(issue #66。`configure_acquisition` の `memory_depth`)。上限超過は無言で丸められ、AUTO の読み戻しは数値 |
 | 残りの標準トリガ種別(スロープ / ウィンドウ / Nthエッジ) | `:TRIGger:SLOPe` / `:WINDows` / `:NEDGe` | 用途が M5 の8種より狭い |
 | オプション必須のデコードとトリガ(I2S / FlexRay / MIL-STD-1553 / CAN-FD) | `:BUS<n>:IIS` ほか / `:TRIGger:FLEXray` / `:TRIGger:IIS` | 検証機はMHO900-BND適用済みで実機検証の障害は無いが、ライセンス前提のため1段下げ。**デコード側とトリガ側は対で着手するのが自然** |
 | ホスト側解析の拡充 | (SCPIなし。`analyze_waveform` の `analyses` 値を増やす) | THD、Jitter、Overshoot / Undershoot、Ringing、Noise、Signal Integrity。**Tool追加ではなく引数追加で済む**。実測で必要性が出た時点で |

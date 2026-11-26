@@ -212,6 +212,12 @@ def _screen_positions(driver: ScopeDriver, channel: str, span_div: float) -> dic
     }
 
 
+def _restorable_memory_depth(driver: ScopeDriver, depth: int) -> int | str:
+    """書き戻せるメモリ深さ。選択肢一覧に無い値は AUTO の結果なので "auto"。"""
+    declared = driver.profile.dialect.get("acquire_memory_depths") or []
+    return depth if depth in declared else "auto"
+
+
 def _diff(before: dict, after: dict) -> dict[str, tuple[object, object]]:
     """復元漏れの検出用。揮発キーは無視する。"""
     return {
@@ -2104,6 +2110,9 @@ def acquisition_before(
         for step in (
             {"mode": "high_resolution", "adc_bits": before["adc_bits"]},
             {"mode": before["mode"], "averages": before["averages"]},
+            # AUTO の読み戻しは実際の深さ(20k 等)で、選択肢一覧に無い値になりうる
+            # (実機実測)。一覧に無い深さは AUTO だったとみなして "auto" で戻す
+            {"memory_depth": _restorable_memory_depth(driver, before["memory_depth"])},
         ):
             try:
                 driver.configure_acquisition(**step)
@@ -2112,6 +2121,11 @@ def acquisition_before(
 
         after = driver.get_acquisition_config()
         drift = _diff(before, after)
+        # memory_depth は _diff では揮発キー扱い(水平軸の変更で変わる)なので、
+        # 数値で書き戻した場合だけ明示的に照合する(AUTO なら実際の深さは変わりうる)
+        if _restorable_memory_depth(driver, before["memory_depth"]) != "auto":
+            if after["memory_depth"] != before["memory_depth"]:
+                drift["memory_depth"] = (before["memory_depth"], after["memory_depth"])
         _report(f"[restore:{tag}] acquisition 復元後={after}")
         assert not failures, f"取得モードの復元に失敗: {failures!r}"
         assert not drift, f"取得モードが復元されていません: {drift}"
@@ -2448,3 +2462,24 @@ def test_mask_create_while_disabled_is_rejected_by_the_device(
 
     assert excinfo.value.code == ErrorCode.SCPI_ERROR
     assert "-200" in excinfo.value.detail["scpi_error"]
+
+
+def test_configure_acquisition_memory_depth_round_trip(
+    control: ControlService, driver: ScopeDriver, acquisition_before: dict
+) -> None:
+    """メモリ深さの往復と、上限を超えた値の丸め(issue #66)。"""
+    result = control.configure_acquisition(driver, memory_depth=1_000_000)
+    _report(f"[acquisition] memory_depth=1M applied={result['applied']}")
+    assert result["applied"] == {"memory_depth": 1_000_000}
+
+    clamped = control.configure_acquisition(driver, memory_depth=500_000_000)
+    _report(f"[acquisition] memory_depth=500M applied={clamped['applied']}")
+    # 上限は表示中のch数で決まる(ガイド3.3.2: 1ch 500M / 2ch 250M / 3-4ch 125M)。
+    # 超えた分はエラーなしで上限へ丸められる(実機実測)
+    shown = sum(
+        get_channel_dict(driver, f"CH{n}")["enabled"]
+        for n in range(1, driver.analog_channels + 1)
+    )
+    limit = {1: 500_000_000, 2: 250_000_000}.get(shown, 125_000_000)
+    assert clamped["applied"]["memory_depth"] == limit
+    assert driver.session.drain_error_queue() == []

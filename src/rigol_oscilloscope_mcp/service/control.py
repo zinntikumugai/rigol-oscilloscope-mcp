@@ -271,13 +271,21 @@ class ControlService:
         mode: str | None = None,
         averages: int | None = None,
         adc_bits: int | None = None,
+        memory_depth: int | str | None = None,
     ) -> dict:
-        """取得モードを設定する(SAFE_WRITE。issue #52)。未指定の項目は変更しない。"""
-        requested = _specified({"mode": mode, "averages": averages, "adc_bits": adc_bits})
+        """取得モードを設定する(SAFE_WRITE。issue #52 / #66)。未指定の項目は変更しない。"""
+        requested = _specified(
+            {
+                "mode": mode,
+                "averages": averages,
+                "adc_bits": adc_bits,
+                "memory_depth": memory_depth,
+            }
+        )
         if not requested:
             raise _invalid(
                 "No item to change was specified "
-                "(specify at least one of mode / averages / adc_bits)",
+                "(specify at least one of mode / averages / adc_bits / memory_depth)",
                 {},
             )
 
