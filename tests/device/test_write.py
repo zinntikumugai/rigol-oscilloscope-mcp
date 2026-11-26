@@ -2469,6 +2469,12 @@ def test_configure_acquisition_memory_depth_round_trip(
 
     clamped = control.configure_acquisition(driver, memory_depth=500_000_000)
     _report(f"[acquisition] memory_depth=500M applied={clamped['applied']}")
-    # 上限は有効なch数で決まる(4ch構成で125M)。超えた分はエラーなしで丸められる
-    assert clamped["applied"]["memory_depth"] <= 500_000_000
+    # 上限は表示中のch数で決まる(ガイド3.3.2: 1ch 500M / 2ch 250M / 3-4ch 125M)。
+    # 超えた分はエラーなしで上限へ丸められる(実機実測)
+    shown = sum(
+        get_channel_dict(driver, f"CH{n}")["enabled"]
+        for n in range(1, driver.analog_channels + 1)
+    )
+    limit = {1: 500_000_000, 2: 250_000_000}.get(shown, 125_000_000)
+    assert clamped["applied"]["memory_depth"] == limit
     assert driver.session.drain_error_queue() == []

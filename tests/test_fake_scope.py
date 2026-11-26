@@ -1529,3 +1529,14 @@ def test_bus_parallel_source_follows_the_selected_bit(scope: FakeScope) -> None:
 
     scope.handle(":BUS1:PARallel:BITX 1")
     assert scope.handle(":BUS1:PARallel:SOURce?") == b"CHAN2"
+
+
+@pytest.mark.parametrize(("token", "expected"), [("1M", 1_000_000), ("10k", 10_000), ("100000", 100_000)])
+def test_memory_depth_accepts_the_guide_shorthand(token: str, expected: int) -> None:
+    """実機は `1M` / `10k` の短縮表記も受理する(ガイド3.3.2。実機実測)。"""
+    scope = FakeScope()
+
+    scope.handle(f":ACQuire:MDEPth {token}")
+
+    assert scope.memory_depth == expected
+    assert not scope.error_queue

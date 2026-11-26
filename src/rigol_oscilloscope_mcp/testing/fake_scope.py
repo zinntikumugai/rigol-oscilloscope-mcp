@@ -1891,8 +1891,10 @@ class FakeScope:
         if text == "AUTO":
             self.memory_depth = 20_000
             return None
+        # ガイド3.3.2 の短縮表記(1k / 1M)も実機は受理する
+        multiplier = {"K": 1_000, "M": 1_000_000}.get(text[-1:], 1)
         try:
-            value = int(float(text))
+            value = int(float(text[:-1] if multiplier != 1 else text) * multiplier)
         except ValueError:
             value = -1
         if value not in _MEMORY_DEPTHS:

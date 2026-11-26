@@ -1061,7 +1061,7 @@ MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標
 | `memory_depth` | `"auto"` または点数(1000 / 10000 / 100000 / 1M / 10M / 25M / 50M / 100M / 125M / 200M / 250M / 500M)(issue #66) | `:ACQuire:MDEPth` |
 
 - 未指定の項目は変更しない。1つも指定しなければ `INVALID_PARAMETER`
-- メモリ深さ(実機実測): 上限は有効なch数で決まり(4ch構成で125M)、**超えた値はエラーなしで上限へ丸められる**ので `applied` を見る。**`"auto"` の読み戻しは実際の深さ(数値)**で、AUTO かどうかは読み取りでは区別できない。一覧外の値は送信前に `INVALID_PARAMETER`
+- メモリ深さ(実機実測): 上限は表示中のch数で決まり(1ch 500M / 2ch 250M / 3〜4ch 125M。実機で2ch → 250M、4ch → 125M を確認)、**超えた値はエラーなしで上限へ丸められる**ので `applied` を見る。**`"auto"` の読み戻しは実際の深さ(数値)**で、AUTO かどうかは読み取りでは区別できない。一覧外の値は送信前に `INVALID_PARAMETER`
 - **送信順は `mode` → `averages` → `adc_bits` → `memory_depth` に固定**(`adc_bits` はモードが先に決まっていないと受理されない)
 - 返却: `requested` / `applied`(read-back)/ `changed`
 - 実機実測で判明した制約(いずれも**送信前に `INVALID_PARAMETER`** で弾く。機器のエラーキューを汚さない):

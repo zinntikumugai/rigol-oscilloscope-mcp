@@ -556,8 +556,9 @@ def create_server(
         mode="high_resolution" in the same call unless it is already active.
         memory_depth is "auto" or a point count (1000, 10000, 100000, 1000000,
         10000000, 25000000, 50000000, 100000000, 125000000, 200000000, 250000000,
-        500000000). The limit depends on how many channels are on (125M with 3-4
-        channels); a larger value is clamped without an error, so trust applied.
+        500000000). The limit depends on how many channels are on (500M with 1,
+        250M with 2, 125M with 3-4); a larger value is clamped without an error,
+        so trust applied.
         After "auto" the read-back is the actual depth, not "auto".
         Read the current values with get_acquisition_state.
         """
