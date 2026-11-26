@@ -495,3 +495,29 @@ def test_noise_estimate_ignores_sparse_edges() -> None:
     result = waveform_noise(samples)
 
     assert result["noise_rms_v"] == pytest.approx(0.01, rel=0.1)
+
+
+def test_pulse_levels_ignore_sparse_large_spikes() -> None:
+    """まばらな大きいスパイク(3V)で上下の境界がずれ、1V の平坦部を下側と数えて
+    トップを取り違えないこと(Copilotレビュー)。"""
+    from rigol_oscilloscope_mcp.service.analysis import waveform_pulse
+
+    samples = _square(4000, 400)
+    for start in range(0, 4000, 400):
+        samples[start] = 3.0  # まばらな大きいオーバーシュート
+
+    result = waveform_pulse(samples)
+
+    assert result["top_v"] == pytest.approx(1.0, abs=0.05)
+    assert result["overshoot_percent"] == pytest.approx(200.0, abs=10)
+
+
+@pytest.mark.parametrize("dt", [0.0, -1e-6])
+def test_thd_and_jitter_reject_a_non_positive_interval(dt: float) -> None:
+    from rigol_oscilloscope_mcp.service.analysis import waveform_jitter, waveform_thd
+
+    samples = [_math.sin(i / 10) for i in range(2000)]
+    for analysis in (waveform_thd, waveform_jitter):
+        with pytest.raises(ScopeError) as excinfo:
+            analysis(samples, dt)
+        assert excinfo.value.code == ErrorCode.INVALID_PARAMETER

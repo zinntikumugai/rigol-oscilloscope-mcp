@@ -325,7 +325,7 @@ FFTの実装:
 
 | 解析 | 返却 | 求め方・注意 |
 |---|---|---|
-| `pulse` | `top_v` / `base_v` / `amplitude_v` / `overshoot_percent` / `preshoot_percent` | トップとベースはヒストグラム(256ビン)の、中央より上/下の最頻値。平坦な信号では `null` と `warning` |
+| `pulse` | `top_v` / `base_v` / `amplitude_v` / `overshoot_percent` / `preshoot_percent` | トップとベースはヒストグラム(256ビン)の、境界より上/下の最頻値。境界は 5〜95 パーセンタイルの中点(まばらな大きいスパイクでずれない)。平坦な信号では `null` と `warning` |
 | `noise` | `noise_rms_v` / `method` | 隣接サンプルの差の中央絶対偏差 × 1.4826 / √2(白色雑音の σ)。まばらなエッジには引っ張られない。エッジが記録の大半を占める速い信号では過大に出る |
 | `thd` | `fundamental_hz` / `fundamental_v` / `thd_percent` / `harmonics`(2〜10次) | Hann窓のスペクトルで、各トーンの振幅は周囲±3ビンの電力の和から求める(ビン中央からのずれに強い)。**記録に約12周期以上入っていないと計算しない**(トーンが重なって基本波を高調波と数えるため。実機で 2周期のとき THD 183% と誤って出たのを受けて追加) |
 | `jitter` | `cycles` / `period_mean_s` / `period_jitter_rms_s` / `period_jitter_pk_pk_s` / `cycle_to_cycle_jitter_rms_s` | しきい値 (最大+最小)/2 の立ち上がりを線形補間で検出する。立ち上がりが3つ未満なら `null` と `warning` |

@@ -166,7 +166,12 @@ def waveform_pulse(samples: list[float]) -> dict:
     counts = [0] * _PULSE_BINS
     for value in samples:
         counts[min(int((value - lowest) / width), _PULSE_BINS - 1)] += 1
-    middle = _PULSE_BINS // 2
+    # 上下の境界は 5〜95 パーセンタイルの中点で決める。最大・最小の中点だと、
+    # まばらな大きいスパイクで境界がずれ、平坦部を反対側と数えてしまう
+    ordered = sorted(samples)
+    p05 = ordered[int(0.05 * (len(ordered) - 1))]
+    p95 = ordered[int(0.95 * (len(ordered) - 1))]
+    middle = min(_PULSE_BINS - 1, max(1, int(((p05 + p95) / 2 - lowest) / width)))
     upper = max(range(middle, _PULSE_BINS), key=lambda k: counts[k])
     lower = max(range(middle), key=lambda k: counts[k])
     top = lowest + (upper + 0.5) * width
@@ -239,6 +244,16 @@ def _tone_frequency(amplitudes: list[float], center: int, spread: int, bin_hz: f
     return math.fsum(k * p for k, p in zip(window, power)) / total * bin_hz
 
 
+def _check_interval(sample_interval_s: float) -> None:
+    """サンプル間隔は正の数(`waveform_fft` と同じ検証)。"""
+    if sample_interval_s <= 0:
+        raise ScopeError(
+            ErrorCode.INVALID_PARAMETER,
+            f"sample_interval_s must be positive: {sample_interval_s}",
+            {"sample_interval_s": sample_interval_s},
+        )
+
+
 def waveform_thd(samples: list[float], sample_interval_s: float) -> dict:
     """全高調波歪み(%)= √(Σ 高調波²) / 基本波。基本波は最大のピーク。
 
@@ -249,6 +264,7 @@ def waveform_thd(samples: list[float], sample_interval_s: float) -> dict:
         raise ScopeError(
             ErrorCode.INVALID_PARAMETER, "thd needs 16 or more samples", {"points": len(samples)}
         )
+    _check_interval(sample_interval_s)
     amplitudes, bin_hz = _hann_amplitudes(samples, sample_interval_s)
     peak = max(range(1, len(amplitudes) - 1), key=lambda k: amplitudes[k])
     # 窓の電力が数ビンに広がるので、ピークの両側3ビンを1つのトーンとみなす
@@ -301,6 +317,7 @@ def waveform_jitter(samples: list[float], sample_interval_s: float) -> dict:
     周期の平均・標準偏差(周期ジッタ)・最大−最小と、隣り合う周期の差の実効値
     (サイクル間ジッタ)を返す。立ち上がりが3つ未満なら計算しない。
     """
+    _check_interval(sample_interval_s)
     threshold = (max(samples) + min(samples)) / 2.0
     crossings = [
         (index - 1 + (threshold - samples[index - 1]) / (samples[index] - samples[index - 1]))
