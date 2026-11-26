@@ -3155,6 +3155,10 @@ def test_decode_on_digital_channels_matches_the_board(
     elif mode == "parallel":
         events = _decoded(driver, "data")
         _report(f"[la-board] parallel events={events}")
+        # ボードの期待値は「00→FF を繰り返す8bitカウンタ」で、ある時点の絶対値は
+        # 決まらない。ビット順を誤ると連番にならない(d15_d8 + msb では CF 2F AF …
+        # になった)ので、連続する値が +1 ずつ増えることで期待と突き合わせる
+        assert "00 01 02" in expected["sequence"], expected
         values = [int(e["data"], 16) for e in events if re.fullmatch(r"[0-9A-Fa-f]+", e["data"])]
         assert len(values) >= 4
         assert all((b - a) % 256 == 1 for a, b in zip(values, values[1:])), values
@@ -3177,9 +3181,13 @@ def test_counter_on_a_digital_channel_reads_the_board_pwm(
     _report(f"[la-board] pwm: {status['description']}")
 
     control.configure_meter(driver, "counter", enabled=True, source="D0", mode="frequency")
-    time.sleep(2.0)
-
-    result = get_meter_value(driver, "counter")
+    # 有効化直後は値が出るまで数秒かかる(約3秒)。安定した値が出るまで待つ
+    result: dict = {}
+    for _ in range(12):
+        time.sleep(0.5)
+        result = get_meter_value(driver, "counter")
+        if result["value"] and abs(result["value"] - 1000.0) <= 10.0:
+            break
     _report(f"[la-board] counter={result}")
     assert result["value"] == pytest.approx(1000.0, rel=0.01)
     assert driver.session.drain_error_queue() == []
