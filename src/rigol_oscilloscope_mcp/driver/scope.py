@@ -2216,6 +2216,16 @@ class ScopeDriver:
             f":TRIGger:MODE {to_scpi_type(type, 'type')}" if type is not None else None
         )
         plan = self._command_plan(prefix, 0, items, merged)
+        if subtree_name == "i2s" and merged.get("user_bits") is not None:
+            # user_bits は 4〜data_bits(3.27.26.5)。data_bits 省略時は現在の幅と比べる
+            width = merged.get("data_bits")
+            if width is None:
+                width = parse_nr3(self.session.query(f"{prefix}:WIDTh?"))
+            if int(merged["user_bits"]) > int(width):
+                raise _invalid(
+                    f"user_bits ({merged['user_bits']}) must not exceed data_bits ({int(width)})",
+                    {"user_bits": merged["user_bits"], "data_bits": int(width)},
+                )
         common = self._command_plan(
             ":TRIGger",
             0,
@@ -2267,11 +2277,20 @@ class ScopeDriver:
         """オプションが導入済みか。照会できない機種(UNSUPPORTED_FEATURE)は False、
         通信エラーなどはそのまま伝える(使えないと取り違えない)。"""
         try:
-            return self.installed_options().get(option) is True
+            installed = self.installed_options().get(option, False)
         except ScopeError as exc:
             if exc.code == ErrorCode.UNSUPPORTED_FEATURE:
                 return False
             raise
+        if installed is None:
+            # 照会に応答が無かった。未導入と取り違えない(キャッシュも捨てて次回読み直す)
+            self._options = None
+            raise ScopeError(
+                ErrorCode.TIMEOUT,
+                f"could not tell whether the {option} option is installed (no response)",
+                {"option": option},
+            )
+        return installed
 
     def _decode_protocols_with(self, name: str | None = None, token: str | None = None) -> dict[str, str]:
         """標準の表に、指定されたオプション必須プロトコルを(導入済みなら)足す。
@@ -2612,14 +2631,7 @@ class ScopeDriver:
         """
         if not self.profile.dialect.get("decode_can_fd"):
             return False
-        try:
-            return self.installed_options().get("can_fd") is True
-        except ScopeError as exc:
-            # 「この機種はオプションを照会できない」だけを「使えない」とみなす。
-            # 通信エラーなどはそのまま伝える(使えないと取り違えない)
-            if exc.code == ErrorCode.UNSUPPORTED_FEATURE:
-                return False
-            raise
+        return self._option_installed("can_fd")
 
     def get_decode_config(
         self, bus: int, *, include_bit_sources: bool = False, include_can_fd: bool = False
@@ -2653,7 +2665,8 @@ class ScopeDriver:
             "event_table": EVENT_ITEM.from_scpi(query(f"{prefix}{EVENT_ITEM.path}?")),
             "data_format": format_from(query(f"{prefix}:FORMat?")),
         }
-        items = self._decode_items(protocol, include_can_fd)
+        # 使えないプロトコル(未ライセンス等)の配下は読まない(未確認ニモニックを送らない)
+        items = self._decode_items(protocol, include_can_fd) if protocol in protocols else {}
         mnemonic = protocols.get(protocol, "")
         settings: dict[str, object] = {}
         for key, item in items.items():

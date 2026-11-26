@@ -5368,3 +5368,75 @@ def test_get_trigger_of_an_unlicensed_option_type_reads_no_subtree() -> None:
     assert state.type == "IIS"
     assert state.settings == {}
     assert sent(scope, ":IIS") == []
+
+
+def test_get_decode_config_of_an_unlicensed_m1553_bus_reads_no_subtree() -> None:
+    """生の名前が変換表の名前と同じ(`m1553`)でも、未ライセンスなら配下を読まない
+    (Copilotレビュー)。"""
+    scope = FakeScope(options={"CAN-FD": True})
+    driver = make_driver(scope)
+    scope.buses[1]["mode"] = "M1553"
+    scope.command_log.clear()
+
+    config = driver.get_decode_config(1)
+
+    assert config["protocol"] == "m1553"
+    assert config["settings"] == {}
+    reads = [c for c in scope.command_log if c.startswith(":BUS1")]
+    assert all(c.split("?")[0].split(":")[-1] in ("MODE", "DISPlay", "EVENt", "FORMat") for c in reads), reads
+
+
+def test_i2s_trigger_user_bits_must_not_exceed_data_bits(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`user_bits` は 4〜data_bits(3.27.26.5)。超える組み合わせは送らない。"""
+    scope.command_log.clear()
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_trigger(type="i2s", settings={"data_bits": 8, "user_bits": 16})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert [c for c in scope.command_log if "?" not in c] == []
+
+
+def test_i2s_trigger_user_bits_is_checked_against_the_current_width(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_trigger(type="i2s", settings={"data_bits": 8})
+    scope.command_log.clear()
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_trigger(settings={"user_bits": 16})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert [c for c in scope.command_log if "?" not in c] == []
+    assert driver.configure_trigger(settings={"user_bits": 8})["user_bits"] == 8
+
+
+def test_option_query_timeout_is_not_treated_as_unlicensed(
+    driver: ScopeDriver, monkeypatch
+) -> None:
+    """照会の timeout は「未導入」でなく TIMEOUT として返し、キャッシュもしない
+    (Copilotレビュー)。"""
+    original = driver.session.query
+    failing = {"on": True}
+
+    def query(command: str, *args, **kwargs):
+        if failing["on"] and "OPTion" in command:
+            raise ScopeError(ErrorCode.TIMEOUT, "no response", {})
+        return original(command, *args, **kwargs)
+
+    monkeypatch.setattr(driver.session, "query", query)
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "i2s")
+    assert excinfo.value.code == ErrorCode.TIMEOUT
+
+    failing["on"] = False
+    assert driver.configure_decode(1, "i2s")["protocol"] == "i2s"
+
+
+def test_fake_scope_does_not_accept_the_i2sclk_threshold_token() -> None:
+    """実機は `I2SClk` で沈黙する。フェイクが受け付けると誤送信を見逃す。"""
+    from rigol_oscilloscope_mcp.testing import fake_scope
+
+    assert "I2SClk" not in fake_scope._THRESHOLD_TYPES

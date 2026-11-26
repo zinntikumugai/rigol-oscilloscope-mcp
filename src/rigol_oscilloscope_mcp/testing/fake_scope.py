@@ -536,7 +536,7 @@ _BUS_FORMATS = ("HEX", "ASCii", "DEC", "BIN")
 #: 閾値の `<type>`(ライセンス必須プロトコルの種別は意図的に載せない)
 _THRESHOLD_TYPES = (
     "TX", "RX", "SCL", "SDA", "CLK", "MISO", "MOSI", "CS", "CAN", "LIN", "PAL", "PALCLK",
-    "FLEX", "1553", "I2SClk", "DATA", "WS",
+    "FLEX", "1553", "DATA", "WS",
 )
 
 #: `:BUS<n>:DATA?` ペイロード先頭のデコード種別トークン(モード短形式 → トークン)。
@@ -1067,7 +1067,7 @@ class FakeScope:
                 "event": False,
                 "label": True,
                 "position": 0,
-                # キーは照会時の正規化(短形。`I2SClk` → `I2SC`)に揃える
+                # キーは照会時の正規化(短形)に揃える
                 "thresholds": {
                     _normalize(token, _THRESHOLD_TYPES): 0.0 for token in _THRESHOLD_TYPES
                 },
