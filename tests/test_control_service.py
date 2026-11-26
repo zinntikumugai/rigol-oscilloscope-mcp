@@ -1462,7 +1462,7 @@ def test_configure_decode_rejects_unknown_protocol(
     service: ControlService, driver: ScopeDriver
 ) -> None:
     with pytest.raises(ScopeError) as excinfo:
-        service.configure_decode(driver, 1, "i2s")
+        service.configure_decode(driver, 1, "usb")  # 宣言の無いプロトコル
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
 

@@ -371,6 +371,9 @@ FFTの実装:
 | `i2c` | `scl_source`, `sda_source`, `swap_sda_scl`, `address_bits`(7/8/10), `scl_threshold_v`, `sda_threshold_v` |
 | `spi` | `clk_source`, `clk_slope`(rising/falling), `mosi_source`, `miso_source`, `cs_source`, `cs_polarity`(high/low), `frame_mode`(cs/timeout), `timeout_s`(8e-9〜10), `data_bits`(4〜32), `endian`, `polarity`(high/low), `clk_threshold_v`, `mosi_threshold_v`, `miso_threshold_v`, `cs_threshold_v` |
 | `can` | `source`, `signal_type`(tx/rx/canh/canl/differential), `baud_bps`(10000〜5000000), `sample_point_percent`(10〜90), `threshold_v`。**CAN-FD オプションが導入済みなら** `fd_baud_bps`(1000000〜10000000、データフェーズ)/ `fd_sample_point_percent`(10〜90)も扱う(issue #69。未導入なら送信前に `UNSUPPORTED_FEATURE`)。FD 項目はオプションの照会が要るので、**FD のキーを渡した呼び出しのときだけ**読み書きする |
+| `i2s`(Audio オプション) | `clock_source` / `data_source` / `ws_source`、`alignment`(i2s/left/right)、`clock_slope`(rising/falling)、`word_bits` / `receive_bits`(4〜32)、`ws_low`(left/right)、`endian`、`polarity`、`clock_threshold_v` / `data_threshold_v` / `ws_threshold_v` |
+| `flexray`(FlexRay オプション) | `source`、`baud_bps`(2500000/5000000/10000000)、`sample_point_percent`(10〜90)、`signal_type`(bp/bm/rt)、`channel`(a/b)、`threshold_v` |
+| `m1553`(Aero オプション) | `source`、`threshold_v` |
 | `lin` | `source`, `baud_bps`(2400〜20000000), `parity_enabled`, `standard`(v1x/v2x/mixed), `threshold_v` |
 | `parallel` | `clk_source`, `clk_slope`, `bus`(`d7_d0` / `d15_d8` / `d15_d0` / `d0_d7` / `d8_d15` / `d0_d15` / `ch1`〜`ch4` / `user`), `bus_width`(1〜16), `bit_sources`(添字=ビット番号のリスト), `endian`, `polarity` |
 
@@ -381,7 +384,7 @@ FFTの実装:
 - `bit_sources` は `"CH1"`〜`"CH4"` / `"D0"`〜`"D15"` を**ビット0から順に**並べたリスト。長さが `bus_width`(同時指定なら要求値、無ければ現在値)を超える指定は送信前に `INVALID_PARAMETER`。機器には一括の割り当ても一括の問い合わせも無いため、`:BITX <i>` でビットを選び直しながら `:SOURce` を1本ずつ送る。**読み取りも同じ走査が要る**が、既定の読み取りは**書き込みを一切行わない**ため `bit_sources` を返さない。`configure_decode` は `changed` の判定に必要なので前後スナップショットでのみこの走査を要求し、そのとき `bus` が `user` のバスに限り `:BITX` を書きながら読む(選択中ビットは読み終わりに元へ戻す)
 - **検証は全て送信前**に行う(不正な列挙値・範囲外は1コマンドも送らずに `INVALID_PARAMETER`。実機は不正トークン1発でSCPIサーバーが沈黙するため)。他プロトコルのキーを混ぜた場合は `detail.allowed` にそのプロトコルの許容キーを返す
 - `uart` の `tx_source`/`rx_source`、`spi` の `mosi_source`/`miso_source` を**両方 `off` にはできない**(デコード対象が無くなる)
-- 対応プロトコルは機種プロファイルの `decode_protocols` が持つ([device-profiles.md](device-profiles.md) 2.2)。**未宣言のプロトコル(I2S / FlexRay / MIL-STD-1553)は送信前に `UNSUPPORTED_FEATURE`**(CAN-FD は CAN の追加設定として扱う) — これらはライセンスオプション必須で、標準搭載6種のみを扱う
+- 対応プロトコルは機種プロファイルの `decode_protocols` が持つ([device-profiles.md](device-profiles.md) 2.2)。**オプション必須のプロトコル(I2S / FlexRay / MIL-STD-1553。issue #74)は、ライセンスが導入済みのときだけ使える**(未導入なら送信前に `UNSUPPORTED_FEATURE`。プロファイルの `decode_option_protocols` で宣言)。CAN-FD は CAN の追加設定として扱う
 - 返却: `bus` / `requested` / `applied`(read-back値)/ `changed`
 
 ### `get_decode_result` — READ_ONLY / Phase 4
@@ -1042,7 +1045,7 @@ MATH演算の現在設定を読む。**書き込みは一切行わず**、表示
 
 ## 15. トリガ種別(Phase M5)
 
-MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標準搭載の11種**を `configure_trigger` の `type` + `settings` で開放している(オプション必須の IIS / FlexRay / MIL-STD-1553 と、用途が限定的な Video は対象外)。
+MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標準搭載の11種**を `configure_trigger` の `type` + `settings` で開放している(オプション必須の IIS / FlexRay / MIL-STD-1553 は導入済みのときだけ使える(issue #74、下記)。用途が限定的な Video は対象外)。
 
 新Toolは増やしていない。種別ごとの引数差は `configure_decode` と同じ `settings` オブジェクトで吸収する。
 
@@ -1066,12 +1069,17 @@ MVPは Edge トリガのみだった。ガイド3.27には20種があり、**標
 | `spi` | SPIの**特定コマンド・データ値** | `clock_source` / `clock_level_v` / `clock_slope` / `data_source` / `data_level_v` / `cs_source` / `cs_level_v` / `cs_polarity`(high/low)/ `when`(cs/timeout)/ `timeout_s` / `data_bits`(4-32)/ `data` |
 | `can` | CANの**エラーフレーム・特定ID** | `source` / `level_v` / `baud_bps` / `signal_type`(can_h/can_l/rx_tx/differential)/ `when`(13種)/ `sample_point_percent` / `extended_id` / `define`(data/id)/ `data_bytes`(1-8)/ `data` |
 | `lin` | LINの**エラー・特定フレーム** | `source` / `level_v` / `standard`(v1x/v2x/both)/ `baud_bps` / `sample_point_percent` / `when`(7種)/ `error_type`(sync/id/checksum)/ `frame_id`(0-63)/ `data` |
+| `flexray`(FlexRay オプション) | FlexRay のフレーム・シンボル・エラー | `source` / `level_v` / `baud_bps` / `channel`(a/b)/ `when`(frame/symbol/error/tss)/ `position`(tss/fss/fes/dts)/ `frame_type`(null/sync/startup/any)/ `symbol`(cas/wus)/ `error_type`(header/trailer/decode/any) |
+| `i2s`(Audio オプション) | I2S の特定データ値 | `clock_source` / `data_source` / `ws_source` / `clock_level_v` / `ws_level_v` / `data_level_v` / `clock_slope` / `alignment` / `when`(equal 等6種)/ `audio`(left/right/either)/ `data_bits`(4〜32)/ `user_bits`(4〜data_bits)/ `data` |
+| `m1553`(Aero オプション) | MIL-STD-1553 の同期・データ・コマンド・ステータス・エラー | `source` / `when`(sync_break/data/command/status/error)/ `polarity` / `sync_type`(data/status/all)/ `error_type`(sync/error)/ `data_compare` / `data`(0〜65535)/ `level_a_v` / `level_b_v` |
 
 **シリアルバストリガは `configure_decode`(6章)と対になる。** デコードは「読んで表にする」、トリガは「条件に合った瞬間に取り込む」で、**別サブシステム**(`:BUS<n>` と `:TRIGger`)。綴りも値域も別に確認してある — 例えば I2C のアドレス幅はデコード側が `:BUS<n>:IIC:ADDBits`、トリガ側が `:TRIGger:IIC:AWIDth`。
 
 典型的な使い方: `configure_trigger(type="i2c", settings={"when": "nack"})` で NACK の瞬間だけ捕まえ、`configure_decode(protocol="i2c", event_table=True)` + `get_decode_result` でその前後のトランザクションを読む。
 
 共通設定(種別に依らない): `sweep_mode`、`holdoff_s`(再アームまでの不感時間)。
+
+**オプション必須の種別(`flexray` / `i2s` / `m1553`。issue #74)** は、ライセンスが導入済みのときだけ使える(プロファイルの `trigger_option_types`)。値域や意味がガイドで決まらない項目(FlexRay の ID 比較、I2S の DMIN / DMAX、1553 の DMIN / DMAX / DRTA / DBIT / WINDow、各種 CODE)は扱わない。I2S の `data` は `user_bits` の幅に丸められる(実機実測: 4ビットのまま 1000 を書くと 15)ので、`user_bits` も一緒に指定する。
 
 ### `get_trigger` の返却
 

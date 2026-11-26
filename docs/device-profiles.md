@@ -84,6 +84,7 @@
 | `channel_units` | `:CHANnel<n>:UNITs` の値。**チャンネルの追加属性(反転・微調整・単位・ラベル・バイアス・遅延補正)のゲート**を兼ね、未宣言なら `configure_channel` の追加属性は送信ゼロで `UNSUPPORTED_FEATURE`、`get_channel` も読まない | mho98: `volt` / `ampere` / `watt` / `unknown`(ガイド3.6.12。応答は短形 `VOLT` / `AMP`) |
 | `timebase_modes` / `timebase_href_modes` | `:TIMebase:MODE` と `:HREFerence:MODE` の値。**`timebase_modes` が水平軸の拡張項目(遅延掃引・水平基準・微調整・自動ROLL)のゲート** | mho98: `main` / `roll`(XY は実機で無視されるため不在)と、`center` / `left` / `right` / `trigger` / `user`(ガイド3.26) |
 | `decode_can_fd` | true なら CAN デコードに CAN-FD のデータフェーズ設定(`fd_baud_bps` / `fd_sample_point_percent`)を足す。**CAN-FD オプションが導入済みのときだけ**読み書きする(未ライセンスだと読み取りでも `-222` を積むため) | mho98: true(ガイド3.4.14.4 / 3.4.14.6)。実機は 12.3Mbps もエラーなしで受理するので、値域 1〜10Mbps はホスト側で検証する |
+| `decode_option_protocols` / `trigger_option_types` | オプション必須のデコード・トリガ(名前 → `{token, option}`)。`option` は `option_types` のキーで、**導入済みのときだけ**使う。照会はその名前やトークンが関わるときだけ行う | mho98: `i2s`(IIS / audio_i2s)/ `flexray`(FLEXray / flexray)/ `m1553`(M1553 / mil_std_1553)。トリガの列挙は `trigger_flexray_*` / `trigger_i2s_*` / `trigger_m1553_*` / `trigger_compare_ops` |
 | `acquire_types` | `:ACQuire:TYPE` の値(`normal` / `peak` / `average` / `high_resolution`)。**未宣言 = `configure_acquisition` が送信ゼロで `UNSUPPORTED_FEATURE`、`get_acquisition_state` も設定クエリを送らない** | mho98: 4種(ガイド3.3.3。応答は短形 `NORM` / `PEAK` / `AVER` / `HRES`)。DHO系は実機未検証のため不在 |
 | `acquire_bits` | `:ACQuire:BITS` の選択肢(リスト)。未宣言なら `adc_bits` を扱わない | mho98: `[14, 16]`(3.3.5)。**high_resolution モード以外では書き込みが `-200`**(実機実測)。DHO800/900 には無い(`:ACQuire:HRESolution` が別綴り) |
 | `measure_areas` | `:MEASure:AREA` の値(`main` / `zoom` / `cursor`)。未宣言 = `configure_measurement` が送信ゼロで `UNSUPPORTED_FEATURE` | mho98: 3種(ガイド3.17.19)。**DHO系は実機未検証のため意図的に不在** |
@@ -125,7 +126,7 @@
 
 `:SYSTem:OPTion:*` は**MHO900専用**でDHO800/900のガイドには存在しない。したがって `option_query` / `option_types` は `mho98.yaml` にのみ宣言し、`rigol-generic.yaml` には置かない — **キーの不在がそのままゲート**である(4.2の原則の適用例)。`*OPT?` はRigolオシロ全シリーズで未定義ヘッダのため使わない。`<type>` リスト外のトークン(実測: `AUTOA`)でもSCPIサーバーが沈黙するので、`option_types` に載っていないトークンを送ってはならない。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md)(未ライセンス状態でも `AFG50` / `RLU-05` は `1` を返す)。
 
-`decode_protocols` に載せるのは**標準搭載の6種のみ**。I2S(`IIS`)/ FlexRay / MIL-STD-1553(`M1553`)/ CAN-FD(`:BUS<n>:CAN:FDBaud`)はライセンスオプション必須のため意図的に載せず、**不在がそのままゲート**になる(未宣言のプロトコルは送信前に `UNSUPPORTED_FEATURE`)。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 3章(未ライセンス状態でも RS232/IIC/SPI/CAN/LIN/PAR は全て正常応答)。
+`decode_protocols` に載せるのは**標準搭載の6種のみ**。I2S(`IIS`)/ FlexRay / MIL-STD-1553(`M1553`)/ CAN-FD(`:BUS<n>:CAN:FDBaud`)はライセンスオプション必須のため `decode_protocols` には載せない。I2S / FlexRay / 1553 は `decode_option_protocols`、CAN-FD は `decode_can_fd` で別に宣言し、**オプションが導入済みのときだけ**使う(未導入・未宣言なら送信前に `UNSUPPORTED_FEATURE`)。実測根拠は [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 3章(未ライセンス状態でも RS232/IIC/SPI/CAN/LIN/PAR は全て正常応答)。
 
 **AFGの機種差(`afg_*` を MHO98 にしか宣言しない理由):** MHO900シリーズの信号発生は**番号付きの `:SOURce<n>`**(n=1,2)だが、DHO800/900の内蔵ジェネレータは**番号なしの `:SOURce`** で、しかも別売のDGモジュール前提(有無は `:SYSTem:DGSTatus?` で照会する)という**別物の方言**である。共通化せず、検証済み機種のプロファイルにだけ宣言する(不在=非対応のゲート)。実測根拠は [verification/mho98-afg.md](verification/mho98-afg.md)。
 

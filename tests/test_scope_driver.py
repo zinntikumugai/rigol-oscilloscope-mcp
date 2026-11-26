@@ -937,9 +937,10 @@ def test_installed_options_without_type_table_sends_nothing(scope: FakeScope) ->
     assert scope.command_log == []
 
 
-@pytest.mark.parametrize("response", [b"YES", None])
+@pytest.mark.parametrize("response", [b"YES"])
 def test_installed_options_isolates_a_broken_type(response: bytes | None) -> None:
-    """1件が解釈不能/無応答でも、残りの結果は失われない。"""
+    """1件が解釈不能でも、残りの結果は失われない(無応答は接続が閉じるので
+    そこで打ち切る: test_option_scan_stops_at_the_first_timeout)。"""
     driver = make_driver(_BrokenOptionScope(response))
 
     options = driver.installed_options()
@@ -1297,9 +1298,10 @@ def test_configure_decode_parallel_rejects_bad_bit_sources_sends_nothing(
 def test_configure_decode_unknown_protocol_sends_nothing(
     driver: ScopeDriver, scope: FakeScope
 ) -> None:
-    """オプション必須のプロトコル(i2s等)は宣言が無い = 送信前に拒否。"""
+    """宣言の無いプロトコルは送信前に拒否(オプション必須の i2s 等は issue #74 で
+    導入済みのときだけ使えるようになった。ここでは宣言の無い名前で確かめる)。"""
     with pytest.raises(ScopeError) as excinfo:
-        driver.configure_decode(1, "i2s")
+        driver.configure_decode(1, "usb")
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert "uart" in excinfo.value.message
@@ -1512,11 +1514,11 @@ def test_get_decode_config_uses_threshold_query_form(
 def test_get_decode_config_reports_unsupported_mode_as_is(
     driver: ScopeDriver, scope: FakeScope
 ) -> None:
-    """オプション必須プロトコルに設定されたバスは、生の名前だけ返す。
-
-    ライセンス適用後に `:BUS1:MODE?` が `IIS` を返しても読み取りが壊れず、かつ
-    未確認ニモニック(`:BUS1:IIS:...`)を1件も送らないこと。
+    """**ライセンスが無い**オプション必須プロトコルに設定されたバスは、生の名前
+    だけ返し、配下(`:BUS1:IIS:...`)を1件も送らない(導入済みなら読む。#74)。
     """
+    scope = FakeScope(options={"CAN-FD": True})
+    driver = make_driver(scope)
     scope.buses[1]["mode"] = "IIS"
 
     config = driver.get_decode_config(1)
@@ -5049,7 +5051,7 @@ def test_can_fd_option_query_failures_are_not_treated_as_unlicensed(
     driver: ScopeDriver, monkeypatch
 ) -> None:
     """通信エラー等は「使えない」と取り違えずにそのまま伝える(Copilotレビュー)。"""
-    def broken() -> dict:
+    def broken(**_: object) -> dict:
         raise ScopeError(ErrorCode.DEVICE_DISCONNECTED, "link lost", {})
 
     monkeypatch.setattr(driver, "installed_options", broken)
@@ -5236,3 +5238,312 @@ def test_setup_unsupported_on_generic(generic_driver: ScopeDriver, scope: FakeSc
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# オプション必須のデコード(I2S / FlexRay / MIL-STD-1553。issue #74)
+# --------------------------------------------------------------------------
+
+
+def test_configure_decode_i2s(driver: ScopeDriver, scope: FakeScope) -> None:
+    applied = driver.configure_decode(
+        1,
+        "i2s",
+        settings={
+            "clock_source": "CH1",
+            "data_source": "CH2",
+            "ws_source": "CH3",
+            "alignment": "left",
+            "word_bits": 16,
+            "endian": "msb",
+        },
+    )
+
+    assert ":BUS1:MODE IIS" in scope.command_log
+    assert ":BUS1:IIS:SOURce:CLOCk CHANnel1" in scope.command_log
+    assert ":BUS1:IIS:ALIGnment LJ" in scope.command_log
+    assert applied["protocol"] == "i2s"
+    assert applied["settings"]["word_bits"] == 16
+    assert applied["settings"]["alignment"] == "left"
+
+
+def test_configure_decode_flexray_and_m1553(driver: ScopeDriver, scope: FakeScope) -> None:
+    flex = driver.configure_decode(
+        2, "flexray", settings={"baud_bps": 5_000_000, "signal_type": "bm", "channel": "b"}
+    )
+    aero = driver.configure_decode(3, "m1553", settings={"source": "CH2"})
+
+    assert flex["settings"] == {"baud_bps": 5_000_000, "signal_type": "bm", "channel": "b"}
+    assert aero["settings"] == {"source": "CH2"}
+    assert ":BUS3:MODE M1553" in scope.command_log
+
+
+def test_get_decode_config_reads_an_option_protocol(driver: ScopeDriver) -> None:
+    driver.configure_decode(1, "flexray")
+
+    config = driver.get_decode_config(1)
+
+    assert config["protocol"] == "flexray"
+    assert config["settings"]["baud_bps"] == 10_000_000
+
+
+def test_option_decode_without_the_license_sends_nothing() -> None:
+    """未ライセンスなら送信前に UNSUPPORTED_FEATURE(読むのはオプションの照会だけ)。"""
+    scope = FakeScope(options={"CAN-FD": True})
+    driver = make_driver(scope)
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "i2s")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert [c for c in scope.command_log if "?" not in c] == []
+    assert not [c for c in scope.command_log if c.startswith(":BUS")]
+
+
+def test_option_decode_unknown_setting_is_rejected(driver: ScopeDriver, scope: FakeScope) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "m1553", settings={"baud_bps": 1_000_000})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert not [c for c in scope.command_log if c.startswith(":BUS")]
+
+
+# --------------------------------------------------------------------------
+# オプション必須のトリガ(I2S / FlexRay / MIL-STD-1553。issue #74)
+# --------------------------------------------------------------------------
+
+
+def test_configure_trigger_i2s(driver: ScopeDriver, scope: FakeScope) -> None:
+    applied = driver.configure_trigger(
+        type="i2s",
+        settings={"when": "greater", "audio": "right", "data_bits": 16, "user_bits": 16, "data": 1000},
+    )
+
+    assert ":TRIGger:MODE IIS" in scope.command_log
+    assert ":TRIGger:IIS:WHEN GREaterthan" in scope.command_log
+    assert applied["type"] == "i2s"
+    assert applied["audio"] == "right"
+    assert applied["data"] == 1000
+
+
+def test_configure_trigger_flexray_and_m1553(driver: ScopeDriver, scope: FakeScope) -> None:
+    flex = driver.configure_trigger(
+        type="flexray", settings={"when": "error", "error_type": "trailer", "channel": "b"}
+    )
+    aero = driver.configure_trigger(
+        type="m1553", settings={"when": "data", "data_compare": "in_range", "data": 1234}
+    )
+
+    assert flex["error_type"] == "trailer"
+    assert aero["data"] == 1234
+    assert ":TRIGger:MODE M1553" in scope.command_log
+
+
+def test_get_trigger_reads_an_option_type(driver: ScopeDriver) -> None:
+    driver.configure_trigger(type="flexray")
+
+    state = driver.get_trigger()
+
+    assert state.type == "flexray"
+    assert state.settings["baud_bps"] == 10_000_000
+
+
+def test_option_trigger_without_the_license_sends_nothing() -> None:
+    scope = FakeScope(options={"CAN-FD": True})
+    driver = make_driver(scope)
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_trigger(type="m1553")
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert [c for c in scope.command_log if "?" not in c] == []
+
+
+def test_get_trigger_of_an_unlicensed_option_type_reads_no_subtree() -> None:
+    scope = FakeScope(options={"CAN-FD": True})
+    driver = make_driver(scope)
+    scope.trigger["mode"] = "IIS"
+
+    state = driver.get_trigger()
+
+    assert state.type == "IIS"
+    assert state.settings == {}
+    assert sent(scope, ":IIS") == []
+
+
+def test_get_decode_config_of_an_unlicensed_m1553_bus_reads_no_subtree() -> None:
+    """生の名前が変換表の名前と同じ(`m1553`)でも、未ライセンスなら配下を読まない
+    (Copilotレビュー)。"""
+    scope = FakeScope(options={"CAN-FD": True})
+    driver = make_driver(scope)
+    scope.buses[1]["mode"] = "M1553"
+    scope.command_log.clear()
+
+    config = driver.get_decode_config(1)
+
+    assert config["protocol"] == "m1553"
+    assert config["settings"] == {}
+    reads = [c for c in scope.command_log if c.startswith(":BUS1")]
+    assert all(c.split("?")[0].split(":")[-1] in ("MODE", "DISPlay", "EVENt", "FORMat") for c in reads), reads
+
+
+def test_i2s_trigger_user_bits_must_not_exceed_data_bits(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """`user_bits` は 4〜data_bits(3.27.26.5)。超える組み合わせは送らない。"""
+    scope.command_log.clear()
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_trigger(type="i2s", settings={"data_bits": 8, "user_bits": 16})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert [c for c in scope.command_log if "?" not in c] == []
+
+
+def test_i2s_trigger_user_bits_is_checked_against_the_current_width(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_trigger(type="i2s", settings={"data_bits": 8})
+    scope.command_log.clear()
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_trigger(settings={"user_bits": 16})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert [c for c in scope.command_log if "?" not in c] == []
+    assert driver.configure_trigger(settings={"user_bits": 8})["user_bits"] == 8
+
+
+def test_option_query_timeout_is_not_treated_as_unlicensed(
+    driver: ScopeDriver, monkeypatch
+) -> None:
+    """照会の timeout は「未導入」でなく TIMEOUT として返し、キャッシュもしない
+    (Copilotレビュー)。"""
+    original = driver.session.query
+    failing = {"on": True}
+
+    def query(command: str, *args, **kwargs):
+        if failing["on"] and "OPTion" in command:
+            raise ScopeError(ErrorCode.TIMEOUT, "no response", {})
+        return original(command, *args, **kwargs)
+
+    monkeypatch.setattr(driver.session, "query", query)
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "i2s")
+    assert excinfo.value.code == ErrorCode.TIMEOUT
+
+    failing["on"] = False
+    assert driver.configure_decode(1, "i2s")["protocol"] == "i2s"
+
+
+def test_fake_scope_does_not_accept_the_i2sclk_threshold_token() -> None:
+    """実機は `I2SClk` で沈黙する。フェイクが受け付けると誤送信を見逃す。"""
+    from rigol_oscilloscope_mcp.testing import fake_scope
+
+    assert "I2SClk" not in fake_scope._THRESHOLD_TYPES
+
+
+def test_option_scan_stops_at_the_first_timeout(driver: ScopeDriver, monkeypatch) -> None:
+    """timeout 後は実トランスポートが接続を閉じるので、残りのオプションは照会しない
+    (Copilotレビュー)。結果はキャッシュしない。"""
+    original = driver.session.query
+    asked: list[str] = []
+
+    def query(command: str, *args, **kwargs):
+        if "OPTion" in command:
+            asked.append(command)
+            raise ScopeError(ErrorCode.TIMEOUT, "no response", {})
+        return original(command, *args, **kwargs)
+
+    monkeypatch.setattr(driver.session, "query", query)
+
+    options = driver.installed_options()
+
+    assert len(asked) == 1
+    assert set(options.values()) == {None}
+    driver.installed_options()
+    assert len(asked) == 2  # キャッシュされていない
+
+
+def test_option_scan_timeout_discards_earlier_results(driver: ScopeDriver, monkeypatch) -> None:
+    """走査の途中で timeout したら、それまでの結果も捨てる(接続が閉じているので
+    「導入済み」と見て書き込みへ進まない。Copilotレビュー)。"""
+    original = driver.session.query
+    seen = {"n": 0}
+
+    def query(command: str, *args, **kwargs):
+        if "OPTion" in command:
+            seen["n"] += 1
+            if seen["n"] > 1:
+                raise ScopeError(ErrorCode.TIMEOUT, "no response", {})
+        return original(command, *args, **kwargs)
+
+    monkeypatch.setattr(driver.session, "query", query)
+
+    assert set(driver.installed_options().values()) == {None}
+    seen["n"] = 0
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "i2s")
+    assert excinfo.value.code == ErrorCode.TIMEOUT
+
+
+def test_flexray_trigger_frame_type_null(driver: ScopeDriver, scope: FakeScope) -> None:
+    """YAML の素の `null` キーは None になる。`frame_type="null"` が使えること。"""
+    applied = driver.configure_trigger(type="flexray", settings={"frame_type": "null"})
+
+    assert applied["frame_type"] == "null"
+    assert ":TRIGger:FLEXray:FRAMe NULL" in scope.command_log or any(
+        c.endswith(" NULL") for c in scope.command_log
+    )
+    assert driver.get_trigger().settings["frame_type"] == "null"
+
+
+def test_get_decode_events_without_protocol_decode_sends_nothing() -> None:
+    """`protocol_decode` を宣言しない機種では :BUS<n>:MODE? も送らない。"""
+    from dataclasses import replace
+
+    scope = FakeScope()
+    transport = FakeTransport(scope)
+    transport.open()
+    profile = load_profile("mho98")
+    profile = replace(profile, capabilities={**profile.capabilities, "protocol_decode": False})
+    driver = ScopeDriver(ScpiSession(transport), profile)
+    scope.command_log.clear()
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_decode_events(1)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_option_with_an_unexpected_reply_is_not_reported_as_a_timeout(
+    driver: ScopeDriver, monkeypatch
+) -> None:
+    original = driver.session.query
+
+    def query(command: str, *args, **kwargs):
+        if "OPTion" in command:
+            return "YES"
+        return original(command, *args, **kwargs)
+
+    monkeypatch.setattr(driver.session, "query", query)
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "i2s")
+
+    assert excinfo.value.code != ErrorCode.TIMEOUT
+    assert "no response" not in excinfo.value.message
+
+
+def test_i2s_trigger_data_bits_below_the_current_user_bits_is_rejected(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_trigger(type="i2s", settings={"data_bits": 16, "user_bits": 16})
+    scope.command_log.clear()
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_trigger(settings={"data_bits": 8})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert [c for c in scope.command_log if "?" not in c] == []

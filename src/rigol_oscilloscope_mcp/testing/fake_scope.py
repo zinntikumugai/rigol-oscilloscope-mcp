@@ -247,12 +247,15 @@ _TRIGGER_MODES = (
     "DELay",
     "SETup",
     "NEDGe",
-    # シリアルバス。オプション必須の IIS / FLEXray / M1553 は載せない
     "RS232",
     "IIC",
     "SPI",
     "CAN",
     "LIN",
+    # オプション必須(issue #74)。ドライバはライセンス導入済みのときだけ使う
+    "FLEXray",
+    "IIS",
+    "M1553",
 )
 _TRIGGER_SOURCES = tuple(f"CHANnel{n}" for n in range(1, 5)) + tuple(
     f"D{n}" for n in range(16)
@@ -260,6 +263,44 @@ _TRIGGER_SOURCES = tuple(f"CHANnel{n}" for n in range(1, 5)) + tuple(
 _POLARITIES = ("POSitive", "NEGative")
 #: サブツリーのニモニック → 属性表。`:TRIGger:MODE` の値とは別物なので分けている
 _TRIGGER_SUBTREE_PROPS: dict[str, tuple[tuple[str, str, object, object], ...]] = {
+    # オプション必須(3.27.25-27)。既定値は実機の初期応答
+    "FLEXray": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("level", "LEVel", "nr3", 0.0),
+        ("baud", "BAUD", ("int", 2_500_000, 10_000_000), 10_000_000),
+        ("ch", "CH", ("A", "B"), "A"),
+        ("when", "WHEN", ("FRAMe", "SYMBol", "ERRor", "TSS"), "FRAM"),
+        ("pos", "POS", ("TSS", "FSS", "FES", "DTS"), "TSS"),
+        ("frame", "FRAMe", ("NULL", "SYNC", "STAR", "ANY"), "ANY"),
+        ("symbol", "SYMBol", ("CAS", "WUS"), "CAS"),
+        ("error", "ERRor", ("HEAD", "TRAiler", "DECode", "ANY"), "HEAD"),
+    ),
+    "IIS": (
+        ("clock", "SOURce:CLOCk", _TRIGGER_SOURCES, "CHAN1"),
+        ("data_src", "SOURce:DATA", _TRIGGER_SOURCES, "CHAN3"),
+        ("ws", "SOURce:WSELect", _TRIGGER_SOURCES, "CHAN2"),
+        ("clevel", "CLEVel", "nr3", 0.0),
+        ("slevel", "SLEVel", "nr3", 0.0),
+        ("dlevel", "DLEVel", "nr3", 0.0),
+        ("slope", "CLOCk:SLOPe", _POLARITIES, "POS"),
+        ("align", "ALIGnment", ("IIS", "LJ", "RJ"), "IIS"),
+        ("when", "WHEN", ("EQUal", "NOTequal", "LESSthan", "GREaterthan", "INRange", "OUTRange"), "EQU"),
+        ("audio", "AUDio", ("LEFT", "RIGHt", "EITHer"), "LEFT"),
+        ("width", "WIDTh", ("int", 4, 32), 4),
+        ("uwidth", "UWIDth", ("int", 4, 32), 4),
+        ("data", "DATA", ("int", 0, 2**32 - 1), 0),
+    ),
+    "M1553": (
+        ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
+        ("when", "WHEN", ("SYNCbreak", "DATA", "CMD", "STATus", "ERRor"), "SYNC"),
+        ("polarity", "POLarity", _POLARITIES, "POS"),
+        ("sync", "SYNC", ("DATA", "STATus", "ALL"), "DATA"),
+        ("error", "ERRor", ("SYNC", "ERR"), "SYNC"),
+        ("datcomp", "DATComp", ("EQUal", "NOTequal", "GREaterthan", "LESSthan", "INRange", "OUTRange"), "EQU"),
+        ("datvalue", "DATValue", ("int", 0, 65535), 0),
+        ("alevel", "ALEVel", "nr3", 0.015),
+        ("blevel", "BLEVel", "nr3", 0.0),
+    ),
     "EDGE": (
         ("source", "SOURce", _TRIGGER_SOURCES, "CHAN1"),
         ("level", "LEVel", "nr3", 0.0),
@@ -489,12 +530,14 @@ _TRIGGER_STATUS = {"RUN": "TD", "STOP": "STOP", "SINGLE": "WAIT"}
 
 BUS_COUNT = 4
 
-_BUS_MODES = ("PARallel", "RS232", "SPI", "IIC", "LIN", "CAN")
+_BUS_MODES = ("PARallel", "RS232", "SPI", "IIC", "LIN", "CAN", "IIS", "FLEXray", "M1553")
 _BUS_FORMATS = ("HEX", "ASCii", "DEC", "BIN")
 
-#: 閾値の `<type>`(ライセンス必須プロトコルの種別は意図的に載せない)
+#: 閾値の `<type>`(実機で確認済みのトークンだけ。ガイドの `I2SClk` は実機が沈黙するので載せない。
+#: I2S のクロックは `CLK` を使う)
 _THRESHOLD_TYPES = (
     "TX", "RX", "SCL", "SDA", "CLK", "MISO", "MOSI", "CS", "CAN", "LIN", "PAL", "PALCLK",
+    "FLEX", "1553", "DATA", "WS",
 )
 
 #: `:BUS<n>:DATA?` ペイロード先頭のデコード種別トークン(モード短形式 → トークン)。
@@ -564,6 +607,27 @@ _BUS_PROTOCOL_PROPS: dict[str, tuple[tuple[str, str, object, object], ...]] = {
         ("ss", "SS:SOURce", "src", "CHAN1"),
         ("ss_polarity", "SS:POLarity", ("HIGH", "LOW"), "LOW"),
     ),
+    # オプション必須(3.4.16-3.4.18)。既定値はガイドの Default 欄
+    "IIS": (
+        ("clock", "SOURce:CLOCk", "src", "CHAN1"),
+        ("data", "SOURce:DATA", "src", "CHAN2"),
+        ("ws", "SOURce:WSELect", "src", "CHAN3"),
+        ("align", "ALIGnment", ("IIS", "RJ", "LJ"), "IIS"),
+        ("slope", "CLOCk:SLOPe", ("NEGative", "POSitive"), "POS"),
+        ("rwidth", "RWIDth", "int", 4),
+        ("recwidth", "RECewidth", "int", 4),
+        ("wslow", "WSLow", ("LEFT", "RIGHt"), "LEFT"),
+        ("endian", "ENDian", ("MSB", "LSB"), "MSB"),
+        ("polarity", "POLarity", ("POSitive", "NEGative"), "POS"),
+    ),
+    "FLEXray": (
+        ("source", "SOURce", "src", "CHAN1"),
+        ("baud", "BAUD", "int", 10_000_000),
+        ("spoint", "SPOint", "int", 50),
+        ("stype", "STYPe", ("BP", "BM", "RT"), "BP"),
+        ("channel", "CHANnel", ("A", "B"), "A"),
+    ),
+    "M1553": (("source", "SOURce", "src", "CHAN1"),),
     "CAN": (
         ("source", "SOURce", "src", "CHAN1"),
         ("stype", "STYPe", ("TX", "RX", "CANH", "CANL", "DIFFerential"), "TX"),
@@ -1004,7 +1068,10 @@ class FakeScope:
                 "event": False,
                 "label": True,
                 "position": 0,
-                "thresholds": dict.fromkeys(_THRESHOLD_TYPES, 0.0),
+                # キーは照会時の正規化(短形)に揃える
+                "thresholds": {
+                    _normalize(token, _THRESHOLD_TYPES): 0.0 for token in _THRESHOLD_TYPES
+                },
                 **{
                     protocol: {key: default for key, _, _, default in props}
                     for protocol, props in _BUS_PROTOCOL_PROPS.items()
