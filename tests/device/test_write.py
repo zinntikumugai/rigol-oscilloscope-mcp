@@ -807,9 +807,14 @@ def decode_before(
 
         after = driver.get_decode_config(DECODE_BUS, include_bit_sources=True)
         drift = _diff(before, after)
-        # 表示状態は、ビットソースを読み直す走査の**後**で戻す(走査でまたONになる)
+        # 表示状態は、ビットソースを読み直す走査の**後**で戻す(走査でまたONになる)。
+        # 1chで失敗しても残りのchは戻す(_restore_channel と同じ規律)
+        display_failures: list[str] = []
         for channel, enabled in displays.items():
-            driver.set_channel_enabled(channel, enabled)
+            try:
+                driver.set_channel_enabled(channel, enabled)
+            except Exception as exc:  # 復元は最後まで試みる
+                display_failures.append(f"{channel}: {exc!r}")
         display_drift = {
             channel: (enabled, get_channel_dict(driver, channel)["enabled"])
             for channel, enabled in displays.items()
@@ -822,6 +827,7 @@ def decode_before(
             _report(f"[restore:{tag}] **復元コマンド失敗**: {failure!r}")
         assert failure is None, f"BUS{DECODE_BUS} の復元に失敗: {failure!r}"
         assert not drift, f"BUS{DECODE_BUS} が復元されていません: {drift}"
+        assert not display_failures, f"chの表示の復元に失敗: {display_failures}"
         assert not display_drift, f"chの表示が復元されていません: {display_drift}"
 
 
