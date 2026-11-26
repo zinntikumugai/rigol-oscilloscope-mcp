@@ -521,3 +521,17 @@ def test_thd_and_jitter_reject_a_non_positive_interval(dt: float) -> None:
         with pytest.raises(ScopeError) as excinfo:
             analysis(samples, dt)
         assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+
+
+@pytest.mark.parametrize("name", ["pulse", "jitter"])
+def test_pulse_and_jitter_of_empty_samples_are_invalid(name: str) -> None:
+    """空の波形は生の ValueError でなく INVALID_PARAMETER にする(Copilotレビュー)。"""
+    from rigol_oscilloscope_mcp.service import analysis
+
+    with pytest.raises(ScopeError) as excinfo:
+        if name == "pulse":
+            analysis.waveform_pulse([])
+        else:
+            analysis.waveform_jitter([], 1e-6)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER

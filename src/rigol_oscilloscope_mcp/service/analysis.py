@@ -41,12 +41,16 @@ FFT_TOP_N = 5
 WINDOW = "hann"
 
 
-def waveform_stats(samples: list[float]) -> dict:
-    """振幅方向の基本統計(V)。std_v は母標準偏差。"""
+def _check_samples(samples: list[float]) -> None:
     if not samples:
         raise ScopeError(
             ErrorCode.INVALID_PARAMETER, "samples must not be empty", {"points": 0}
         )
+
+
+def waveform_stats(samples: list[float]) -> dict:
+    """振幅方向の基本統計(V)。std_v は母標準偏差。"""
+    _check_samples(samples)
     mean = statistics.fmean(samples)
     lowest, highest = min(samples), max(samples)
     return {
@@ -156,6 +160,7 @@ def waveform_pulse(samples: list[float]) -> dict:
     オーバーシュート = (最大 − トップ) / 振幅、プリシュート = (ベース − 最小) / 振幅。
     振幅がほぼ無い(平坦な)信号では計算しない。
     """
+    _check_samples(samples)
     lowest, highest = min(samples), max(samples)
     span = highest - lowest
     empty = {"top_v": None, "base_v": None, "amplitude_v": None,
@@ -317,6 +322,7 @@ def waveform_jitter(samples: list[float], sample_interval_s: float) -> dict:
     周期の平均・標準偏差(周期ジッタ)・最大−最小と、隣り合う周期の差の実効値
     (サイクル間ジッタ)を返す。立ち上がりが3つ未満なら計算しない。
     """
+    _check_samples(samples)
     _check_interval(sample_interval_s)
     threshold = (max(samples) + min(samples)) / 2.0
     crossings = [
@@ -371,7 +377,7 @@ def analyze_waveform(
 ) -> dict:
     """波形を取得してホスト側で解析し、要約だけを返す(サンプル配列は返さない)。
 
-    `analyses` が None なら全解析。`max_points` の扱いは capture_waveform と同じ。
+    `analyses` が None なら `DEFAULT_ANALYSES`(stats / fft)だけ。`max_points` の扱いは capture_waveform と同じ。
 
     MATHソースのうちFFT演算のトレースは横軸が周波数のため、時間軸前提の統計も
     ホスト側FFTも意味を持たない。取得前に `INVALID_PARAMETER` で拒否する。
