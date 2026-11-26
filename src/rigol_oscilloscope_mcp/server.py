@@ -363,7 +363,7 @@ def create_server(
     @_register
     def get_acquisition_state() -> dict:
         """Return the acquisition state: whether it is running, the trigger status,
-        and (when the model supports it) mode / averages / adc_bits."""
+        and (when the model supports it) mode / averages / adc_bits / memory_depth."""
         return service.get_acquisition_dict(manager.require_scope())
 
     # -- 測定・データ取得 -------------------------------------------------

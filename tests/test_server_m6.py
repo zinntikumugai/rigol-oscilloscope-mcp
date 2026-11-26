@@ -98,6 +98,13 @@ def test_list_tools_exposes_configure_acquisition(server) -> None:
     assert M6_TOOLS <= set(descriptions(server))
 
 
+def test_get_acquisition_state_documents_the_returned_settings(server) -> None:
+    description = descriptions(server)["get_acquisition_state"]
+
+    for key in ("mode", "averages", "adc_bits", "memory_depth"):
+        assert key in description
+
+
 def test_configure_acquisition_documents_modes_and_constraints(server) -> None:
     description = descriptions(server)["configure_acquisition"]
 
