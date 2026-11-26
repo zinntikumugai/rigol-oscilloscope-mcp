@@ -795,7 +795,10 @@ def decode_before(
     tag = request.node.name
     _report(f"[before:{tag}] bus{DECODE_BUS}={before}")
     if before["protocol"] not in DECODE_PROTOCOLS:
-        _restore_displays(driver, displays)
+        # skip の前でも、表示を戻せなかったなら失敗として報告する
+        display_failures, display_drift = _restore_displays(driver, displays)
+        assert not display_failures, f"chの表示の復元に失敗: {display_failures}"
+        assert not display_drift, f"chの表示が復元されていません: {display_drift}"
         pytest.skip(f"BUS{DECODE_BUS} は未対応プロトコル({before['protocol']})")
     try:
         yield before
@@ -828,10 +831,13 @@ def decode_before(
         except Exception as exc:  # 復元は最後まで試みる
             failure = exc
 
-        after = driver.get_decode_config(DECODE_BUS, include_bit_sources=True)
+        # 表示状態は、ビットソースを読み直す走査の**後**で戻す(走査でまたONになる)。
+        # 読み直しが例外で落ちても表示は必ず戻す
+        try:
+            after = driver.get_decode_config(DECODE_BUS, include_bit_sources=True)
+        finally:
+            display_failures, display_drift = _restore_displays(driver, displays)
         drift = _diff(before, after)
-        # 表示状態は、ビットソースを読み直す走査の**後**で戻す(走査でまたONになる)
-        display_failures, display_drift = _restore_displays(driver, displays)
         _report(f"[restore:{tag}] bus{DECODE_BUS} 復元後={after}")
         if drift:
             _report(f"[restore:{tag}] **復元漏れ**: {drift}")
