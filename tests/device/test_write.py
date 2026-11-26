@@ -3128,6 +3128,12 @@ def test_decode_on_digital_channels_matches_the_board(
 
     control.configure_timebase(driver, scale_s_per_div=scale)
     control.configure_trigger(driver, type="edge", source=source, slope=slope, sweep_mode="normal")
+    trigger = get_trigger_dict(driver)
+    _report(f"[la-board] {mode} trigger={trigger}")
+    # D チャンネルのエッジトリガが効いていること(自走のまま読めても通ってしまわない)
+    assert (trigger["type"], trigger["source"], trigger["slope"], trigger["sweep_mode"]) == (
+        "edge", source, slope, "normal"
+    )
     control.configure_decode(
         driver,
         args["bus"],
