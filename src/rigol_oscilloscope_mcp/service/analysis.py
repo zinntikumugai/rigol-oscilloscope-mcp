@@ -32,7 +32,7 @@ DEFAULT_ANALYSES = ("stats", "fft")
 _PULSE_BINS = 256
 #: THD で数える高調波の次数の上限
 THD_MAX_ORDER = 10
-#: THD を計算する基本波のビン番号の下限(これ未満は周期が少なすぎてトーンが重なる)
+#: THD を計算する記録内の周期数の下限(これ未満はトーンが重なる)
 THD_MIN_FUNDAMENTAL_BIN = 12
 
 #: FFTピークの既定本数
@@ -153,30 +153,56 @@ def waveform_fft(
     }
 
 
-def waveform_pulse(samples: list[float]) -> dict:
-    """矩形波・パルスのオーバーシュート/プリシュート(%)。
+def _histogram(samples: list[float]) -> tuple[list[int], float, float]:
+    """`_PULSE_BINS` 本のヒストグラムと、最小値・ビン幅。"""
+    lowest = min(samples)
+    width = (max(samples) - lowest) / _PULSE_BINS
+    counts = [0] * _PULSE_BINS
+    for value in samples:
+        counts[min(int((value - lowest) / width), _PULSE_BINS - 1)] += 1
+    return counts, lowest, width
 
-    トップとベースはヒストグラムの最頻値(中央より上/下で別々に)で求める。
-    オーバーシュート = (最大 − トップ) / 振幅、プリシュート = (ベース − 最小) / 振幅。
-    振幅がほぼ無い(平坦な)信号では計算しない。
+
+def _otsu_split(counts: list[int]) -> int:
+    """2群に分けたときの群間分散が最大になる境界のビン番号(大津の方法)。
+
+    パーセンタイルの中点と違い、デューティの小さいパルスでも上下を分けられ、
+    まばらなスパイクは群の重みが小さいので境界を動かさない。
+    """
+    total = sum(counts)
+    weighted = math.fsum(k * c for k, c in enumerate(counts))
+    best, best_k = -1.0, 1
+    below = 0
+    below_weighted = 0.0
+    for k in range(1, len(counts)):
+        below += counts[k - 1]
+        below_weighted += (k - 1) * counts[k - 1]
+        above = total - below
+        if below == 0 or above == 0:
+            continue
+        diff = below_weighted / below - (weighted - below_weighted) / above
+        score = below * above * diff * diff
+        if score > best:
+            best, best_k = score, k
+    return best_k
+
+
+def waveform_pulse(samples: list[float]) -> dict:
+    """矩形波・パルスのオーバーシュート/アンダーシュート(%)。
+
+    トップとベースはヒストグラムの最頻値(大津の方法で分けた上/下で別々に)。
+    オーバーシュート = (最大 − トップ) / 振幅、アンダーシュート = (ベース − 最小) /
+    振幅(記録のどこで起きたかは問わない)。振幅がほぼ無い(平坦な)信号では計算しない。
     """
     _check_samples(samples)
     lowest, highest = min(samples), max(samples)
     span = highest - lowest
     empty = {"top_v": None, "base_v": None, "amplitude_v": None,
-             "overshoot_percent": None, "preshoot_percent": None}
+             "overshoot_percent": None, "undershoot_percent": None}
     if span <= 1e-12:
         return {**empty, "warning": "the signal is flat; no pulse to analyze"}
-    width = span / _PULSE_BINS
-    counts = [0] * _PULSE_BINS
-    for value in samples:
-        counts[min(int((value - lowest) / width), _PULSE_BINS - 1)] += 1
-    # 上下の境界は 5〜95 パーセンタイルの中点で決める。最大・最小の中点だと、
-    # まばらな大きいスパイクで境界がずれ、平坦部を反対側と数えてしまう
-    ordered = sorted(samples)
-    p05 = ordered[int(0.05 * (len(ordered) - 1))]
-    p95 = ordered[int(0.95 * (len(ordered) - 1))]
-    middle = min(_PULSE_BINS - 1, max(1, int(((p05 + p95) / 2 - lowest) / width)))
+    counts, lowest, width = _histogram(samples)
+    middle = _otsu_split(counts)
     upper = max(range(middle, _PULSE_BINS), key=lambda k: counts[k])
     lower = max(range(middle), key=lambda k: counts[k])
     top = lowest + (upper + 0.5) * width
@@ -189,7 +215,7 @@ def waveform_pulse(samples: list[float]) -> dict:
         "base_v": base,
         "amplitude_v": amplitude,
         "overshoot_percent": max(0.0, (highest - top) / amplitude * 100.0),
-        "preshoot_percent": max(0.0, (base - lowest) / amplitude * 100.0),
+        "undershoot_percent": max(0.0, (base - lowest) / amplitude * 100.0),
     }
 
 
@@ -216,7 +242,7 @@ def waveform_noise(samples: list[float]) -> dict:
 
 
 def _hann_amplitudes(samples: list[float], sample_interval_s: float) -> tuple[list[float], float]:
-    """Hann窓つき単側振幅スペクトル(V)とビン間隔(Hz)。"""
+    """Hann窓つき単側振幅スペクトル(V)とビン間隔(Hz)。2のべき乗へ0詰めする。"""
     points = len(samples)
     mean = statistics.fmean(samples)
     size = 1 << (points - 1).bit_length()
@@ -230,13 +256,15 @@ def _hann_amplitudes(samples: list[float], sample_interval_s: float) -> tuple[li
     return amplitudes, 1.0 / (size * sample_interval_s)
 
 
-def _tone_amplitude(amplitudes: list[float], center: int, spread: int) -> float:
-    """center±spread のビンの電力を足して振幅へ(Hann の等価雑音帯域 1.5 で補正)。
+def _tone_amplitude(amplitudes: list[float], center: int, spread: int, padding: float) -> float:
+    """center±spread のビンの電力を足して振幅へ。
 
+    Hann の等価雑音帯域 1.5 と、0詰めの倍率 `padding`(= 変換長 / 記録長。0詰めで
+    ビンが細かくなるぶん、1つのトーンの電力が多くのビンに分かれる)で割る。
     ピークがビンの中央に無いときの振幅の目減り(スカラッピング)に左右されない。
     """
     window = amplitudes[max(1, center - spread): center + spread + 1]
-    return math.sqrt(math.fsum(a * a for a in window) / 1.5)
+    return math.sqrt(math.fsum(a * a for a in window) / (1.5 * padding))
 
 
 def _tone_frequency(amplitudes: list[float], center: int, spread: int, bin_hz: float) -> float:
@@ -271,13 +299,16 @@ def waveform_thd(samples: list[float], sample_interval_s: float) -> dict:
         )
     _check_interval(sample_interval_s)
     amplitudes, bin_hz = _hann_amplitudes(samples, sample_interval_s)
+    padding = 2 * (len(amplitudes) - 1) / len(samples)
     peak = max(range(1, len(amplitudes) - 1), key=lambda k: amplitudes[k])
-    # 窓の電力が数ビンに広がるので、ピークの両側3ビンを1つのトーンとみなす
-    spread = 3
+    # 窓の電力が数ビンに広がるので、ピークの両側3ビン(0詰めで細かくなったぶん
+    # 広げる)を1つのトーンとみなす
+    spread = math.ceil(3 * padding)
+    cycles = peak / padding
     # 基本波のビンが低すぎる(記録に入っている周期が少ない)と、高調波の探索範囲が
     # 基本波と重なり、基本波を高調波として数えてしまう(実機で踏んだ: 2周期で
     # THD 183%)。トーン同士が重ならない程度に周期が入っているときだけ計算する
-    if peak < THD_MIN_FUNDAMENTAL_BIN:
+    if cycles < THD_MIN_FUNDAMENTAL_BIN:
         return {
             "fundamental_hz": _tone_frequency(amplitudes, peak, spread, bin_hz),
             "fundamental_v": None,
@@ -288,7 +319,7 @@ def waveform_thd(samples: list[float], sample_interval_s: float) -> dict:
                 f"{THD_MIN_FUNDAMENTAL_BIN} cycles (use a slower timebase)"
             ),
         }
-    fundamental = _tone_amplitude(amplitudes, peak, spread)
+    fundamental = _tone_amplitude(amplitudes, peak, spread, padding)
     harmonics = []
     for order in range(2, THD_MAX_ORDER + 1):
         center = round(peak * order)
@@ -296,14 +327,14 @@ def waveform_thd(samples: list[float], sample_interval_s: float) -> dict:
             break
         # 基本波の推定誤差が次数倍に広がるので、予想位置の近くで最大のビンを使う。
         # 探索幅は隣の高調波に届かない範囲(基本波のビン数の1/4)に抑える
-        reach = min(order, max(1, peak // 4))
+        reach = min(math.ceil(order * padding), max(1, peak // 4))
         search = range(max(1, center - reach), min(len(amplitudes) - 1, center + reach + 1))
         best = max(search, key=lambda k: amplitudes[k])
         harmonics.append(
             {
                 "order": order,
                 "frequency_hz": _tone_frequency(amplitudes, best, spread, bin_hz),
-                "amplitude_v": _tone_amplitude(amplitudes, best, spread),
+                "amplitude_v": _tone_amplitude(amplitudes, best, spread, padding),
             }
         )
     distortion = math.sqrt(math.fsum(h["amplitude_v"] ** 2 for h in harmonics))
@@ -318,23 +349,39 @@ def waveform_thd(samples: list[float], sample_interval_s: float) -> dict:
 def waveform_jitter(samples: list[float], sample_interval_s: float) -> dict:
     """周期ジッタ(立ち上がりの間隔のばらつき)。
 
-    しきい値は (最大 + 最小) / 2。立ち上がりの交差時刻を線形補間で求め、
+    しきい値は大津の方法で分けた上下の平均の中点(スパイクに動かされない)。
+    振幅の10%のヒステリシスで立ち上がりを1回ずつ数え、交差時刻を線形補間で求め、
     周期の平均・標準偏差(周期ジッタ)・最大−最小と、隣り合う周期の差の実効値
     (サイクル間ジッタ)を返す。立ち上がりが3つ未満なら計算しない。
     """
     _check_samples(samples)
     _check_interval(sample_interval_s)
-    threshold = (max(samples) + min(samples)) / 2.0
-    crossings = [
-        (index - 1 + (threshold - samples[index - 1]) / (samples[index] - samples[index - 1]))
-        * sample_interval_s
-        for index in range(1, len(samples))
-        if samples[index - 1] < threshold <= samples[index]
-    ]
+    if max(samples) > min(samples):
+        counts, lowest, width = _histogram(samples)
+        boundary = lowest + _otsu_split(counts) * width
+    else:
+        boundary = samples[0]
+    below = [v for v in samples if v < boundary] or samples
+    above = [v for v in samples if v >= boundary] or samples
+    low_level, high_level = statistics.fmean(below), statistics.fmean(above)
+    threshold = (low_level + high_level) / 2.0
+    # しきい値付近の雑音で余計に数えないよう、振幅の10%のヒステリシスを持たせる:
+    # しきい値−h を下回ってから、最初にしきい値を上へ横切った時刻を1つだけ数える
+    hysteresis = 0.1 * (high_level - low_level)
+    crossings = []
+    armed = False
+    for index in range(1, len(samples)):
+        if samples[index - 1] < threshold - hysteresis:
+            armed = True
+        if armed and samples[index - 1] < threshold <= samples[index]:
+            fraction = (threshold - samples[index - 1]) / (samples[index] - samples[index - 1])
+            crossings.append((index - 1 + fraction) * sample_interval_s)
+            armed = False
     periods = [b - a for a, b in zip(crossings, crossings[1:])]
     if len(periods) < 2:
         return {
             "cycles": len(periods),
+            "threshold_v": threshold,
             "period_mean_s": None,
             "period_jitter_rms_s": None,
             "period_jitter_pk_pk_s": None,

@@ -451,7 +451,7 @@ def create_server(
         frequency and the strongest peaks. Frequency accuracy is limited by
         frequency_resolution_hz, so do not read more digits than that.
         pulse gives top/base (histogram modes), overshoot_percent and
-        preshoot_percent for square waves and pulses. noise estimates the white
+        undershoot_percent (any dip below the base) for square waves and pulses. noise estimates the white
         noise RMS from sample-to-sample differences (robust to occasional edges;
         over-reads when edges fill most of the record).
         thd gives total harmonic distortion in percent with the harmonics up to

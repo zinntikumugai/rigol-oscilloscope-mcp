@@ -358,7 +358,7 @@ def _square(points: int, period: int, low: float = 0.0, high: float = 1.0) -> li
     return [high if (i % period) < period // 2 else low for i in range(points)]
 
 
-def test_pulse_overshoot_and_preshoot() -> None:
+def test_pulse_overshoot_and_undershoot() -> None:
     """矩形波の立ち上がり直後に +0.2V、立ち下がり直後に −0.1V のはね(振幅1V)。"""
     from rigol_oscilloscope_mcp.service.analysis import waveform_pulse
 
@@ -372,7 +372,8 @@ def test_pulse_overshoot_and_preshoot() -> None:
     assert result["top_v"] == pytest.approx(1.0, abs=0.02)
     assert result["base_v"] == pytest.approx(0.0, abs=0.02)
     assert result["overshoot_percent"] == pytest.approx(20.0, abs=2.5)
-    assert result["preshoot_percent"] == pytest.approx(10.0, abs=2.5)
+    assert result["undershoot_percent"] == pytest.approx(10.0, abs=2.5)
+    assert "preshoot_percent" not in result
 
 
 def test_pulse_on_a_flat_signal_reports_no_amplitude() -> None:
@@ -535,3 +536,73 @@ def test_pulse_and_jitter_of_empty_samples_are_invalid(name: str) -> None:
             analysis.waveform_jitter([], 1e-6)
 
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+
+
+@pytest.mark.parametrize("points", [1200, 2100, 16384])
+def test_thd_amplitude_does_not_depend_on_the_record_length(points: int) -> None:
+    """2のべき乗でない長さでも基本波の振幅は正しい(0詰めで電力が広がらない)。"""
+    from rigol_oscilloscope_mcp.service.analysis import waveform_thd
+
+    dt = 1e-6
+    samples = [_math.sin(2 * _math.pi * 20e3 * i * dt) for i in range(points)]
+
+    result = waveform_thd(samples, dt)
+
+    assert result["fundamental_v"] == pytest.approx(1.0, rel=0.03)
+
+
+def test_thd_cycle_guard_counts_real_cycles() -> None:
+    """2100点に約6周期: 周期が足りないので計算しない(0詰めのビン番号で数えない)。"""
+    from rigol_oscilloscope_mcp.service.analysis import waveform_thd
+
+    dt = 1e-6
+    samples = [_math.sin(2 * _math.pi * 6.2 / 2100 * i) for i in range(2100)]
+
+    assert waveform_thd(samples, dt)["thd_percent"] is None
+
+
+def test_jitter_ignores_noise_around_the_threshold() -> None:
+    """しきい値付近の雑音で余計な立ち上がりを数えない(ヒステリシス)。"""
+    from rigol_oscilloscope_mcp.service.analysis import waveform_jitter
+
+    rng = _random.Random(1)
+    samples = [_math.sin(2 * _math.pi * i / 200) + rng.gauss(0, 0.02) for i in range(4000)]
+
+    result = waveform_jitter(samples, 1e-6)
+
+    assert 18 <= result["cycles"] <= 19
+    assert result["period_mean_s"] == pytest.approx(200e-6, rel=0.01)
+    assert result["period_jitter_rms_s"] < 2e-6
+
+
+def test_jitter_threshold_ignores_a_single_spike() -> None:
+    from rigol_oscilloscope_mcp.service.analysis import waveform_jitter
+
+    samples = _square(4000, 100)
+    samples[1234] = 3.0
+
+    result = waveform_jitter(samples, 1e-6)
+
+    assert result["cycles"] >= 38
+    assert result["threshold_v"] == pytest.approx(0.5, abs=0.1)
+
+
+def test_jitter_without_enough_edges_still_reports_the_threshold() -> None:
+    from rigol_oscilloscope_mcp.service.analysis import waveform_jitter
+
+    result = waveform_jitter(_square(150, 100), 1e-6)
+
+    assert "threshold_v" in result
+
+
+def test_pulse_levels_of_a_narrow_pulse() -> None:
+    """デューティ 2.5% の狭いパルスでもトップとベースを分けられる。"""
+    from rigol_oscilloscope_mcp.service.analysis import waveform_pulse
+
+    rng = _random.Random(2)
+    samples = [(1.0 if i % 400 < 10 else 0.0) + rng.gauss(0, 0.01) for i in range(8000)]
+
+    result = waveform_pulse(samples)
+
+    assert result["top_v"] == pytest.approx(1.0, abs=0.05)
+    assert result["base_v"] == pytest.approx(0.0, abs=0.05)
