@@ -1388,7 +1388,9 @@ class ScopeDriver:
                 {"statistics_items": list(statistics_items)},
             )
 
-        plan = self._command_plan(_MEASURE_PREFIX, 0, _MEASURE_SETUP_ITEMS, values)
+        if histogram_enabled is not None:
+            self._require("measurement_histogram", "the measurement histogram")
+        plan = self._command_plan(_MEASURE_PREFIX, 0, self._measure_setup_items(), values)
         stat_commands = self._statistic_enable_commands(statistics_items, source)
 
         if not plan and not stat_commands and not threshold_default and not statistics_reset:
@@ -1436,10 +1438,16 @@ class ScopeDriver:
         """測定の前提設定を読む(一発動作は状態を持たないので含めない)。"""
         self._afg_enum("measure_areas", "the measurement range")
         config: dict[str, object] = {}
-        for key, path, kind in _MEASURE_SETUP_ITEMS:
+        for key, path, kind in self._measure_setup_items():
             _, from_scpi = self._converter(kind, 0)
             config[key] = from_scpi(self.session.query(f"{_MEASURE_PREFIX}{path}?"))
         return config
+
+    def _measure_setup_items(self) -> tuple[tuple[str, str, object], ...]:
+        """測定の前提設定の項目表。測定ヒストグラムは専用の宣言があるときだけ載せる。"""
+        if self.profile.supports("measurement_histogram"):
+            return _MEASURE_SETUP_ITEMS
+        return tuple(item for item in _MEASURE_SETUP_ITEMS if item[0] != "histogram_enabled")
 
     def get_measurement_histogram(self) -> dict:
         """測定ヒストグラムの統計(3.17.32。issue #71)。**生応答を必ず残す**。
@@ -1449,7 +1457,7 @@ class ScopeDriver:
         項目で、既に別の項目が並んでいるとそちらのままになる(先に全消去して
         から測るのが確実)。
         """
-        self._afg_enum("measure_areas", "the measurement range")
+        self._require("measurement_histogram", "the measurement histogram")
         if not parse_bool(self.session.query(f"{_MEASURE_PREFIX}:HISTogram:ENABle?")):
             return {
                 "raw": "",

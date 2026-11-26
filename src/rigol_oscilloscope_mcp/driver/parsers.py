@@ -285,10 +285,13 @@ def parse_measure_histogram(
         return {}, {}, [f"measurement histogram response is not a string: {text!r}"]
     try:
         rows = json.loads(text.strip())
+        # 期待する形は「文字列のリストのリスト」。辞書や数値などは読まない
+        if not isinstance(rows, list) or not rows or not isinstance(rows[0], list):
+            raise ValueError("not a list of rows")
         cells = rows[0]
-        if not isinstance(cells, list) or not cells:
+        if not cells:
             raise ValueError("empty row")
-    except (ValueError, IndexError, TypeError):
+    except (ValueError, IndexError, TypeError, KeyError):
         return {}, {}, [f"cannot interpret measurement histogram response: {text!r}"]
 
     stats: dict[str, float | str] = {}

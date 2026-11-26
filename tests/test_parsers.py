@@ -564,7 +564,7 @@ def test_parse_measure_histogram_with_no_hits() -> None:
     assert warnings == []
 
 
-@pytest.mark.parametrize("raw", ["", "garbage", "[]", "[[]]", None])
+@pytest.mark.parametrize("raw", ["", "garbage", "[]", "[[]]", None, "{}", '{"a": 1}', "[1]"])
 def test_parse_measure_histogram_is_fail_open(raw: object) -> None:
     from rigol_oscilloscope_mcp.driver.parsers import parse_measure_histogram
 

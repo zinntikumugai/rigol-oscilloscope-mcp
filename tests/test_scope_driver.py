@@ -5164,3 +5164,27 @@ def test_measure_histogram_unsupported_on_generic(
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert scope.command_log == []
+
+
+def test_measure_histogram_needs_its_own_declaration(scope: FakeScope) -> None:
+    """測定ヒストグラムは専用の宣言 `measurement_histogram` でゲートする(既存の
+    `histogram` は別サブシステムの波形ヒストグラム。Copilotレビュー)。"""
+    import dataclasses
+
+    base = load_profile("mho98")
+    profile = dataclasses.replace(
+        base,
+        capabilities={
+            k: v for k, v in base.capabilities.items() if k != "measurement_histogram"
+        },
+    )
+    driver = ScopeDriver(ScpiSession(FakeTransport(scope)), profile)
+    driver.session.transport.open()
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_measurement_histogram()
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    with pytest.raises(ScopeError):
+        driver.configure_measurement(histogram_enabled=True)
+    assert "histogram_enabled" not in driver.get_measurement_config()
+    assert not [c for c in scope.command_log if "HISTOGRAM" in c.upper()]
