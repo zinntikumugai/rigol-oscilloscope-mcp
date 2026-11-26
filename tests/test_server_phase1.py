@@ -207,6 +207,18 @@ def test_get_channel_includes_extra_attributes(server) -> None:
     assert "units" not in state["channels"]["CH1"]
 
 
+def test_get_timebase_includes_extra_settings(server) -> None:
+    """1回の水平軸取得には遅延掃引・水平基準なども載る(#68)。get_state には載せない。"""
+    connected(server)
+
+    timebase = payload(call(server, "get_timebase"))
+    state = payload(call(server, "get_state", {"sections": ["timebase"]}))
+
+    assert timebase["mode"] == "main"
+    assert timebase["delay_enabled"] is False
+    assert "mode" not in state["timebase"]
+
+
 def test_get_capabilities_reports_installed_options(server) -> None:
     connected(server)
 

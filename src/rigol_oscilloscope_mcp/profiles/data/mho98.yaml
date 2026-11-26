@@ -279,6 +279,19 @@ dialect:
     ampere: AMPere
     watt: WATT
     unknown: UNKNown
+  # 水平軸の拡張(ガイド3.26。issue #68)。timebase_modes の宣言がゲート。
+  # 実機実測: XY は :TIMebase:MODE XY がエラーなしで無視される(MAIN のまま、
+  # 代わりに XY ウィンドウが開く)ため載せない。ROLL へ切り替えると時間軸が
+  # 50ms/div に書き換わり、MAIN へ戻しても戻らない
+  timebase_modes:
+    main: MAIN
+    roll: ROLL
+  timebase_href_modes: # 3.26.7。応答は短形(CENT / USER)
+    center: CENTer
+    left: LB
+    right: RB
+    trigger: TRIG
+    user: USER
   acquire_bits: [14, 16]
   # メモリ深さの選択肢(ガイド3.3.2。issue #66)。"auto" は別に受け付ける。実機実測:
   # ch数で決まる上限(4ch時125M)を超えるとエラーなしで上限へ丸められる / AUTO の

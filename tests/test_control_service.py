@@ -261,6 +261,39 @@ def test_configure_channel_unsupported_extras_write_nothing(
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert [c for c in scope.command_log if "?" not in c] == []
 
+def test_configure_timebase_sends_mode_before_scale(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """**実機実測**: ROLL へ切り替えると時間軸が 50ms/div に書き換わる。モードを
+    先に送らないと、同じ呼び出しで指定したスケールが上書きされる(#68)。"""
+    result = service.configure_timebase(driver, mode="roll", scale_s_per_div=0.1)
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TIMebase")]
+    assert writes[0] == ":TIMebase:MODE ROLL"
+    assert result["applied"] == {"mode": "roll", "scale_s_per_div": 0.1}
+    assert result["changed"] is True
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"href_mode": "invalid"}, {"href_position": 9999}, {"bogus": 1}]
+)
+def test_configure_timebase_validates_extras_before_any_write(
+    service: ControlService, driver: ScopeDriver, scope: FakeScope, kwargs: dict
+) -> None:
+    """不正な拡張項目があれば、スケールやモードも含め1コマンドも書かない(部分更新を防ぐ)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        service.configure_timebase(driver, mode="roll", scale_s_per_div=1e-3, **kwargs)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert [c for c in scope.command_log if "?" not in c] == []
+
+
+def test_configure_timebase_extras_alone(service: ControlService, driver: ScopeDriver) -> None:
+    result = service.configure_timebase(driver, delay_enabled=True)
+
+    assert result["applied"] == {"delay_enabled": True}
+    assert result["changed"] is True
+
 
 def test_configure_channel_writes_single_audit_row(
     service: ControlService, driver: ScopeDriver, audit_path: Path

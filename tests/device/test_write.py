@@ -2617,3 +2617,111 @@ def test_measure_reports_the_channel_unit(
 
     assert result["units"] == "ampere"
     assert any("ampere" in w for w in result["warnings"])
+
+# --------------------------------------------------------------------------
+# 水平軸の拡張(issue #68)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def timebase_extras_before(
+    request: pytest.FixtureRequest, driver: ScopeDriver
+) -> Iterator[dict]:
+    """水平軸(基本+拡張)とメモリ深さを控え、teardownで必ず戻す。
+
+    **実機実測**: ROLL へ切り替えると時間軸が 50ms/div に、メモリ深さも書き換わり、
+    MAIN へ戻しても戻らない。だからモードの後でスケールと深さも戻す。
+    """
+    before = {
+        **get_timebase_dict(driver),
+        **driver.get_timebase_extras(),
+        "memory_depth_setting": driver.get_acquisition_config()["memory_depth"],
+    }
+    tag = request.node.name
+    _report(f"[before:{tag}] timebase={before}")
+    try:
+        yield before
+    finally:
+        failures: list[Exception] = []
+        extras = {key: before[key] for key in driver.get_timebase_extras() if key != "mode"}
+        delay_values = {
+            "delay_scale_s": extras.pop("delay_scale_s"),
+            "delay_offset_s": extras.pop("delay_offset_s"),
+        }
+        # 遅延掃引のスケール・オフセットは無効でも機器に残る。書けるのは有効化中
+        # だけなので「有効化 → 値を戻す → 元の有効状態」の順で戻す。ただし前回の
+        # 時間軸のまま残った古い値は、今のメインのスケールを超えて書けない(実機
+        # 実測: 20µs/div → 2µs/div に丸められる)。その場合は戻せないことを記録する
+        delay_restorable = delay_values["delay_scale_s"] <= before["scale_s_per_div"]
+        for step in (
+            lambda: driver.set_timebase_mode(before["mode"]),
+            lambda: driver.set_timebase_scale(before["scale_s_per_div"]),
+            lambda: driver.set_timebase_position(before["position_s"]),
+            # 括弧で lambda の本体が条件式全体であることを明示する(要素は常に callable)
+            lambda: (
+                driver.configure_timebase_extras(delay_enabled=True, **delay_values)
+                if delay_restorable
+                else None
+            ),
+            lambda: driver.configure_timebase_extras(**extras),
+            lambda: driver.configure_acquisition(
+                memory_depth=_restorable_memory_depth(driver, before["memory_depth_setting"])
+            ),
+        ):
+            try:
+                step()
+            except Exception as exc:  # 復元は最後まで試みる
+                failures.append(exc)
+        after = {**get_timebase_dict(driver), **driver.get_timebase_extras()}
+        _report(f"[restore:{tag}] timebase 復元後={after}")
+        if not delay_restorable:
+            _report(
+                f"[restore:{tag}] 遅延掃引の古い値 {delay_values} は今の時間軸では"
+                "書けないため戻せない(テスト前から無効のまま残っていた値)"
+            )
+        assert not failures, f"水平軸の復元に失敗: {failures!r}"
+        keys = ["mode", "scale_s_per_div", "position_s", "vernier", "href_mode",
+                "href_position", "auto_roll", "delay_enabled"]
+        if delay_restorable:
+            keys += ["delay_scale_s", "delay_offset_s"]
+        for key in keys:
+            assert after[key] == pytest.approx(before[key]) if isinstance(
+                before[key], float
+            ) else after[key] == before[key], key
+
+
+def test_configure_timebase_extras_round_trip(
+    control: ControlService, driver: ScopeDriver, timebase_extras_before: dict
+) -> None:
+    """微調整・水平基準・遅延掃引の往復(遅延掃引はメインの1/4のスケール)。"""
+    main = timebase_extras_before["scale_s_per_div"]
+    result = control.configure_timebase(
+        driver,
+        vernier=True,
+        href_mode="user",
+        href_position=60,
+        delay_enabled=True,
+        delay_scale_s=main / 4,
+        delay_offset_s=0.0,
+    )
+    applied = result["applied"]
+    _report(f"[timebase] applied={applied}")
+
+    assert applied["vernier"] is True
+    assert applied["href_mode"] == "user"
+    assert applied["href_position"] == 60
+    assert applied["delay_enabled"] is True
+    assert 0 < applied["delay_scale_s"] <= main
+    assert driver.session.drain_error_queue() == []
+
+
+def test_configure_timebase_roll_mode_rewrites_the_scale(
+    control: ControlService, driver: ScopeDriver, timebase_extras_before: dict
+) -> None:
+    """**実機実測の再確認**: ROLL は時間軸を書き換える。モードを先に送るので、
+    同じ呼び出しのスケールが最終値になる。"""
+    result = control.configure_timebase(driver, mode="roll", scale_s_per_div=0.1)
+    _report(f"[timebase] roll applied={result['applied']}")
+
+    assert result["applied"]["mode"] == "roll"
+    assert result["applied"]["scale_s_per_div"] == pytest.approx(0.1)

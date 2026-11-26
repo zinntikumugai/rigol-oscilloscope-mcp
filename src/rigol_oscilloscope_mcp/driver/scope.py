@@ -199,6 +199,20 @@ _CHANNEL_EXTRA_ITEMS: tuple[tuple[str, str, object], ...] = (
 )
 CHANNEL_EXTRA_KEYS = tuple(key for key, _, _ in _CHANNEL_EXTRA_ITEMS)
 
+#: 水平軸の拡張(ガイド3.26。issue #68)。**この並びがそのまま送信順**。
+#: 遅延掃引は 有効化 → スケール → オフセット(オフセットの範囲はスケールに依存)。
+#: `mode` は別扱い(基本項目のスケールより前に送る。`set_timebase_mode`)
+_TIMEBASE_EXTRA_ITEMS: tuple[tuple[str, str, object], ...] = (
+    ("vernier", ":VERNier", "bool"),
+    ("href_mode", ":HREFerence:MODE", ("enum", "timebase_href_modes", "the horizontal reference")),
+    ("href_position", ":HREFerence:POSition", ("int", -500, 500)),
+    ("auto_roll", ":ROLL", "bit"),
+    ("delay_enabled", ":DELay:ENABle", "bool"),
+    ("delay_scale_s", ":DELay:SCALe", "number"),
+    ("delay_offset_s", ":DELay:OFFSet", "number"),
+)
+TIMEBASE_EXTRA_KEYS = tuple(key for key, _, _ in _TIMEBASE_EXTRA_ITEMS)
+
 # 機器が「測定不能」を示すために返す番兵値(±9.9E37 前後)
 INVALID_MEASUREMENT = 9.0e37
 
@@ -1627,6 +1641,55 @@ class ScopeDriver:
             extras[key] = from_scpi(self.session.query(f":CHANnel{number}{path}?"))
         return extras
 
+    def set_timebase_mode(self, mode: str) -> str:
+        """時間軸モード(MAIN / ROLL)。**ROLL は時間軸を 50ms/div に書き換える**(実測)。"""
+        to_scpi, from_scpi = self._afg_enum("timebase_modes", "the timebase mode")
+        readback = self.session.set_and_verify(
+            f":TIMebase:MODE {to_scpi(mode, 'mode')}", ":TIMebase:MODE?"
+        )
+        return from_scpi(readback)
+
+    def plan_timebase_extras(self, **values: object) -> list:
+        """拡張項目の送信計画。**検証だけを行い、1コマンドも送らない**。
+
+        `timebase_modes` の宣言がゲート。基本項目と一緒に設定する呼び出し側は、
+        基本項目を書く前にこれで検証する(部分更新を防ぐ)。
+        """
+        self._afg_enum("timebase_modes", "the timebase mode")
+        unknown = sorted(key for key in values if key not in TIMEBASE_EXTRA_KEYS)
+        if unknown:
+            raise _invalid(
+                f"unknown timebase settings: {unknown}",
+                {"unknown": unknown, "allowed": list(TIMEBASE_EXTRA_KEYS)},
+            )
+        return self._command_plan(":TIMebase", 0, _TIMEBASE_EXTRA_ITEMS, values)
+
+    def check_timebase_mode(self, mode: str) -> str:
+        """時間軸モードの送信トークン。**検証だけで送らない**。"""
+        to_scpi, _ = self._afg_enum("timebase_modes", "the timebase mode")
+        return to_scpi(mode, "mode")
+
+    def configure_timebase_extras(self, **values: object) -> dict:
+        """水平軸の拡張項目を設定する(issue #68)。None の項目は変更しない。"""
+        plan = self.plan_timebase_extras(**values)
+        return {
+            key: from_scpi(self.session.set_and_verify(set_cmd, query))
+            for key, set_cmd, query, from_scpi in plan
+        }
+
+    def get_timebase_extras(self) -> dict:
+        """水平軸の拡張項目を読む。**未宣言の機種では1クエリも送らず空dict**。"""
+        if not isinstance(self.profile.dialect.get("timebase_modes"), dict):
+            return {}
+        _, from_mode = self._afg_enum("timebase_modes", "the timebase mode")
+        extras: dict[str, object] = {
+            "mode": from_mode(self.session.query(":TIMebase:MODE?"))
+        }
+        for key, path, kind in _TIMEBASE_EXTRA_ITEMS:
+            _, from_scpi = self._converter(kind, 0)
+            extras[key] = from_scpi(self.session.query(f":TIMebase{path}?"))
+        return extras
+
     def set_timebase_scale(self, s_per_div: float) -> float:
         readback = self.session.set_and_verify(
             f":TIMebase:MAIN:SCALe {format_number(s_per_div)}", ":TIMebase:MAIN:SCALe?"
@@ -3005,6 +3068,12 @@ class ScopeDriver:
             return (
                 (lambda value, key: _float_in_range(value, key, low, high)),
                 parse_nr3,
+            )
+        if kind == "bit":
+            # 0/1 の整数で受ける真偽値(`:TIMebase:ROLL` は ON/OFF ではなく {0|1})
+            return (
+                (lambda value, key: "1" if _math_bool(value, key) == "ON" else "0"),
+                parse_bool,
             )
         if isinstance(kind, tuple) and kind[0] == "mdepth":
             # メモリ深さ: "auto" か、プロファイルが宣言した点数。読み戻しは常に

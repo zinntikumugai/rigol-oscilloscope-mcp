@@ -217,3 +217,36 @@ CH2 で1項目ずつ書き込み → 読み戻し → 元へ戻した(いずれ�
 - 戻し忘れは **`test_configure_decode_parallel_user_bus_set_and_readback` の1本だけ**: CH3 の表示を OFF → ON のまま残していた。パラレルのビットソースにchを指定すると、機器がそのchの表示を自動でONにするため
 - 対応: デコードの fixture で、走査より前に全アナログchの表示状態を控え、ビットソースを読み直す走査の**後**で戻す
 - 対応後の通し実行: **76 passed / 5 skipped、戻し忘れ0件**
+
+## 11. 水平軸の拡張(issue #68、2026-11-26)
+
+### 11.1 プローブ(最後に元の値へ戻した)
+
+| コマンド | 結果 |
+|---|---|
+| `:TIMebase:DELay:ENABle 1` → `:SCALe 5e-7` → `:OFFSet 2e-6` | 読み戻し `5.000000E-7` / `2.000000E-6` |
+| `:TIMebase:DELay:ENABle 0` | 直後の `:ENABle?` は**約1秒**かかる |
+| `:TIMebase:HREFerence:MODE USER` → `:POSition 60` | `USER` / `60` |
+| `:TIMebase:VERNier 1` | `1` |
+| **`:TIMebase:MODE XY`** | **No error だが `:MODE?` は `MAIN` のまま**。代わりに `:TIMebase:XY:ENABle?` が `1` になり、画面に XY ウィンドウが開いた(`:XY:ENABle 0` で閉じた)。XY は扱わない |
+| **`:TIMebase:MODE ROLL`** | `ROLL`。**時間軸が 50ms/div に書き換わり、メモリ深さも変わる**。`:MODE MAIN` に戻しても時間軸は 50ms/div のまま |
+| `:TIMebase:ROLL 0` / `1` | `0` / `1`(自動ROLL。{0\|1} の整数) |
+
+遅延掃引が**無効のままでも** `:DELay:SCALe 1e-6` / `:OFFSet 1e-6` は受理され、読み戻しにも反映される(無視されない。PR #79 レビュー時に確認)。一方、無効時の遅延掃引のスケール・オフセットは前回の値が残っているだけで(例: 2µs/div のメインに対して 20µs/div)、今の時間軸では範囲外のことがある。
+
+### 11.2 V-6(遅延掃引中の `:WAVeform:DATA?`)
+
+CH1 0.1V/div・メイン 200µs/div で停止し、遅延掃引を 20µs/div・オフセット 200µs にした:
+
+| 状態 | 点数 | 時間間隔 | 取り込み開始位置 |
+|---|---|---|---|
+| ズームOFF(NORMal) | 1000 | 2.0E-6 | -1.0E-3 |
+| ズームON(NORMal) | 1000 | 2.0E-6 | **-1.0E-3**(変わらない) |
+| ズームON(RAW) | 10000 | 2.0E-7 | -1.0E-3 |
+
+→ **ズーム中もメイン時間軸の全体を返す。** ズーム区間だけの再取得には使えない。
+
+### 11.3 スイート実行
+
+- read-only: `test_timebase_extras_answer`
+- write(`-k "timebase_extras or roll_mode"`): **2 passed**。微調整・水平基準・遅延掃引の往復と、ROLL + スケール指定(モードを先に送るのでスケールが最終値になる)。前後比較の戻し忘れ0件

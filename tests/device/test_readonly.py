@@ -778,3 +778,15 @@ def test_channel_extras_answer(driver: ScopeDriver) -> None:
     assert isinstance(extras["label"], str)
     assert isinstance(extras["invert"], bool)
     assert driver.session.drain_error_queue() == []
+
+
+def test_timebase_extras_answer(driver: ScopeDriver) -> None:
+    """水平軸の拡張項目の読み取り(issue #68)。"""
+    extras = driver.get_timebase_extras()
+    _report(f"[timebase] extras={extras}")
+
+    assert extras["mode"] in ("main", "roll")
+    assert extras["href_mode"] in ("center", "left", "right", "trigger", "user")
+    assert -500 <= extras["href_position"] <= 500
+    assert isinstance(extras["delay_enabled"], bool)
+    assert driver.session.drain_error_queue() == []

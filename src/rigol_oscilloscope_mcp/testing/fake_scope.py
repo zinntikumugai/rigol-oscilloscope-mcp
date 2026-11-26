@@ -460,6 +460,17 @@ _CHANNEL_EXTRA_PROPS: tuple[tuple[str, str, object, object], ...] = (
     ("delay_cal", "TCALibrate", "nr3", 0.0),
 )
 
+#: 水平軸の拡張(ガイド3.26)。既定値は実機の初期応答に合わせる
+_TIMEBASE_EXTRA_PROPS: tuple[tuple[str, str, object, object], ...] = (
+    ("vernier", "VERNier", "bool", False),
+    ("href_mode", "HREFerence:MODE", ("CENTer", "LB", "RB", "TRIG", "USER"), "CENT"),
+    ("href_position", "HREFerence:POSition", ("int", -500, 500), 0),
+    ("roll", "ROLL", ("int", 0, 1), 1),
+    ("delay_enabled", "DELay:ENABle", "bool", False),
+    ("delay_scale", "DELay:SCALe", "nr3", 5.0e-7),
+    ("delay_offset", "DELay:OFFSet", "nr3", 0.0),
+)
+
 _TRIGGER_STATUS = {"RUN": "TD", "STOP": "STOP", "SINGLE": "WAIT"}
 
 # ---------------------------------------------------------------------------
@@ -1050,6 +1061,8 @@ class FakeScope:
         # Resultビューの有効化済み測定項目(:MEASure:ITEM? でも追加される — issue #16)
         self.measurement_items: list[str] = []
         self.timebase: dict[str, float] = {"scale": 2.0e-4, "offset": 0.0}
+        self.timebase_mode = "MAIN"
+        self.timebase_extras: dict = {k: d for k, _, _, d in _TIMEBASE_EXTRA_PROPS}
         self.trigger: dict[str, object] = {
             "mode": "EDGE",
             "sweep": "AUTO",
@@ -1162,6 +1175,13 @@ class FakeScope:
                 rf":?{_mn('CHANnel')}{n}", _CHANNEL_EXTRA_PROPS, self.channel_extras[n]
             )
 
+        entries += self._prop_entries(
+            rf":?{_mn('TIMebase')}", _TIMEBASE_EXTRA_PROPS, self.timebase_extras
+        )
+        entries += [
+            (rf":?{_mn('TIMebase')}:{_mn('MODE')}\?", lambda m: self.timebase_mode.encode("ascii")),
+            (rf":?{_mn('TIMebase')}:{_mn('MODE')}\s+{_VALUE}", lambda m: self._timebase_mode_write(m.group(1))),
+        ]
         timebase = rf":?{_mn('TIMebase')}:{_mn('MAIN')}"
         trigger = rf":?{_mn('TRIGger')}"
         edge = rf"{trigger}:{_mn('EDGE')}"
@@ -1890,6 +1910,16 @@ class FakeScope:
         if self.snap_to_125:
             scale = _snap_125(scale)
         return self._set_timebase("scale", scale)
+
+    def _timebase_mode_write(self, token: str) -> None:
+        """**実機実測**: XY はエラーなしで無視(MAIN のまま)。ROLL は 50ms/div にする。"""
+        mode = self._enum(token, ("MAIN", "XY", "ROLL"))
+        if mode == "ROLL":
+            self.timebase_mode = "ROLL"
+            self.timebase["scale"] = 0.05
+        elif mode == "MAIN":
+            self.timebase_mode = "MAIN"
+        return None
 
     def _set_timebase(self, key: str, value: float) -> None:
         self.timebase[key] = value
