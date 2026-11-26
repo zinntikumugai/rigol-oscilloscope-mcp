@@ -173,7 +173,7 @@
 | ~~メモリ深さの設定~~ | `:ACQuire:MDEPth` | **完了**(issue #66。`configure_acquisition` の `memory_depth`)。上限超過は無言で丸められ、AUTO の読み戻しは数値 |
 | 残りの標準トリガ種別(スロープ / ウィンドウ / Nthエッジ) | `:TRIGger:SLOPe` / `:WINDows` / `:NEDGe` | 用途が M5 の8種より狭い |
 | ~~オプション必須のデコードとトリガ~~(I2S / FlexRay / MIL-STD-1553 / CAN-FD) | `:BUS<n>:IIS` ほか / `:TRIGger:FLEXray` / `:TRIGger:IIS` | **完了**(CAN-FD は issue #69、I2S / FlexRay / 1553 は issue #74)。信号源が無いため実機検証は設定の往復まで |
-| ホスト側解析の拡充 | (SCPIなし。`analyze_waveform` の `analyses` 値を増やす) | THD、Jitter、Overshoot / Undershoot、Ringing、Noise、Signal Integrity。**Tool追加ではなく引数追加で済む**。実測で必要性が出た時点で |
+| ~~ホスト側解析の拡充~~ | (SCPIなし。`analyze_waveform` の `analyses` 値を増やす) | **完了**(issue #73。`pulse` / `noise` / `thd` / `jitter`)。Ringing は定義が定まらないため見送り |
 | ~~オートセットの挙動制御~~ | `:AUToset:OPENch` / `:KEEPcoup` / `:PEAK` / `:OVERlap` | **完了**(issue #70。`configure_autoset`)。設定の書き込みと読み戻しは実機で検証できた(autoset の実行は禁止のまま) |
 | ~~遅延掃引(ズーム)~~ | `:TIMebase:DELay:*` | **完了**(issue #68。`configure_timebase` の `delay_*`)。V-6 は「ズーム中も `:WAVeform:DATA?` はメイン時間軸の全体を返す」で決着 |
 | ~~設定の一括保存・復元~~ | `:SYSTem:SETup` | **完了**(issue #72。`save_setup` / `restore_setup`)。中身はバイナリで個別項目は読めないが、CRC32 と長さのヘッダで壊れていないかは確かめられる |

@@ -297,7 +297,7 @@ autoset を**実行せずに**、実行したときの振る舞いだけを設�
 | 名前 | 型 | 必須 | 説明 |
 |---|---|---|---|
 | `channel` | string | – | 既定 `"CH1"`。`capture_waveform` と同じく `"MATH1"`〜`"MATH4"` も受理する(下記のとおりFFT演算のトレースのみ拒否) |
-| `analyses` | string[] | – | `"stats"` / `"fft"` の部分集合。省略時は全解析。未知の名前は `INVALID_PARAMETER`(`detail.valid` に有効名) |
+| `analyses` | string[] | – | `"stats"` / `"fft"` / `"pulse"` / `"noise"` / `"thd"` / `"jitter"` の部分集合。省略時は `stats` と `fft` だけ(追加の4種は明示したときだけ計算。詳細は下記)。未知の名前は `INVALID_PARAMETER`(`detail.valid` に有効名) |
 | `max_points` | int | – | `capture_waveform` と同一の意味(既定/上限は設定値。超過は丸めて `max_points_clamped: true`) |
 
 返却:
@@ -320,6 +320,17 @@ FFTの実装:
 
 注(周波数確度): ゼロパディングでビン間隔は細かくなるが、**真の分解能は `frequency_resolution_hz` = 1 /(点数 × `sample_interval_s`)が上限**。返り値の桁をそれ以上に信用しない。画面データが間引きされている場合は `sample_interval_s` 自体が実サンプルレートより粗い。周波数・周期の高確度な値が要るときは機器のカウンタを使う `measure` を優先する。
 
+
+**解析の追加(issue #73)**: `analyses` に `pulse` / `noise` / `thd` / `jitter` を指定できる。**省略時は従来どおり `stats` / `fft` だけ**を計算する(既存の返却を変えないため)。いずれもホスト側の純関数で、機器へは何も送らない。
+
+| 解析 | 返却 | 求め方・注意 |
+|---|---|---|
+| `pulse` | `top_v` / `base_v` / `amplitude_v` / `overshoot_percent` / `undershoot_percent` | トップとベースはヒストグラム(256ビン)の、2つの平坦部: 最も多いビンと、そこから全振れ幅の5%以上離れたビンの中で最も多いビン(デューティの小さいパルスでも分けられ、数の少ないスパイクは値が大きくても選ばれない)。アンダーシュートはベースより下へのはみ出しで、記録のどこで起きたか(立ち上がり前か立ち下がり後か)は区別しない。平坦な信号では `null` と `warning` |
+| `noise` | `noise_rms_v` / `method` | 隣接サンプルの差の中央絶対偏差 × 1.4826 / √2(白色雑音の σ)。まばらなエッジには引っ張られない。エッジが記録の大半を占める速い信号では過大に出る |
+| `thd` | `fundamental_hz` / `fundamental_v` / `thd_percent` / `harmonics`(2〜10次) | Hann窓のスペクトルで、各トーンの振幅は周囲±3ビンの電力の和から求める(ビン中央からのずれに強い)。記録は2のべき乗へ0詰めして変換し、0詰めの倍率(変換長 / 記録長)で電力とトーンの幅を補正する(補正しないと長さが2のべき乗でない記録で振幅が過大に出る)。周期数の判定も記録長で数える。**記録に約12周期以上入っていないと計算しない**(トーンが重なって基本波を高調波と数えるため。実機で 2周期のとき THD 183% と誤って出たのを受けて追加) |
+| `jitter` | `cycles` / `threshold_v` / `period_mean_s` / `period_jitter_rms_s` / `period_jitter_pk_pk_s` / `cycle_to_cycle_jitter_rms_s` | しきい値は `pulse` と同じ2つの平坦部の中点(スパイクでずれない)。振幅の10%のヒステリシスで立ち上がりを1回ずつ数え(しきい値付近の雑音で余計に数えない)、交差時刻を線形補間で求める。立ち上がりが3つ未満なら `null` と `warning`(`threshold_v` は常に返す) |
+
+リンギングは定義が一つに決まらないため見送った。
 ### `capture_screenshot` — READ_ONLY / Phase 1
 
 現在の画面を画像として取得し、ファイル保存と画像返却を行う。
