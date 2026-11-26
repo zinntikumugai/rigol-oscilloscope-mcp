@@ -212,6 +212,12 @@ def _screen_positions(driver: ScopeDriver, channel: str, span_div: float) -> dic
     }
 
 
+def _restorable_memory_depth(driver: ScopeDriver, depth: int) -> int | str:
+    """書き戻せるメモリ深さ。選択肢一覧に無い値は AUTO の結果なので "auto"。"""
+    declared = driver.profile.dialect.get("acquire_memory_depths") or []
+    return depth if depth in declared else "auto"
+
+
 def _diff(before: dict, after: dict) -> dict[str, tuple[object, object]]:
     """復元漏れの検出用。揮発キーは無視する。"""
     return {
@@ -2104,8 +2110,9 @@ def acquisition_before(
         for step in (
             {"mode": "high_resolution", "adc_bits": before["adc_bits"]},
             {"mode": before["mode"], "averages": before["averages"]},
-            # AUTO だったかは読み取りで区別できない(実機実測)。数値として戻す
-            {"memory_depth": before["memory_depth"]},
+            # AUTO の読み戻しは実際の深さ(20k 等)で、選択肢一覧に無い値になりうる
+            # (実機実測)。一覧に無い深さは AUTO だったとみなして "auto" で戻す
+            {"memory_depth": _restorable_memory_depth(driver, before["memory_depth"])},
         ):
             try:
                 driver.configure_acquisition(**step)
