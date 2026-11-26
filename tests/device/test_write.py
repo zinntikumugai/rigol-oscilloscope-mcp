@@ -2644,15 +2644,22 @@ def timebase_extras_before(
     finally:
         failures: list[Exception] = []
         extras = {key: before[key] for key in driver.get_timebase_extras() if key != "mode"}
-        # 遅延掃引のスケール・オフセットは無効時には意味を持たない(前回の値が
-        # 残っているだけで、今の時間軸では範囲外のことがある)。有効だった場合だけ戻す
-        if not before["delay_enabled"]:
-            extras.pop("delay_scale_s")
-            extras.pop("delay_offset_s")
+        delay_values = {
+            "delay_scale_s": extras.pop("delay_scale_s"),
+            "delay_offset_s": extras.pop("delay_offset_s"),
+        }
+        # 遅延掃引のスケール・オフセットは無効でも機器に残る。書けるのは有効化中
+        # だけなので「有効化 → 値を戻す → 元の有効状態」の順で戻す。ただし前回の
+        # 時間軸のまま残った古い値は、今のメインのスケールを超えて書けない(実機
+        # 実測: 20µs/div → 2µs/div に丸められる)。その場合は戻せないことを記録する
+        delay_restorable = delay_values["delay_scale_s"] <= before["scale_s_per_div"]
         for step in (
             lambda: driver.set_timebase_mode(before["mode"]),
             lambda: driver.set_timebase_scale(before["scale_s_per_div"]),
             lambda: driver.set_timebase_position(before["position_s"]),
+            lambda: driver.configure_timebase_extras(delay_enabled=True, **delay_values)
+            if delay_restorable
+            else None,
             lambda: driver.configure_timebase_extras(**extras),
             lambda: driver.configure_acquisition(
                 memory_depth=_restorable_memory_depth(driver, before["memory_depth_setting"])
@@ -2664,10 +2671,20 @@ def timebase_extras_before(
                 failures.append(exc)
         after = {**get_timebase_dict(driver), **driver.get_timebase_extras()}
         _report(f"[restore:{tag}] timebase 復元後={after}")
+        if not delay_restorable:
+            _report(
+                f"[restore:{tag}] 遅延掃引の古い値 {delay_values} は今の時間軸では"
+                "書けないため戻せない(テスト前から無効のまま残っていた値)"
+            )
         assert not failures, f"水平軸の復元に失敗: {failures!r}"
-        for key in ("mode", "scale_s_per_div", "position_s", "vernier", "href_mode",
-                    "href_position", "auto_roll", "delay_enabled"):
-            assert after[key] == before[key], key
+        keys = ["mode", "scale_s_per_div", "position_s", "vernier", "href_mode",
+                "href_position", "auto_roll", "delay_enabled"]
+        if delay_restorable:
+            keys += ["delay_scale_s", "delay_offset_s"]
+        for key in keys:
+            assert after[key] == pytest.approx(before[key]) if isinstance(
+                before[key], float
+            ) else after[key] == before[key], key
 
 
 def test_configure_timebase_extras_round_trip(

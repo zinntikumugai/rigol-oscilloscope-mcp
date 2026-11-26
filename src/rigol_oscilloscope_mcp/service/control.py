@@ -301,6 +301,11 @@ class ControlService:
             "position_s": lambda v: driver.set_timebase_position(float(v)),
         }
         extra_values = {key: value for key, value in requested.items() if key not in setters}
+        # モードと拡張項目は、基本項目を書く**前に**検証する(不正なら1コマンドも書かない)
+        if mode is not None:
+            driver.check_timebase_mode(mode)
+        if extra_values:
+            driver.plan_timebase_extras(**extra_values)
 
         with self._audited("configure_timebase", requested) as record:
             before = self._timebase_snapshot(driver, requested)

@@ -1649,8 +1649,12 @@ class ScopeDriver:
         )
         return from_scpi(readback)
 
-    def configure_timebase_extras(self, **values: object) -> dict:
-        """水平軸の拡張項目を設定する(issue #68)。None の項目は変更しない。"""
+    def plan_timebase_extras(self, **values: object) -> list:
+        """拡張項目の送信計画。**検証だけを行い、1コマンドも送らない**。
+
+        `timebase_modes` の宣言がゲート。基本項目と一緒に設定する呼び出し側は、
+        基本項目を書く前にこれで検証する(部分更新を防ぐ)。
+        """
         self._afg_enum("timebase_modes", "the timebase mode")
         unknown = sorted(key for key in values if key not in TIMEBASE_EXTRA_KEYS)
         if unknown:
@@ -1658,7 +1662,16 @@ class ScopeDriver:
                 f"unknown timebase settings: {unknown}",
                 {"unknown": unknown, "allowed": list(TIMEBASE_EXTRA_KEYS)},
             )
-        plan = self._command_plan(":TIMebase", 0, _TIMEBASE_EXTRA_ITEMS, values)
+        return self._command_plan(":TIMebase", 0, _TIMEBASE_EXTRA_ITEMS, values)
+
+    def check_timebase_mode(self, mode: str) -> str:
+        """時間軸モードの送信トークン。**検証だけで送らない**。"""
+        to_scpi, _ = self._afg_enum("timebase_modes", "the timebase mode")
+        return to_scpi(mode, "mode")
+
+    def configure_timebase_extras(self, **values: object) -> dict:
+        """水平軸の拡張項目を設定する(issue #68)。None の項目は変更しない。"""
+        plan = self.plan_timebase_extras(**values)
         return {
             key: from_scpi(self.session.set_and_verify(set_cmd, query))
             for key, set_cmd, query, from_scpi in plan
