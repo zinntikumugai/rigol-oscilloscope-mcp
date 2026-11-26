@@ -217,6 +217,7 @@ def _restorable_memory_depth(driver: ScopeDriver, depth: int) -> int | str:
     declared = driver.profile.dialect.get("acquire_memory_depths") or []
     return depth if depth in declared else "auto"
 
+
 def _present_channels(driver: ScopeDriver) -> int:
     """実在するアナログch数。機器が申告できればそれを使う(2chモデルで存在しない
     chを照会しないため。#24)。申告できない機種はプロファイルの値。"""
