@@ -90,7 +90,9 @@ def test_pods_are_sent_before_channels(driver: ScopeDriver, scope: FakeScope) ->
 
 
 def test_channel_names_are_case_insensitive(driver: ScopeDriver, scope: FakeScope) -> None:
-    applied = driver.configure_logic_analyzer(channels={"d5": {"label": "MOSI"}}, active="d5")
+    applied = driver.configure_logic_analyzer(
+        enabled=True, channels={"d5": {"label": "MOSI"}}, active="d5"
+    )
 
     assert applied["channels"] == {"D5": {"label": "MOSI"}}
     assert applied["active"] == "D5"
@@ -189,3 +191,37 @@ def test_control_service_requires_something_to_change(driver: ScopeDriver, tmp_p
         control.configure_logic_analyzer(driver)
 
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"pods": {"1": {"enabled": True}, "pod1": {"enabled": False}}},
+        {"channels": {"D3": {"enabled": True}, "d3": {"enabled": False}}},
+        {"pods": {"²": {"enabled": True}}},
+    ],
+)
+def test_duplicate_or_odd_keys_are_rejected(driver: ScopeDriver, scope: FakeScope, kwargs) -> None:
+    """同じポッド・chの重複指定や、数字に見える非ASCII文字を送信前に拒否する。"""
+    scope.command_log.clear()
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_logic_analyzer(enabled=True, **kwargs)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+@pytest.mark.parametrize("enabled", [False, None])
+def test_pods_and_channels_need_the_logic_analyzer_on(
+    driver: ScopeDriver, scope: FakeScope, enabled
+) -> None:
+    """LA が無効のあいだはポッド・chが 0 と読め、読み戻しで効いたか分からない。
+    結果が無効になる指定は送信前に拒否する。"""
+    scope.command_log.clear()
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_logic_analyzer(enabled=enabled, pods={"1": {"enabled": True}})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert writes(scope) == []

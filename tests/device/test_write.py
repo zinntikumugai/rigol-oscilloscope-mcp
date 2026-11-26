@@ -2960,10 +2960,22 @@ def test_host_analyses_on_the_calibration_square_wave(
 
 def _restore_logic_analyzer(driver: ScopeDriver, before: dict) -> None:
     """読んだ状態へ戻す。ポッドの表示は8chをまとめて切り替えるので、ポッド → ch の順"""
+    from rigol_oscilloscope_mcp.driver.scope import _REFERENCE_LABEL_RE
+
+    # 前面パネルで付けたラベルは MCP が受け付ける文字種(英数字と _ . + -)とは限らない。
+    # 受け付けないラベルは書き戻さない(テストもそのchのラベルには触れない)
+    channels = {
+        name: {
+            key: value
+            for key, value in settings.items()
+            if key != "label" or _REFERENCE_LABEL_RE.fullmatch(value)
+        }
+        for name, settings in before["channels"].items()
+    }
     driver.configure_logic_analyzer(
         enabled=True,
         pods=before["pods"],
-        channels=before["channels"],
+        channels=channels,
         active=before["active"],
         autosort=before["autosort"],
         size=before["size"],

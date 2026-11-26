@@ -244,6 +244,7 @@ _LA_POD_ITEMS: tuple[tuple[str, str, object], ...] = (
     ("threshold_v", ":THReshold", ("frange", -15.0, 15.0)),
 )
 #: ch別の項目は `<パス> D<n>,<値>` / `<パス>? D<n>`(`_command_plan` の argument)
+#: ラベルの長さはガイドに上限が無く、実機も36文字をそのまま受け付けた(文字種だけ検証する)
 _LA_CHANNEL_ITEMS: tuple[tuple[str, str, object], ...] = (
     ("enabled", ":DIGital:ENABle", "bool"),
     ("label", ":DIGital:LABel", "label"),
@@ -945,7 +946,8 @@ def _la_mapping(value: object, key: str) -> dict:
 def _la_pod_number(name: object, count: int) -> int:
     """ポッド番号(`1` / `"1"` / `"pod1"`)を検証する。"""
     text = str(name).strip().lower().removeprefix("pod")
-    if not text.isdigit() or not 1 <= int(text) <= count:
+    # isdigit() は上付き数字なども真になり int() で落ちるので ASCII の数字だけ受ける
+    if not re.fullmatch(r"[0-9]+", text) or not 1 <= int(text) <= count:
         raise _invalid(
             f"pods key must be 1-{count} (POD1 = D0-D7, POD2 = D8-D15): {name!r}",
             {"key": "pods", "value": name},
@@ -1236,13 +1238,27 @@ class ScopeDriver:
             plan.extend((target, *entry) for entry in entries)
 
         add(None, self._command_plan(":LA", 0, _LA_ITEMS, {"enabled": enabled}))
+        seen: set[str] = set()
+
+        def once(name: str, original: object) -> str:
+            # "1" と "pod1"、"D3" と "d3" のような同じ対象の重複は、どちらが効くかが
+            # 辞書の順で決まり、返却でも1つにまとまって見えなくなる
+            if name in seen:
+                raise _invalid(
+                    f"{name} is specified more than once: {original!r}",
+                    {"key": name, "value": original},
+                )
+            seen.add(name)
+            return name
+
         for name, settings in _la_mapping(pods, "pods").items():
             number = _la_pod_number(name, self._la_pod_count())
+            once(f"pod{number}", name)
             add(("pods", str(number)), self._la_entries(
                 f":LA:POD{number}", _LA_POD_ITEMS, settings, f"pods[{name!r}]", None
             ))
         for name, settings in _la_mapping(channels, "channels").items():
-            channel = self._digital_channel(name, "channels key")
+            channel = once(self._digital_channel(name, "channels key"), name)
             add(("channels", channel), self._la_entries(
                 ":LA", _LA_CHANNEL_ITEMS, settings, f"channels[{name!r}]", channel
             ))
@@ -1282,6 +1298,16 @@ class ScopeDriver:
         plan = self._la_plan(
             enabled, pods, channels, {"active": active, "autosort": autosort, "size": size}
         )
+        if (pods or channels) and not (
+            enabled if enabled is not None else parse_bool(self.session.query(":LA:ENABle?"))
+        ):
+            # 実機実測: LA が無効のあいだはポッド・chが全て 0 と読め、読み戻しで
+            # 効いたかどうかを確かめられない
+            raise _invalid(
+                "pods and channels can only be set while the logic analyzer is on; "
+                "pass enabled=true as well",
+                {"enabled": enabled},
+            )
         applied: dict[str, object] = {}
         for target, key, set_cmd, query, from_scpi in plan:
             value = from_scpi(self.session.set_and_verify(set_cmd, query))
