@@ -325,3 +325,15 @@ def test_measure_in_volts_has_no_unit_warning(driver) -> None:
     result = measure(driver, "CH1", ["vpp"])
 
     assert "units" not in result
+
+
+def test_measurement_statistics_unit_warning_does_not_mention_v_keys(driver, scope) -> None:
+    """統計の返却は `vpp` 等の項目名がキーなので、`*_v` に触れない文言にする。"""
+    from rigol_oscilloscope_mcp.service.measurement import get_measurement_statistics
+
+    scope.channel_extras[1]["units"] = "AMP"
+    result = get_measurement_statistics(driver, "CH1", ["vpp"])
+
+    assert result["units"] == "ampere"
+    assert not any("*_v" in w for w in result["warnings"])
+    assert any("ampere" in w for w in result["warnings"])

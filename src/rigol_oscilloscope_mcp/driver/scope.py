@@ -829,7 +829,9 @@ def _reference_label(value: object, key: str) -> str:
     ホワイトリストで受理する(`;` によるコマンド注入と、空白による引数の取り違えを
     送信前に潰す)。
     """
-    if not isinstance(value, str) or not _REFERENCE_LABEL_RE.match(value):
+    # fullmatch: `match` + `$` だと末尾の改行の直前でも一致し、改行がコマンドへ
+    # 埋め込まれてしまう(Copilotレビュー指摘)
+    if not isinstance(value, str) or not _REFERENCE_LABEL_RE.fullmatch(value):
         raise _invalid(
             f"{key} must be a non-empty string of letters, digits, '_', '.', "
             f"'+' or '-' (no spaces): {value!r}",

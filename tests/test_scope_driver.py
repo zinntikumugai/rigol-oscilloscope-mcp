@@ -4900,3 +4900,18 @@ def test_configure_channel_extras_checks_the_delay_calibration_range(
 
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
     assert scope.command_log == []
+
+
+@pytest.mark.parametrize("label", ["A\n", "A\r\n", "A\n:*RST"])
+def test_labels_with_a_trailing_newline_are_rejected(
+    driver: ScopeDriver, scope: FakeScope, label: str
+) -> None:
+    """`re.match` の `$` は末尾改行の直前にも一致する。改行入りのラベルがコマンドへ
+    埋め込まれないよう全体一致で検証する(Copilotレビュー指摘。リファレンスも同じ)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_channel_extras("CH2", label=label)
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+
+    with pytest.raises(ScopeError):
+        driver.configure_reference(1, label=label)
+    assert scope.command_log == []
