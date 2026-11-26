@@ -762,6 +762,12 @@ def decode_before(
     利用者の設定であることに変わりはないので他のwrite検証と同じ規律で扱う。
     プロトコルがオプション必須(未対応)の場合はテスト自体をskipする。
     """
+    # パラレルのビットソースにchを指定すると、機器はそのchの表示を自動でONにする
+    # (issue #76)。走査より前に全アナログchの表示状態を控え、最後に戻す
+    displays = {
+        f"CH{n}": get_channel_dict(driver, f"CH{n}")["enabled"]
+        for n in range(1, driver.analog_channels + 1)
+    }
     # `bit_sources` まで含めて控える(この走査だけは `:BITX` の書き込みを伴う)
     before = driver.get_decode_config(DECODE_BUS, include_bit_sources=True)
     tag = request.node.name
@@ -801,6 +807,14 @@ def decode_before(
 
         after = driver.get_decode_config(DECODE_BUS, include_bit_sources=True)
         drift = _diff(before, after)
+        # 表示状態は、ビットソースを読み直す走査の**後**で戻す(走査でまたONになる)
+        for channel, enabled in displays.items():
+            driver.set_channel_enabled(channel, enabled)
+        display_drift = {
+            channel: (enabled, get_channel_dict(driver, channel)["enabled"])
+            for channel, enabled in displays.items()
+            if get_channel_dict(driver, channel)["enabled"] != enabled
+        }
         _report(f"[restore:{tag}] bus{DECODE_BUS} 復元後={after}")
         if drift:
             _report(f"[restore:{tag}] **復元漏れ**: {drift}")
@@ -808,6 +822,7 @@ def decode_before(
             _report(f"[restore:{tag}] **復元コマンド失敗**: {failure!r}")
         assert failure is None, f"BUS{DECODE_BUS} の復元に失敗: {failure!r}"
         assert not drift, f"BUS{DECODE_BUS} が復元されていません: {drift}"
+        assert not display_drift, f"chの表示が復元されていません: {display_drift}"
 
 
 def test_configure_decode_uart_set_and_readback(
