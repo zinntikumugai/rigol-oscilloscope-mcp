@@ -217,6 +217,16 @@ def _restorable_memory_depth(driver: ScopeDriver, depth: int) -> int | str:
     declared = driver.profile.dialect.get("acquire_memory_depths") or []
     return depth if depth in declared else "auto"
 
+def _present_channels(driver: ScopeDriver) -> int:
+    """実在するアナログch数。機器が申告できればそれを使う(2chモデルで存在しない
+    chを照会しないため。#24)。申告できない機種はプロファイルの値。"""
+    try:
+        info = driver.get_hardware_info()
+    except Exception:  # noqa: BLE001 - 申告できなければプロファイルの値で続ける
+        info = None
+    return info["analog_channels"] if info else driver.analog_channels
+
+
 def _restore_displays(
     driver: ScopeDriver, displays: dict[str, bool]
 ) -> tuple[list[str], dict[str, tuple[bool, bool]]]:
@@ -783,7 +793,7 @@ def decode_before(
     # (issue #76)。走査より前に全アナログchの表示状態を控え、最後に戻す
     displays = {
         f"CH{n}": get_channel_dict(driver, f"CH{n}")["enabled"]
-        for n in range(1, driver.analog_channels + 1)
+        for n in range(1, _present_channels(driver) + 1)
     }
     # `bit_sources` まで含めて控える(この走査だけは `:BITX` の書き込みを伴う)。
     # 走査の失敗や skip で抜けるときも、表示状態だけは必ず戻す
