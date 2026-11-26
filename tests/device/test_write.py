@@ -124,11 +124,11 @@ MATH_CHANNEL = 1
 MATH_FFT_START_HZ = 0.0
 MATH_FFT_END_HZ = 100000.0
 
-#: カーソル・計測器・ヒストグラムの検証値(いずれも表示・統計層のみに効く)
-CURSOR_AX_S = -2e-4
-CURSOR_BX_S = 2e-4
-CURSOR_AY_V = -0.5
-CURSOR_BY_V = 0.5
+#: カーソル・ヒストグラムの検証位置は**今の画面範囲から決める**(issue #64)。
+#: 機器は画面外の位置を黙って丸める(2µs/div で -200µs → -50µs)ので、固定値では
+#: 画面設定次第で失敗する。中心から±この div 数の位置に置く
+CURSOR_SPAN_DIV = 2
+HISTOGRAM_SPAN_DIV = 3
 #: TRACkモードのY位置は波形に追従して機器側で動く(mho98-m2.md 3章)。
 #: 復元漏れの判定から外す(service/control.py の `changed` 判定と同じ理由)
 CURSOR_TRACKED_KEYS = ("ay", "by")
@@ -136,10 +136,6 @@ CURSOR_TRACKED_KEYS = ("ay", "by")
 METER_CHANNEL = "CH2"
 COUNTER_DIGITS = 5
 HISTOGRAM_HEIGHT = 2
-HISTOGRAM_LEFT_S = -3e-4
-HISTOGRAM_RIGHT_S = 3e-4
-HISTOGRAM_BOTTOM_V = -1.0
-HISTOGRAM_TOP_V = 1.0
 
 #: リファレンス波形(3.20)。**復元可能な設定だけ**を触る枠と値
 REF_SLOT = 10
@@ -192,6 +188,28 @@ def _same(left: object, right: object) -> bool:
             return False
         return left == pytest.approx(right, rel=REL_TOLERANCE, abs=ABS_TOLERANCE)
     return left == right
+
+
+def _screen_positions(driver: ScopeDriver, channel: str, span_div: float) -> dict:
+    """画面中心から±span_div の時刻・電圧(画面内に必ず収まる検証位置)。
+
+    水平の中心は `:TIMebase:MAIN:OFFSet`、垂直の中心は `-OFFSet`(Rigol の
+    オフセットは波形を動かす量なので、画面中心の電圧はその符号反転)。
+    """
+    timebase = get_timebase_dict(driver)
+    vertical = get_channel_dict(driver, channel)
+    center_s = timebase["position_s"]
+    center_v = -vertical["offset_v"]
+    dx = span_div * timebase["scale_s_per_div"]
+    dy = span_div * vertical["scale_v_per_div"]
+    return {
+        "left_s": center_s - dx,
+        "right_s": center_s + dx,
+        "bottom_v": center_v - dy,
+        "top_v": center_v + dy,
+        "div_s": timebase["scale_s_per_div"],
+        "div_v": vertical["scale_v_per_div"],
+    }
 
 
 def _diff(before: dict, after: dict) -> dict[str, tuple[object, object]]:
@@ -1405,15 +1423,18 @@ def test_configure_cursor_round_trip(
     control: ControlService, driver: ScopeDriver, cursor_before: dict
 ) -> None:
     """manualカーソルを置いて read-back し、読み値のΔXが位置差と一致すること。"""
+    screen = _screen_positions(driver, METER_CHANNEL, CURSOR_SPAN_DIV)
+    cursor_ax, cursor_bx = screen["left_s"], screen["right_s"]
+    cursor_ay, cursor_by = screen["bottom_v"], screen["top_v"]
     result = control.configure_cursor(
         driver,
         mode="manual",
         type="time",
         source=METER_CHANNEL,
-        ax=CURSOR_AX_S,
-        ay=CURSOR_AY_V,
-        bx=CURSOR_BX_S,
-        by=CURSOR_BY_V,
+        ax=cursor_ax,
+        ay=cursor_ay,
+        bx=cursor_bx,
+        by=cursor_by,
     )
     applied = result["applied"]
     _report(f"[cursor] applied={applied} changed={result['changed']}")
@@ -1422,25 +1443,23 @@ def test_configure_cursor_round_trip(
     assert applied["mode"] == "manual"
     assert applied["type"] == "time"
     assert applied["source"] == METER_CHANNEL
-    for key, expected in (
-        ("ax", CURSOR_AX_S),
-        ("ay", CURSOR_AY_V),
-        ("bx", CURSOR_BX_S),
-        ("by", CURSOR_BY_V),
+    for key, expected, div in (
+        ("ax", cursor_ax, screen["div_s"]),
+        ("ay", cursor_ay, screen["div_v"]),
+        ("bx", cursor_bx, screen["div_s"]),
+        ("by", cursor_by, screen["div_v"]),
     ):
-        assert applied[key] == pytest.approx(expected, rel=1e-3, abs=1e-9), key
+        # 機器の位置分解能(1/10div 程度)ぶんの丸めは許容する
+        assert applied[key] == pytest.approx(expected, abs=div / 10), key
 
     measurement = driver.get_cursor_measurement()
     _report(f"[cursor] measurement={measurement}")
     assert measurement["mode"] == "manual"
     # ΔX = B − A(読み値の有効数字は4桁程度なので相対誤差で見る)
-    assert measurement["xdelta_s"] == pytest.approx(
-        CURSOR_BX_S - CURSOR_AX_S, rel=1e-3
-    )
+    span = applied["bx"] - applied["ax"]
+    assert measurement["xdelta_s"] == pytest.approx(span, rel=1e-3)
     # 1/ΔX。ΔX が 0 でなければ数値が返る
-    assert measurement["ixdelta_hz"] == pytest.approx(
-        1.0 / (CURSOR_BX_S - CURSOR_AX_S), rel=1e-2
-    )
+    assert measurement["ixdelta_hz"] == pytest.approx(1.0 / span, rel=1e-2)
 
 
 @pytest.fixture
@@ -1612,7 +1631,20 @@ def histogram_before(
             failure = exc
 
         after = driver.get_histogram_config()
-        drift = _diff(before, after)
+        # 範囲の書き戻しは機器の分解能(1/10div 程度)で丸められる(-10ns → -100ns
+        # を観測。issue #64)。その範囲のずれは復元漏れとみなさない
+        screen = _screen_positions(driver, METER_CHANNEL, 0)
+        drift = {
+            key: pair
+            for key, pair in _diff(before, after).items()
+            if not (
+                key in ("left_s", "right_s", "bottom_v", "top_v")
+                and isinstance(pair[0], float)
+                and isinstance(pair[1], float)
+                and abs(pair[0] - pair[1])
+                <= (screen["div_s"] if key.endswith("_s") else screen["div_v"]) / 10
+            )
+        }
         _report(f"[restore:{tag}] histogram 復元後={after}")
         if drift:
             _report(f"[restore:{tag}] **復元漏れ**: {drift}")
@@ -1630,16 +1662,17 @@ def test_configure_histogram_round_trip(
     統計応答は**単一行・終端の空行なし**で、機器自身がラベルを持つ
     (mho98-m2.md 2章)。`raw` は常に返り、`stats` はSI換算済みの数値。
     """
+    screen = _screen_positions(driver, METER_CHANNEL, HISTOGRAM_SPAN_DIV)
     result = control.configure_histogram(
         driver,
         enabled=True,
         type="vertical",
         source=METER_CHANNEL,
         height=HISTOGRAM_HEIGHT,
-        left_s=HISTOGRAM_LEFT_S,
-        right_s=HISTOGRAM_RIGHT_S,
-        bottom_v=HISTOGRAM_BOTTOM_V,
-        top_v=HISTOGRAM_TOP_V,
+        left_s=screen["left_s"],
+        right_s=screen["right_s"],
+        bottom_v=screen["bottom_v"],
+        top_v=screen["top_v"],
         reset=True,
     )
     applied = result["applied"]
@@ -1650,13 +1683,9 @@ def test_configure_histogram_round_trip(
     assert applied["source"] == METER_CHANNEL
     assert applied["height"] == HISTOGRAM_HEIGHT
     assert applied["reset"] is True
-    for key, expected in (
-        ("left_s", HISTOGRAM_LEFT_S),
-        ("right_s", HISTOGRAM_RIGHT_S),
-        ("bottom_v", HISTOGRAM_BOTTOM_V),
-        ("top_v", HISTOGRAM_TOP_V),
-    ):
-        assert applied[key] == pytest.approx(expected, rel=1e-3, abs=1e-9), key
+    for key in ("left_s", "right_s", "bottom_v", "top_v"):
+        div = screen["div_s"] if key.endswith("_s") else screen["div_v"]
+        assert applied[key] == pytest.approx(screen[key], abs=div / 10), key
 
     outcome = driver.get_histogram_result()
     _report(f"[histogram] result={outcome}")
