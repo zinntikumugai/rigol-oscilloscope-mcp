@@ -622,3 +622,26 @@ def test_query_after_close_raises_device_disconnected() -> None:
         with pytest.raises(ScopeError) as exc:
             transport.query("*IDN?")
         assert exc.value.code == ErrorCode.DEVICE_DISCONNECTED
+
+
+# --- バイナリブロックの書き込み(:SYSTem:SETup の復元。issue #72)-----------
+
+
+def test_write_block_sends_definite_length_block() -> None:
+    """`<コマンド> #N<長さ><データ>\\n` をそのまま送る(データ内の改行もそのまま)。"""
+    payload = b"\xb9S\x92\xdf\n\x00\xff"
+    expected = b":SYSTem:SETup " + block(payload) + b"\n"
+    received = bytearray()
+
+    def handler(conn: socket.socket) -> None:
+        while len(received) < len(expected) + 1:  # open() の回復用の空行1本ぶん
+            chunk = conn.recv(4096)
+            if not chunk:
+                break
+            received.extend(chunk)
+        wait_close(conn)
+
+    with stub(handler) as transport:
+        transport.write_block(":SYSTem:SETup", payload)
+
+    assert bytes(received).lstrip(b"\n") == expected

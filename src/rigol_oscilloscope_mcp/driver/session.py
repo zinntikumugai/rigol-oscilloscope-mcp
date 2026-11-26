@@ -121,6 +121,11 @@ class ScpiSession:
         self.write(command)
         self.check_error(command)
 
+    def write_block_checked(self, command: str, payload: bytes) -> None:
+        """バイナリブロックを書き込み、その後エラーキューを確認する。"""
+        self.transport.write_block(command, payload)
+        self.check_error(f"{command} <{len(payload)} bytes>")
+
     def set_and_verify(self, set_cmd: str, readback_query: str) -> str:
         """設定 → エラーキュー確認 → read-back(Requirements.md 7.1 / 7.3)。
 

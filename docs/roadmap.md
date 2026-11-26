@@ -177,6 +177,8 @@
 | ~~オートセットの挙動制御~~ | `:AUToset:OPENch` / `:KEEPcoup` / `:PEAK` / `:OVERlap` | **完了**(issue #70。`configure_autoset`)。設定の書き込みと読み戻しは実機で検証できた(autoset の実行は禁止のまま) |
 | 設定の一括保存・復元 | `:SYSTem:SETup` | 「変更前の状態を保存して後で戻す」= 実機writeテストの安全弁になり得る。中身は不透明でスキーマ不明なので**個別項目の読み取りには使えない** |
 | ~~遅延掃引(ズーム)~~ | `:TIMebase:DELay:*` | **完了**(issue #68。`configure_timebase` の `delay_*`)。V-6 は「ズーム中も `:WAVeform:DATA?` はメイン時間軸の全体を返す」で決着 |
+| ~~設定の一括保存・復元~~ | `:SYSTem:SETup` | **完了**(issue #72。`save_setup` / `restore_setup`)。中身はバイナリで個別項目は読めないが、CRC32 と長さのヘッダで壊れていないかは確かめられる |
+| 遅延掃引(ズーム) | `:TIMebase:DELay:*` | 拡大自体はできるが、区間の再取得目的なら `:WAVeform:STARt`/`:STOP` の方が直接的([V-6](#16-着手前に潰す実機検証項目) 次第) |
 | オプションのライセンス投入 | `:SYSTem:OPTion:INSTall` / `:UNINstall` | 照会(`:STATus?`)は実装済み。投入は人間の作業 |
 
 ## 3. 優先度「低」

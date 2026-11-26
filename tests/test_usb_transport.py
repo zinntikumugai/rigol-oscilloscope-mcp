@@ -52,6 +52,7 @@ class FakeInstrument:
         self.read_termination: str | None = "SENTINEL"
         self.write_termination: str | None = "SENTINEL"
         self.written: list[str] = []
+        self.written_raw: list[bytes] = []
         self.responses: list[str] = []
         self.raw_responses: list[bytes] = []
         self.write_error: Exception | None = None
@@ -66,6 +67,12 @@ class FakeInstrument:
             raise self.write_error
         self.written.append(command)
         return len(command)
+
+    def write_raw(self, message: bytes) -> int:
+        if self.write_error is not None:
+            raise self.write_error
+        self.written_raw.append(message)
+        return len(message)
 
     def _snapshot(self) -> None:
         self.timeout_at_read.append(self.timeout)
@@ -581,3 +588,12 @@ def test_connection_manager_uses_usb_transport_for_visa_resource(
     assert created == [(RESOURCE, 2.0)]
     assert status.transport == "usb"
     assert status.connected is True
+
+
+def test_write_block_sends_raw_bytes_with_terminator(visa: FakeVisa) -> None:
+    """バイナリブロックは write_raw で送る(write は文字列用で終端が二重になる)。"""
+    link = opened(visa)
+
+    link.write_block(":SYSTem:SETup", b"\xb9S\n\x00")
+
+    assert visa.instrument.written_raw == [b":SYSTem:SETup #14\xb9S\n\x00\n"]

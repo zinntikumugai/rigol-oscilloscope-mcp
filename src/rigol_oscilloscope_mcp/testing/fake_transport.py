@@ -46,6 +46,10 @@ class FakeTransport:
             # エラーはキューに残り、呼び出し側の :SYSTem:ERRor? で検出される。
             pass
 
+    def write_block(self, command: str, payload: bytes) -> None:
+        self._require_open(command)
+        self.scope.handle_block(command, payload)
+
     def query(self, command: str, timeout_s: float | None = None) -> str:
         # 実機のLAN/USBはいずれも1行しか読まない。フェイクも同じ意味論にして
         # 「複数行応答を query で読む」実装ミスがテストで露見するようにする。

@@ -1650,6 +1650,36 @@ def create_server(
         )
 
     @_register
+    def save_setup(path: str | None = None) -> dict:
+        """Save the whole instrument setup to a file on the host (default name
+        scope_setup_<time>.stp in the default directory). Use it before changing
+        many settings, so restore_setup can bring them back. The file is a binary
+        blob specific to this model; it is not human readable.
+        """
+        driver = manager.require_scope()
+        stem = "scope_setup_" + time.strftime("%Y%m%d_%H%M%S")
+        target = service.resolve_write_path(path, resolved_config, stem, "stp")
+        data = driver.read_setup()
+        target.write_bytes(data)
+        return {"saved_path": str(target), "size_bytes": len(data)}
+
+    @_register
+    def restore_setup(path: str, confirm_token: str | None = None) -> dict:
+        """Restore the whole instrument setup from a file saved with save_setup.
+
+        This replaces every current setting, so it needs the confirmation flow:
+        the first call does not execute and returns a confirm_token, so ask the
+        human user whether to proceed and then call again with the same path plus
+        that confirm_token. The file is checked (it must look like a setup file
+        from this model) before anything is sent.
+        """
+        driver = manager.require_scope()
+        source = service.resolve_read_path(path, resolved_config)
+        return control.restore_setup(
+            driver, manager.generation, str(source), source.read_bytes(), confirm_token
+        )
+
+    @_register
     def autoset(confirm_token: str | None = None) -> dict:
         """Run Auto Setup (autoscale).
 

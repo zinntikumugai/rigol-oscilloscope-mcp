@@ -5188,3 +5188,51 @@ def test_measure_histogram_needs_its_own_declaration(scope: FakeScope) -> None:
         driver.configure_measurement(histogram_enabled=True)
     assert "histogram_enabled" not in driver.get_measurement_config()
     assert not [c for c in scope.command_log if "HISTOGRAM" in c.upper()]
+
+# --------------------------------------------------------------------------
+# 設定の一括保存・復元(:SYSTem:SETup。issue #72)
+# --------------------------------------------------------------------------
+
+
+def test_setup_round_trip_restores_the_saved_state(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    saved = driver.read_setup()
+    driver.set_timebase_scale(1e-5)
+
+    driver.restore_setup(saved)
+
+    # 実機と同じヘッダ: CRC32(9バイト目以降)+ 全体長−8
+    assert int.from_bytes(saved[4:8], "little") == len(saved) - 8
+    assert driver.get_timebase().scale_s_per_div == pytest.approx(2e-4)
+    assert any(c.startswith(":SYSTem:SETup #") for c in scope.command_log)
+
+
+@pytest.mark.parametrize("damage", ["empty", "png", "flipped", "truncated", "huge"])
+def test_restore_setup_rejects_data_that_is_not_a_setup_file(
+    driver: ScopeDriver, scope: FakeScope, damage: str
+) -> None:
+    """CRC32 と長さのヘッダで、別のファイルや壊れたファイルを送信前に弾く。"""
+    good = driver.read_setup()
+    data = {
+        "empty": b"",
+        "png": b"\x89PNG\r\n\x1a\n" + b"0" * 100,
+        "flipped": good[:20] + bytes([good[20] ^ 0xFF]) + good[21:],
+        "truncated": good[:-1],
+        "huge": good + b"0" * (1 << 20),
+    }[damage]
+    scope.command_log.clear()
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.restore_setup(data)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_setup_unsupported_on_generic(generic_driver: ScopeDriver, scope: FakeScope) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.read_setup()
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []

@@ -57,3 +57,15 @@ def parse_block(reader: Callable[[int], bytes]) -> bytes:
     if length == 0:
         return b""
     return _read_exact(reader, length, "block payload")
+
+
+def build_block(payload: bytes) -> bytes:
+    """payload を definite-length block (#N<len><payload>) に包む(書き込み用)。"""
+    length = str(len(payload)).encode("ascii")
+    if len(length) > 9:
+        raise ScopeError(
+            ErrorCode.INVALID_PARAMETER,
+            f"block payload is too large ({len(payload)} bytes)",
+            {"size": len(payload)},
+        )
+    return b"#" + str(len(length)).encode("ascii") + length + payload

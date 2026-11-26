@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from ..errors import ErrorCode, ScopeError
-from .blocks import parse_block
+from .blocks import build_block, parse_block
 
 # pyvisa-py(純Python)バックエンド。NI-VISA等の外部ドライバを要求しない。
 BACKEND = "@py"
@@ -124,6 +124,15 @@ class UsbTransport:
         instrument = self._require_open(command)
         try:
             instrument.write(command)  # 終端はwrite_terminationが付与する
+        except self._visa_error as exc:
+            raise self._failure(command, exc) from exc
+
+    def write_block(self, command: str, payload: bytes) -> None:
+        """バイナリブロックは write_raw で送る(write は文字列用。終端は自前で付ける)。"""
+        instrument = self._require_open(command)
+        message = command.encode("ascii") + b" " + build_block(payload) + b"\n"
+        try:
+            instrument.write_raw(message)
         except self._visa_error as exc:
             raise self._failure(command, exc) from exc
 

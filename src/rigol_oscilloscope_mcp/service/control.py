@@ -53,6 +53,17 @@ _AUTOSET_RISK = (
     "settings are lost."
 )
 
+_RESTORE_SETUP_DESCRIPTION = "Restore the instrument setup from a saved file"
+_RESTORE_SETUP_RISK = (
+    "All current settings (channels, timebase, trigger, measurements, decode, "
+    "etc.) are replaced by the ones in the file, and the current settings are "
+    "lost unless they were saved first with save_setup."
+)
+_RESTORE_SETUP_NOTE = (
+    "The setup was restored. Settings have been replaced; read them back with "
+    "get_state before relying on them."
+)
+
 _AFG_OUTPUT_DESCRIPTION = (
     "Turn on AFG channel {n} output (inject a real signal into whatever is "
     "connected)"
@@ -1249,6 +1260,36 @@ class ControlService:
             )
 
         return {"result": "ok", "note": AUTOSET_NOTE, "state": state}
+
+    def restore_setup(
+        self,
+        driver: ScopeDriver,
+        generation: int,
+        path: str,
+        data: bytes,
+        confirm_token: str | None = None,
+    ) -> dict:
+        """設定一式の復元(RESTRICTED_WRITE。issue #72)。承認を要求する。
+
+        中身の検証(設定ファイルの識別子・サイズ)は承認より前に済ませる。承認前は
+        機器へ1コマンドも送らない。
+        """
+        driver.check_setup(data)
+        self._require_confirmation(
+            "restore_setup",
+            {"path": path},
+            generation,
+            confirm_token,
+            description=_RESTORE_SETUP_DESCRIPTION,
+            risk=_RESTORE_SETUP_RISK,
+        )
+        with self._audited("restore_setup", {"path": path, "size_bytes": len(data)}) as record:
+            if self._audit.enabled:
+                record.before({"timebase": get_timebase_dict(driver)})
+            driver.restore_setup(data)
+            timebase = get_timebase_dict(driver)
+            record.after({"timebase": timebase})
+        return {"result": "ok", "note": _RESTORE_SETUP_NOTE, "timebase": timebase}
 
     # -- 承認(Requirements.md 6.2)---------------------------------------
 

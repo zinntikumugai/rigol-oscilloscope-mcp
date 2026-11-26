@@ -186,6 +186,9 @@ class _FakeTransport:
     def query_binary(self, command: str, timeout_s: float | None = None) -> bytes:
         return b"OK"
 
+    def write_block(self, command: str, payload: bytes) -> None:
+        pass
+
     @property
     def is_open(self) -> bool:
         return self._open
@@ -206,3 +209,20 @@ def test_transport_protocol_rejects_incomplete_object() -> None:
 def test_transport_protocol_member_names() -> None:
     for name in ("open", "close", "write", "query", "query_binary", "is_open"):
         assert hasattr(Transport, name), name
+
+
+def test_build_block_round_trips_through_parse_block() -> None:
+    """書き込み用の build_block は、読み出し用の parse_block と対になる(issue #72)。"""
+    from rigol_oscilloscope_mcp.transport.blocks import build_block
+
+    payload = b"\xb9S\x92\xdf\n\x00" * 50
+    packed = build_block(payload)
+    stream = bytearray(packed)
+
+    def reader(n: int) -> bytes:
+        chunk = bytes(stream[:n])
+        del stream[:n]
+        return chunk
+
+    assert packed.startswith(b"#3300")
+    assert parse_block(reader) == payload

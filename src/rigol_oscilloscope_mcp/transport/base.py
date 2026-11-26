@@ -31,5 +31,9 @@ class Transport(Protocol):
 
     def query_binary(self, command: str, timeout_s: float | None = None) -> bytes: ...
 
+    def write_block(self, command: str, payload: bytes) -> None:
+        """`<command> #N<len><payload>` + 終端を送る(バイナリの書き込み)。"""
+        ...
+
     @property
     def is_open(self) -> bool: ...

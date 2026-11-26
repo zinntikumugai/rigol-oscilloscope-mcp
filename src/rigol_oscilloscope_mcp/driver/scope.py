@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import re
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -225,6 +226,10 @@ _AUTOSET_OPTION_ITEMS: tuple[tuple[str, str, object], ...] = (
     ("overlay", ":OVERlap", "bool"),
     ("keep_coupling", ":KEEPcoup", "bool"),
 )
+
+#: 設定ファイル(:SYSTem:SETup)の上限サイズ。実機の設定は約3KB。これを大きく
+#: 超えるものは設定ファイルではないとみなして送らない
+SETUP_MAX_BYTES = 256 * 1024
 
 # 機器が「測定不能」を示すために返す番兵値(±9.9E37 前後)
 INVALID_MEASUREMENT = 9.0e37
@@ -1541,6 +1546,51 @@ class ScopeDriver:
         self.session.write_checked(command)
 
     # -- 画面・波形 -------------------------------------------------------
+
+    def read_setup(self) -> bytes:
+        """機器の設定一式(`:SYSTem:SETup?`)をそのまま返す(issue #72)。"""
+        self._require("system_setup", "saving the instrument setup")
+        return self.session.query_binary(":SYSTem:SETup?", timeout_s=30.0)
+
+    def restore_setup(self, data: bytes) -> None:
+        """設定一式を書き戻す。**設定を大きく書き換える**ので承認は上位の責務。
+
+        送る前に、ヘッダ(CRC32と長さ)と上限サイズで、
+        設定ファイルかどうかを確かめる(画像など別のファイルを機器へ送らない)。
+        """
+        self.check_setup(data)
+        self.session.write_block_checked(":SYSTem:SETup", bytes(data))
+
+    def check_setup(self, data: bytes) -> None:
+        """設定ファイルとして送ってよいかを確かめる。**1コマンドも送らない**。
+
+        実機実測のヘッダ形式(`setup_header: crc32_length`): 先頭4バイトが9バイト
+        目以降の CRC32(LE)、次の4バイトが全体長−8(LE)。両方が合うものだけを
+        送る(画像など別のファイルや、壊れたファイルを機器へ送らない)。
+        """
+        self._require("system_setup", "restoring the instrument setup")
+        header = self._required_dialect("setup_header", "checking a setup file")
+        if header != "crc32_length":
+            raise _unsupported(
+                f"unknown setup header format: {header!r}",
+                {"dialect": "setup_header", "value": header},
+            )
+        if not isinstance(data, (bytes, bytearray)) or len(data) <= 8:
+            raise _invalid("the setup data is empty or too short", {"size": len(data or b"")})
+        if len(data) > SETUP_MAX_BYTES:
+            raise _invalid(
+                f"the setup data is too large ({len(data)} bytes, at most "
+                f"{SETUP_MAX_BYTES}); it is probably not a setup file",
+                {"size": len(data), "max": SETUP_MAX_BYTES},
+            )
+        length = int.from_bytes(data[4:8], "little")
+        checksum = int.from_bytes(data[:4], "little")
+        if length != len(data) - 8 or checksum != zlib.crc32(bytes(data[8:])):
+            raise _invalid(
+                "the data is not a valid setup file saved from this model "
+                "(its length or checksum does not match)",
+                {"size": len(data), "length_field": length},
+            )
 
     def capture_screenshot_bytes(self) -> bytes:
         self._require("screenshot", "screen capture")

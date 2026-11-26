@@ -104,3 +104,22 @@ def resolve_write_path(
     _check_allowed(resolved, config)
     resolved.parent.mkdir(parents=True, exist_ok=True)
     return resolved
+
+
+def resolve_read_path(path_arg: str, config: Config) -> Path:
+    """読み込み元の絶対パスを確定する(許可ルート外・存在しないなら INVALID_PARAMETER)。
+
+    相対パスは保存先と同じくデフォルト保存先(実行ディレクトリ)を基準に解決する。
+    """
+    expanded = Path(path_arg).expanduser()
+    if not expanded.is_absolute():
+        expanded = Path(config.screenshot_dir).expanduser() / expanded
+    resolved = expanded.resolve()
+    _check_allowed(resolved, config)
+    if not resolved.is_file():
+        raise ScopeError(
+            ErrorCode.INVALID_PARAMETER,
+            f"File not found: {resolved}",
+            {"path": str(resolved)},
+        )
+    return resolved

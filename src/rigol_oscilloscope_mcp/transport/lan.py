@@ -15,7 +15,7 @@ import socket
 import time
 
 from ..errors import ErrorCode, ScopeError
-from .blocks import parse_block
+from .blocks import build_block, parse_block
 
 DEFAULT_PORT = 5555
 _RECV_CHUNK = 65536
@@ -95,6 +95,19 @@ class LanTransport:
 
     def write(self, command: str) -> None:
         self._send(command, self._deadline(None))
+
+    def write_block(self, command: str, payload: bytes) -> None:
+        """バイナリブロックを1回で送る(データ内の改行もそのまま。ガイド3.24.20)。"""
+        sock = self._require_open()
+        deadline = self._deadline(None)
+        message = command.encode("ascii") + b" " + build_block(payload) + b"\n"
+        try:
+            sock.settimeout(self._remaining(command, deadline))
+            sock.sendall(message)
+        except TimeoutError as exc:
+            raise self._timeout(command) from exc
+        except OSError as exc:
+            raise self._disconnected(command, type(exc).__name__) from exc
 
     def query(self, command: str, timeout_s: float | None = None) -> str:
         deadline = self._deadline(timeout_s)
