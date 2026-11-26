@@ -254,7 +254,9 @@ LA_POD_WIDTH = 8
 
 #: イベントテーブル(`:BUS<n>:DATA?`)の種別トークンのうち、モード名と違うもの。
 #: **実機実測**(検証ボード、issue #87): I2C は `I2C`(モード名は `IIC`)。
-#: RS232 / SPI / CAN / PARALLEL はモード名として解釈できる
+#: RS232 / SPI / CAN / PARALLEL はモード名として解釈できる。LIN / IIS / FLEXray /
+#: M1553 は未確認(検証ボードの LIN は出力できず、他は信号源が無い)。違っていれば
+#: 「unknown decoding type」の警告が出るので、そのとき足す
 _EVENT_TABLE_TOKENS = {"I2C": "IIC"}
 
 #: 設定ファイル(:SYSTem:SETup)の上限サイズ。実機の設定は約3KB。これを大きく
