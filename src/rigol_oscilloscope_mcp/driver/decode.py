@@ -251,8 +251,11 @@ _POSNEG = (("positive", "POSitive"), ("negative", "NEGative"))
 _SLOPE = (("rising", "POSitive"), ("falling", "NEGative"))
 _HIGHLOW = (("high", "HIGH"), ("low", "LOW"))
 
-#: パラレルのデータソース(ガイド3.4.10.1)。`d7_d0` 等はデジタルchのグループで、
-#: **先に書かれた側がMSB**(`d7_d0` = D7がMSB・D0がLSBの8本)。`user` のときだけ
+#: パラレルのデータソース(ガイド3.4.10.1)。`d7_d0` 等はデジタルchのグループ。
+#: **ビットの重みは `endian` との組み合わせで決まる**(実機実測、issue #87。検証ボードの
+#: 8bitカウンタ D8=bit0 … D15=bit7): `d15_d8` + `lsb` と `d8_d15` + `msb` が正しい値、
+#: `d15_d8` + `msb` はビット反転した値になった。つまり `msb` なら後に書かれた側、
+#: `lsb` なら先に書かれた側がMSB。`user` のときだけ
 #: `bus_width` / `bit_sources` が有効になる(3.4.10.4-3.4.10.6 の Remark)。
 _PARALLEL_BUS = (
     ("d7_d0", "D7D0"),

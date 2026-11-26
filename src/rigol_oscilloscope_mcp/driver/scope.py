@@ -252,6 +252,13 @@ _LA_CHANNEL_ITEMS: tuple[tuple[str, str, object], ...] = (
 #: 1ポッドあたりのデジタルch数(POD1 = D0-D7、POD2 = D8-D15)
 LA_POD_WIDTH = 8
 
+#: イベントテーブル(`:BUS<n>:DATA?`)の種別トークンのうち、モード名と違うもの。
+#: **実機実測**(検証ボード、issue #87): I2C は `I2C`(モード名は `IIC`)。
+#: RS232 / SPI / CAN / PARALLEL はモード名として解釈できる。LIN / IIS / FLEXray /
+#: M1553 は未確認(検証ボードの LIN は出力できず、他は信号源が無い)。違っていれば
+#: 「unknown decoding type」の警告が出るので、そのとき足す
+_EVENT_TABLE_TOKENS = {"I2C": "IIC"}
+
 #: 設定ファイル(:SYSTem:SETup)の上限サイズ。実機の設定は約3KB。これを大きく
 #: 超えるものは設定ファイルではないとみなして送らない
 SETUP_MAX_BYTES = 256 * 1024
@@ -2949,7 +2956,7 @@ class ScopeDriver:
         columns, events, token = parse_event_table(payload)
         if token:
             try:
-                protocol = mode_from(token)
+                protocol = mode_from(_EVENT_TABLE_TOKENS.get(token.upper(), token))
             except ScopeError:
                 protocol = token.lower()
                 warnings.append(

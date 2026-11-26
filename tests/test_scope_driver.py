@@ -5547,3 +5547,16 @@ def test_i2s_trigger_data_bits_below_the_current_user_bits_is_rejected(
 
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
     assert [c for c in scope.command_log if "?" not in c] == []
+
+
+def test_get_decode_events_maps_the_i2c_table_token() -> None:
+    """**実機実測**(検証ボード、issue #87): I2C のイベントテーブルの種別トークンは
+    `I2C`(モード名の `IIC` ではない)。未知の種別として警告しない。"""
+    scope = FakeScope()
+    driver = make_driver(scope)
+    enable_event_table(driver, scope, "i2c")
+
+    result = driver.get_decode_events(1)
+
+    assert result["protocol"] == "i2c"
+    assert not any("unknown decoding type" in w for w in result["warnings"])

@@ -378,3 +378,23 @@ BUS2 を IIS モードにして **`:BUS2:THReshold? I2SClk`**(ガイド3.4.9 に
 
 - write(`-k logic_analyzer`): **1 passed**。しきい値 1.65V・ラベル・ch無効化・アクティブch・並び順を書いて読み戻し、元の状態へ戻して一致を確認
 
+## 19. 検証ボードでロジックアナライザ経由の観測(issue #87、2026-11-26)
+
+検証用 ESP32 ボード(rigol-oscilloscope-mcp_check-esp32、ファームウェア 0.1.0)を D0〜D15 に接続。ボードの HTTP API でモードを切り替え、返ってくる期待値・`scope_hint`(`configure_decode` の引数)と、MCP で読んだデコード結果を突き合わせた。LA のしきい値は 1.65V(テスト後に元の値へ戻した)。
+
+| モード | ソース | 時間軸 / トリガ | 結果 |
+|---|---|---|---|
+| SPI 1MHz mode0 | CLK D4 / MOSI D5 / CS D6 | 10µs/div、D6 立ち下がり | ✅ `A5 5A 00 FF`(期待どおり) |
+| I2C 100kHz | SCL D2 / SDA D3 | 200µs/div、D3 立ち下がり | ✅ アドレス `50`(Write・NACK)、データ `DE AD BE EF`。**50µs/div では窓が足りず後半のバイトが切れた**(`DE` だけ / 100µs/div で `DE AD BE`) |
+| CAN 500k | D7(`signal_type: tx`) | 50µs/div、D7 立ち下がり | ✅ ID `123`・DLC 8・`01 02 03 04 05 06 07 08`、`Ack Error`(相手ノードが無いので正常) |
+| パラレル 1kHz(8bit カウンタ) | CLK D0、データ D8〜D15(D8=bit0) | 1ms/div、D0 立ち上がり | ✅ ただし下記のビット順 |
+| PWM 1kHz | D0 | — | ✅ 周波数カウンタ(ソース D0)で 1kHz |
+| UART / LIN | D1 | — | ⏭ **ボードが出力できない**(`last_error: ESP_FAIL`、`running: false`。何度設定し直しても同じ) |
+
+見つかった不具合・所見:
+
+- **MCP の不具合**: I2C のイベントテーブルの種別トークンは **`I2C`**(モード名は `IIC`)で、「unknown decoding type」と警告していた → 対応表を追加して修正。SPI / CAN / PARALLEL / RS232 はモード名のまま解釈できる
+- **パラレルのビットの重みは `bus` と `endian` の組み合わせ**: ボードの `scope_hint`(`bus: d15_d8`、`endian: msb`)ではビット反転した値(`CF 2F AF 6F …` = `F3 F4 F5 F6 …` の反転)になった。`d15_d8` + `lsb` と `d8_d15` + `msb` で正しい値(`BC BD BE …`)。つまり **`msb` なら後に書かれたch、`lsb` なら先に書かれたchがMSB**。従来の説明(「先に書かれた側がMSB」)を直した。ボード側の `scope_hint` も同じ誤りを含む
+- ボードの `scope_hint.note` は「MCP は LA を設定できないので前面パネルで」と書いているが、issue #86 で `configure_logic_analyzer` が使えるようになった
+- write(`-k board`): **5 passed, 2 skipped**(UART / LIN はボードの出力不可で skip)。LA・デコード・トリガ・時間軸・カウンタは各フィクスチャで元へ戻し、前後比較の戻し忘れ0件
+

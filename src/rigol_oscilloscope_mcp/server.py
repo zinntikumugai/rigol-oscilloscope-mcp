@@ -1004,8 +1004,10 @@ def create_server(
         - m1553: source, threshold_v
         - parallel: clk_source, clk_slope, bus (d7_d0/d15_d8/d15_d0/d0_d7/
           d8_d15/d0_d15/ch1-ch4/user), bus_width (1-16), bit_sources, endian,
-          polarity. bus is the data source; the digital groups list the MSB
-          first. bus_width and bit_sources only work while bus is "user" (the
+          polarity. bus is the data source. Which end of a digital group is
+          the MSB depends on endian: with endian "msb" the last-listed channel
+          is the MSB, with "lsb" the first-listed one is (so for D15 as MSB use
+          d8_d15 + msb or d15_d8 + lsb). bus_width and bit_sources only work while bus is "user" (the
           device rejects them otherwise), so set bus in the same call.
           bit_sources is a list of "CH1"-"CH4" / "D0"-"D15", one per data bit
           starting at bit 0, and no longer than bus_width. Example:
