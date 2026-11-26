@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+import json
 import re
 
 from ..errors import ErrorCode, ScopeError
@@ -248,6 +249,69 @@ def parse_histogram_result(text: object) -> tuple[dict[str, float | str], list[s
         if unit:
             stats[f"{key}_unit"] = unit
     return stats, warnings
+
+
+#: `:MEASure:HISTogram:STATistics:RESult?`(3.17.32)の位置 → キー。**ガイドに列の
+#: 意味の記載は無い**。実機実測の応答を `:HISTogram`(3.11.9。ラベル付き)の13ラベル
+#: と照合し、並びと値(Max − Min = Pk_Pk 等)が一致する位置だけにラベルを付ける。
+#: 位置3は測定項目名(`Vpp` / `Frequency`)。それ以外の位置は意味が分からない
+_MEASURE_HISTOGRAM_LABELS: dict[int, str] = {
+    5: "sum",
+    6: "peaks",
+    7: "max",
+    8: "min",
+    9: "pk_pk",
+    10: "mean",
+    11: "median",
+    12: "mode",
+    13: "bin_width",
+    14: "sigma",
+}
+
+
+def parse_measure_histogram(
+    text: object,
+) -> tuple[dict[str, float | str], dict[str, str], list[str]]:
+    """測定ヒストグラムの統計を `(統計, ラベル不明の位置, 警告)` へ(issue #71)。
+
+    応答は引用符付きの入れ子リスト `[["92","1","0","Vpp","0","43hits",...]]`
+    (JSONとして読める)。列ラベルは無いので `_MEASURE_HISTOGRAM_LABELS` の位置に
+    だけ名前を付け、SI接頭辞は基本単位へ換算する(`327.3mV` → 0.3273 / `V`)。
+    意味の分からない位置は `{位置: 生の文字列}` で返して捨てない。
+
+    fail-open(例外を投げない)。解釈できなければ空の統計と警告を返す。
+    """
+    if not isinstance(text, str):
+        return {}, {}, [f"measurement histogram response is not a string: {text!r}"]
+    try:
+        rows = json.loads(text.strip())
+        cells = rows[0]
+        if not isinstance(cells, list) or not cells:
+            raise ValueError("empty row")
+    except (ValueError, IndexError, TypeError):
+        return {}, {}, [f"cannot interpret measurement histogram response: {text!r}"]
+
+    stats: dict[str, float | str] = {}
+    unlabeled: dict[str, str] = {}
+    warnings: list[str] = []
+    for index, cell in enumerate(cells):
+        cell = str(cell)
+        if index == 3:
+            stats["item"] = cell
+            continue
+        key = _MEASURE_HISTOGRAM_LABELS.get(index)
+        if key is None:
+            unlabeled[str(index)] = cell
+            continue
+        match = _HISTOGRAM_VALUE_RE.match(cell.strip())
+        if match is None:
+            warnings.append(f"cannot interpret measurement histogram {key}: {cell!r}")
+            continue
+        number, unit = _strip_si_prefix(float(match.group(1)), match.group(2))
+        stats[key] = number
+        if unit:
+            stats[f"{key}_unit"] = unit
+    return stats, unlabeled, warnings
 
 
 def parse_bool(text: str) -> bool:

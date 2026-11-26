@@ -519,3 +519,56 @@ def test_profile_enum_rejects_an_ambiguous_prefix() -> None:
     with pytest.raises(ScopeError) as error:
         from_scpi("TIME")
     assert error.value.code is ErrorCode.SCPI_ERROR
+
+
+# --------------------------------------------------------------------------
+# 測定ヒストグラム(:MEASure:HISTogram:STATistics:RESult?。issue #71)
+# --------------------------------------------------------------------------
+
+#: 実機実測(MHO98 fw 00.01.00)。CH1 の Vpp を測りながら有効化して約3秒後
+MEASURE_HISTOGRAM_RAW = (
+    '[["92","1","0","Vpp","0","43hits","8hits","327.3mV","323mV","4.296mV",'
+    '"324.7mV","324.5mV","324.2mV","32.3uV","1.11mV","3.23mV"]]'
+)
+
+
+def test_parse_measure_histogram_labels_the_known_positions() -> None:
+    """6〜15番目は :HISTogram の13ラベルと同じ並び(Max − Min = Pk_Pk で整合)。"""
+    from rigol_oscilloscope_mcp.driver.parsers import parse_measure_histogram
+
+    stats, unlabeled, warnings = parse_measure_histogram(MEASURE_HISTOGRAM_RAW)
+
+    assert stats["item"] == "Vpp"
+    assert stats["sum"] == 43 and stats["sum_unit"] == "hits"
+    assert stats["peaks"] == 8
+    assert stats["max"] == pytest.approx(0.3273) and stats["max_unit"] == "V"
+    assert stats["min"] == pytest.approx(0.323)
+    assert stats["pk_pk"] == pytest.approx(0.004296)
+    assert stats["mean"] == pytest.approx(0.3247)
+    assert stats["sigma"] == pytest.approx(0.00111)
+    # 意味の分からない位置は捨てずに生で返す
+    assert unlabeled == {"0": "92", "1": "1", "2": "0", "4": "0", "15": "3.23mV"}
+    assert warnings == []
+
+
+def test_parse_measure_histogram_with_no_hits() -> None:
+    from rigol_oscilloscope_mcp.driver.parsers import parse_measure_histogram
+
+    stats, _, warnings = parse_measure_histogram(
+        '[["92","2","0","Frequency","5","0hits","0hits","0","0","0","0","0","0","0","0","0"]]'
+    )
+
+    assert stats["item"] == "Frequency"
+    assert stats["sum"] == 0
+    assert stats["max"] == 0.0
+    assert warnings == []
+
+
+@pytest.mark.parametrize("raw", ["", "garbage", "[]", "[[]]", None])
+def test_parse_measure_histogram_is_fail_open(raw: object) -> None:
+    from rigol_oscilloscope_mcp.driver.parsers import parse_measure_histogram
+
+    stats, unlabeled, warnings = parse_measure_histogram(raw)
+
+    assert stats == {}
+    assert warnings  # 理由を必ず残す

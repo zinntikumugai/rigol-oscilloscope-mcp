@@ -831,6 +831,7 @@ def create_server(
         statistics_count: int | None = None,
         statistics_reset: bool | None = None,
         statistics_items: list[str] | None = None,
+        histogram_enabled: bool | None = None,
     ) -> dict:
         """Set how measurements are interpreted. Omitted items are left unchanged.
 
@@ -856,6 +857,9 @@ def create_server(
         enables statistics per measurement item — pass source in the same call,
         it is required. statistics_reset clears the history and is sent last.
         Read the results with get_measurement_statistics.
+        histogram_enabled turns on the measurement histogram (the distribution of
+        the most recently added measurement item); read it with
+        get_measurement_histogram.
 
         source is "CH1"-"CH4" or "D0"-"D15" and selects what measure reads by
         default.
@@ -880,7 +884,20 @@ def create_server(
             statistics_count=statistics_count,
             statistics_reset=statistics_reset,
             statistics_items=statistics_items,
+            histogram_enabled=histogram_enabled,
         )
+
+    @_register
+    def get_measurement_histogram() -> dict:
+        """Return the distribution of one measurement item over many acquisitions
+        (the measurement histogram): stats.item names the item (the device uses the
+        most recently added one), then sum / peaks (hit counts), max, min, pk_pk,
+        mean, median, mode, bin_width, sigma with *_unit. Positions whose meaning
+        is undocumented are returned as-is in unlabeled; raw is always included.
+        Enable it first with configure_measurement(histogram_enabled=true) and
+        measure the item you want; it accumulates while the scope runs.
+        """
+        return manager.require_scope().get_measurement_histogram()
 
     @_register
     def get_measurement_statistics(

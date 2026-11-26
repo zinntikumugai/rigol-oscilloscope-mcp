@@ -2779,3 +2779,31 @@ def test_configure_autoset_options_round_trip(
     finally:
         driver.configure_autoset_options(**before)
         assert driver.get_autoset_options() == before
+
+# 測定ヒストグラム(issue #71)
+# --------------------------------------------------------------------------
+
+
+def test_measurement_histogram_accumulates(
+    control: ControlService, driver: ScopeDriver, measurement_before: dict
+) -> None:
+    """CH1 の Vpp を測りながら測定ヒストグラムを有効化し、ヒット数が増えること。
+
+    各位置の意味はガイドに無い。実測で :HISTogram の13ラベルと並びが一致した
+    位置だけにラベルを付けている(Max − Min = Pk_Pk で整合を確かめる)。
+    """
+    from rigol_oscilloscope_mcp.service import measure
+
+    measure(driver, "CH1", ["vpp"])
+    control.configure_measurement(driver, histogram_enabled=True)
+    try:
+        time.sleep(2.0)
+        result = driver.get_measurement_histogram()
+        _report(f"[measure-histogram] {result}")
+        stats = result["stats"]
+        assert stats["item"] == "Vpp"
+        assert stats["sum"] >= 1
+        assert stats["pk_pk"] == pytest.approx(stats["max"] - stats["min"], rel=0.05, abs=1e-4)
+        assert driver.session.drain_error_queue() == []
+    finally:
+        driver.configure_measurement(histogram_enabled=False)

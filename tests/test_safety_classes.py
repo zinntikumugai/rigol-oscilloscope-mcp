@@ -40,6 +40,8 @@ EXPECTED = {
     "configure_mask": "SAFE_WRITE",
     "get_mask_result": "READ_ONLY",
     "configure_autoset": "SAFE_WRITE",
+
+    "get_measurement_histogram": "READ_ONLY",
     "autoset": "RESTRICTED_WRITE",
     "configure_decode": "SAFE_WRITE",
     "get_decode_result": "READ_ONLY",

@@ -272,3 +272,25 @@ CH1 0.1V/div・メイン 200µs/div で停止し、遅延掃引を 20µs/div・�
 初期値: `:AUToset:PEAK?` → `1` / `:OPENch?` → `0` / `:OVERlap?` → `1` / `:KEEPcoup?` → `0`。4項目とも反転して書き込み → 読み戻し → 元へ戻した(すべて No error)。autoset の実行は行っていない。
 
 - write(`-k autoset_options`): **1 passed**。4項目を反転して往復し、元へ戻した。前後比較の戻し忘れ0件
+
+## 14. :MEASure 系統の周波数カウンタと測定ヒストグラム(issue #71、2026-11-26)
+
+CH1 0.1V/div・200µs/div(校正信号 1kHz、`:MEASure:ITEM? VPP` → `3.2499E-01`)で確かめ、最後に元へ戻した:
+
+| コマンド | 応答 | 所見 |
+|---|---|---|
+| `:MEASure:COUNter:ENABle 1` → `:VALue?`(1秒ごとに4回) | **`9.90E+37`** のまま | 有効な信号でも値が出ない。**見送る** |
+| `:MEASure:HISTogram:ENABle 1` → `:STATistics:RESult?`(1秒ごと) | `[["92","1","0","Vpp","0","9hits","1hits","325.9mV",...]]` → `"25hits"` → `"43hits"` | ヒット数が増えていく。直前の測定項目(Vpp)が対象 |
+
+応答の各位置の意味はガイドに無い。6〜15番目を `:HISTogram`(ラベル付き)の13ラベルと照合した:
+
+| 位置 | 値の例 | 対応するラベル |
+|---|---|---|
+| 3 | `Vpp` | 測定項目 |
+| 5 / 6 | `43hits` / `8hits` | Sum / Peaks |
+| 7 / 8 / 9 | `327.3mV` / `323mV` / `4.296mV` | Max / Min / Pk_Pk(327.3 − 323 = 4.3 で整合) |
+| 10 / 11 / 12 | `324.7mV` / `324.5mV` / `324.2mV` | Mean / Median / Mode |
+| 13 / 14 | `32.3uV` / `1.11mV` | Bin width / Sigma |
+| 0 / 1 / 2 / 4 / 15 | `92` / `1` / `0` / `0`〜`4` / `3.23mV` | **不明**(`unlabeled` に生で返す) |
+
+- write(`-k measurement_histogram`): **1 passed**。ヒット数が1以上、Pk_Pk ≈ Max − Min。前後比較の戻し忘れ0件

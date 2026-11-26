@@ -44,6 +44,7 @@ from .parsers import (
     parse_coupling,
     parse_fft_peaks,
     parse_histogram_result,
+    parse_measure_histogram,
     parse_nr3,
     to_scpi_impedance,
     to_scpi_slope,
@@ -135,6 +136,8 @@ _MEASURE_SETUP_ITEMS: tuple[tuple[str, str, object], ...] = (
     ("amp_base", ":AMP:MANual:BASE", ("enum", "measure_amp_methods", "the manual amplitude base method")),
     ("statistics_enabled", ":STATistic:DISPlay", "bool"),
     ("statistics_count", ":STATistic:COUNt", ("int", 2, 100_000)),
+    # 測定ヒストグラム(3.17.31。issue #71)。**:HISTogram(3.11)とは別サブシステム**
+    ("histogram_enabled", ":HISTogram:ENABle", "bool"),
 )
 _MEASURE_PREFIX = ":MEASure"
 #: read-back を持たない一発動作(ガイド3.17.18 / 3.17.7)
@@ -1352,6 +1355,7 @@ class ScopeDriver:
         statistics_count: int | None = None,
         statistics_reset: bool | None = None,
         statistics_items: list[str] | None = None,
+        histogram_enabled: bool | None = None,
     ) -> dict:
         """測定の前提設定(tools.md 14章)。None の項目は変更しない。
 
@@ -1373,6 +1377,7 @@ class ScopeDriver:
             "amp_base": amp_base,
             "statistics_enabled": statistics_enabled,
             "statistics_count": statistics_count,
+            "histogram_enabled": histogram_enabled,
         }
         # 統計の項目別有効化はソースを明示させる。省略すると機器は「最後に選んだ
         # ソース」を使い、呼び出し側から結果が予測できなくなる(ガイド3.17.8)
@@ -1435,6 +1440,28 @@ class ScopeDriver:
             _, from_scpi = self._converter(kind, 0)
             config[key] = from_scpi(self.session.query(f"{_MEASURE_PREFIX}{path}?"))
         return config
+
+    def get_measurement_histogram(self) -> dict:
+        """測定ヒストグラムの統計(3.17.32。issue #71)。**生応答を必ず残す**。
+
+        無効なら統計を読まない(:HISTogram と同じ扱い)。どの測定項目の分布かは
+        応答の `item` で分かる(機器は直前に追加した測定項目を対象にする)。
+        """
+        self._afg_enum("measure_areas", "the measurement range")
+        if not parse_bool(self.session.query(f"{_MEASURE_PREFIX}:HISTogram:ENABle?")):
+            return {
+                "raw": "",
+                "warnings": [
+                    "the measurement histogram is disabled, so no statistics were "
+                    "read: enable it with configure_measurement(histogram_enabled=true)"
+                ],
+            }
+        raw = self.session.query(f"{_MEASURE_PREFIX}:HISTogram:STATistics:RESult?")
+        stats, unlabeled, warnings = parse_measure_histogram(raw)
+        result: dict[str, object] = {"raw": raw, "stats": stats, "unlabeled": unlabeled}
+        if warnings:
+            result["warnings"] = warnings
+        return result
 
     def get_measurement_statistics(
         self,
