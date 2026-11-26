@@ -799,8 +799,16 @@ def decode_before(
     # 走査の失敗や skip で抜けるときも、表示状態だけは必ず戻す
     try:
         before = driver.get_decode_config(DECODE_BUS, include_bit_sources=True)
-    except BaseException:
-        _restore_displays(driver, displays)
+    except BaseException as exc:
+        # 元の例外は潰さずに再送出する。表示を戻せなかったことはその例外に添える
+        display_failures, display_drift = _restore_displays(driver, displays)
+        if display_failures or display_drift:
+            note = (
+                f"chの表示も復元できなかった: 失敗={display_failures} "
+                f"戻らなかったch={display_drift}"
+            )
+            _report(f"[before:{request.node.name}] **{note}**")
+            exc.add_note(note)
         raise
     tag = request.node.name
     _report(f"[before:{tag}] bus{DECODE_BUS}={before}")
