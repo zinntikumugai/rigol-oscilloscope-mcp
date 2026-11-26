@@ -239,7 +239,11 @@ def _restore_displays(
             failures.append(f"{channel}: {exc!r}")
     drift = {}
     for channel, enabled in displays.items():
-        now = get_channel_dict(driver, channel)["enabled"]
+        try:
+            now = get_channel_dict(driver, channel)["enabled"]
+        except Exception as exc:  # 読み戻しの失敗も記録して残りのchを確かめる
+            failures.append(f"{channel} read-back: {exc!r}")
+            continue
         if now != enabled:
             drift[channel] = (enabled, now)
     return failures, drift
