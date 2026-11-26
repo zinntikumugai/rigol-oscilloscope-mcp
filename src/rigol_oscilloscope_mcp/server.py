@@ -35,6 +35,7 @@ from mcp.server.fastmcp import FastMCP, Image
 
 from . import service
 from .config import Config, load_config
+from .driver.scope import SETUP_MAX_BYTES
 from .errors import ErrorCode, ScopeError
 from .safety import AuditLogger, ConfirmTokenStore, OperationClass, classify
 from .service import ConnectionManager, ConnectionStatus, ControlService
@@ -1677,6 +1678,15 @@ def create_server(
         """
         driver = manager.require_scope()
         source = service.resolve_read_path(path, resolved_config)
+        # 上限を超えるファイルは読み込む前に拒否する(巨大なファイルでメモリを食わない)
+        size = source.stat().st_size
+        if size > SETUP_MAX_BYTES:
+            raise ScopeError(
+                ErrorCode.INVALID_PARAMETER,
+                f"the file is too large to be a setup file ({size} bytes, at most "
+                f"{SETUP_MAX_BYTES})",
+                {"path": str(source), "size": size, "max": SETUP_MAX_BYTES},
+            )
         return control.restore_setup(
             driver, manager.generation, str(source), source.read_bytes(), confirm_token
         )
