@@ -3075,6 +3075,12 @@ def la_board(driver: ScopeDriver) -> Iterator[object]:
             assert driver.get_logic_analyzer() == before
 
 
+def _hex_bytes(text: str) -> str:
+    """`0x48` / `48 45` / `4845` などを `48 45` の形へそろえる。"""
+    parts = re.findall(r"(?:0x)?([0-9A-Fa-f]{2})", text)
+    return " ".join(part.upper() for part in parts)
+
+
 def _decoded(driver: ScopeDriver, column: str, attempts: int = 5) -> list[dict]:
     """イベントテーブルを読む。最初のトリガが来るまで少し待ち直す。"""
     from rigol_oscilloscope_mcp.service import get_decode_result
@@ -3153,9 +3159,13 @@ def test_decode_on_digital_channels_matches_the_board(
         assert len(values) >= 4
         assert all((b - a) % 256 == 1 for a, b in zip(values, values[1:])), values
     else:
+        # UART / LIN はボードが出力できず実機で確かめられていない(ESP_FAIL で skip)。
+        # 行の形は未確認なので、各行の data を16進バイト列として連結して比べる
         events = _decoded(driver, "data")
         _report(f"[la-board] {mode} events={events}")
-        assert events, f"{mode} のイベントが1件も無い"
+        decoded = " ".join(_hex_bytes(e["data"]) for e in events)
+        wanted = expected["bytes_hex"] if mode == "uart" else expected["frame_hex"]
+        assert _hex_bytes(wanted) in decoded, (wanted, decoded)
     assert driver.session.drain_error_queue() == []
 
 
