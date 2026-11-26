@@ -14,6 +14,7 @@ RIGOL_MCP_FAKE=1 uv run rigol-oscilloscope-mcp   # 実機なしでstdio起動(Fa
 # 実機テスト(env-gated。未設定なら自動skip)
 RIGOL_TEST_ADDRESS=<実機IP> uv run pytest -m device                          # read-only
 RIGOL_TEST_ADDRESS=<実機IP> RIGOL_TEST_ALLOW_WRITE=1 uv run pytest -m device_write  # write(復元付き)
+RIGOL_TEST_LA_BOARD=http://<検証ボード> RIGOL_TEST_ADDRESS=<実機IP> RIGOL_TEST_ALLOW_WRITE=1 uv run pytest -m device_write -k board  # ロジアナ経由(検証ESP32ボードを D0〜D15 に接続)
 ```
 
 mise外のシェルでは `mise exec -- uv run ...` を使う。

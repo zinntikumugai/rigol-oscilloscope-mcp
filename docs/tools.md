@@ -386,7 +386,7 @@ FFTの実装:
 | `flexray`(FlexRay オプション) | `source`、`baud_bps`(2500000/5000000/10000000)、`sample_point_percent`(10〜90)、`signal_type`(bp/bm/rt)、`channel`(a/b)、`threshold_v` |
 | `m1553`(Aero オプション) | `source`、`threshold_v` |
 | `lin` | `source`, `baud_bps`(2400〜20000000), `parity_enabled`, `standard`(v1x/v2x/mixed), `threshold_v` |
-| `parallel` | `clk_source`, `clk_slope`, `bus`(`d7_d0` / `d15_d8` / `d15_d0` / `d0_d7` / `d8_d15` / `d0_d15` / `ch1`〜`ch4` / `user`), `bus_width`(1〜16), `bit_sources`(添字=ビット番号のリスト), `endian`, `polarity` |
+| `parallel` | `clk_source`, `clk_slope`, `bus`(`d7_d0` / `d15_d8` / `d15_d0` / `d0_d7` / `d8_d15` / `d0_d15` / `ch1`〜`ch4` / `user`), `bus_width`(1〜16), `bit_sources`(添字=ビット番号のリスト), `endian`, `polarity`。**ビットの重みは `bus` と `endian` の組み合わせ**(実機実測): `endian="msb"` なら後に書かれたchがMSB(`d8_d15` + `msb` = D15がMSB)、`lsb` なら先に書かれたchがMSB(`d15_d8` + `lsb` = D15がMSB) |
 
 動作・規範:
 
