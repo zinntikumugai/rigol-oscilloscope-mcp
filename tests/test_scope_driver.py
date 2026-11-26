@@ -4898,6 +4898,50 @@ def test_configure_channel_extras_checks_the_delay_calibration_range(
     with pytest.raises(ScopeError) as excinfo:
         driver.configure_channel_extras("CH2", delay_calibration_s=value)
 
+# --------------------------------------------------------------------------
+# 水平軸の拡張(issue #68)
+# --------------------------------------------------------------------------
+
+
+def test_configure_timebase_extras_sends_items_in_table_order(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """遅延掃引は有効化 → スケール → オフセットの順(範囲が有効化とスケールに依存)。"""
+    applied = driver.configure_timebase_extras(
+        delay_offset_s=2e-6,
+        delay_scale_s=5e-7,
+        delay_enabled=True,
+        auto_roll=False,
+        href_position=60,
+        href_mode="user",
+        vernier=True,
+    )
+
+    writes = [c for c in scope.command_log if "?" not in c and c.startswith(":TIMebase")]
+    assert writes == [
+        ":TIMebase:VERNier ON",
+        ":TIMebase:HREFerence:MODE USER",
+        ":TIMebase:HREFerence:POSition 60",
+        ":TIMebase:ROLL 0",
+        ":TIMebase:DELay:ENABle ON",
+        ":TIMebase:DELay:SCALe 5e-07",
+        ":TIMebase:DELay:OFFSet 2e-06",
+    ]
+    assert applied["href_mode"] == "user"
+    assert applied["auto_roll"] is False
+    assert applied["delay_scale_s"] == pytest.approx(5e-7)
+
+
+def test_set_timebase_mode_reads_back(driver: ScopeDriver, scope: FakeScope) -> None:
+    assert driver.set_timebase_mode("roll") == "roll"
+    assert ":TIMebase:MODE ROLL" in scope.command_log
+
+
+def test_timebase_mode_xy_is_not_offered(driver: ScopeDriver, scope: FakeScope) -> None:
+    """**実機実測**: `:TIMebase:MODE XY` はエラーなしで無視される(MAIN のまま)。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.set_timebase_mode("xy")
+
     assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
     assert scope.command_log == []
 
@@ -4914,4 +4958,37 @@ def test_labels_with_a_trailing_newline_are_rejected(
 
     with pytest.raises(ScopeError):
         driver.configure_reference(1, label=label)
+
+@pytest.mark.parametrize("position", [-501, 501, 1.5, True])
+def test_configure_timebase_extras_validates_href_position(
+    driver: ScopeDriver, scope: FakeScope, position: object
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_timebase_extras(href_position=position)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_get_timebase_extras_reads_all_items(driver: ScopeDriver) -> None:
+    assert driver.get_timebase_extras() == {
+        "mode": "main",
+        "vernier": False,
+        "href_mode": "center",
+        "href_position": 0,
+        "auto_roll": True,
+        "delay_enabled": False,
+        "delay_scale_s": 5e-7,
+        "delay_offset_s": 0.0,
+    }
+
+
+def test_timebase_extras_unsupported_on_generic(
+    generic_driver: ScopeDriver, scope: FakeScope
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        generic_driver.configure_timebase_extras(vernier=True)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert generic_driver.get_timebase_extras() == {}
     assert scope.command_log == []

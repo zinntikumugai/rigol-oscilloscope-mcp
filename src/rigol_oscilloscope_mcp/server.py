@@ -358,8 +358,11 @@ def create_server(
 
     @_register
     def get_timebase() -> dict:
-        """Return the horizontal (timebase) state."""
-        return service.get_timebase_dict(manager.require_scope())
+        """Return the horizontal (timebase) state, including mode, vernier, the
+        horizontal reference, auto_roll and the delayed sweep (zoom) when the
+        model supports them (get_state omits those to stay fast)."""
+        driver = manager.require_scope()
+        return {**service.get_timebase_dict(driver), **driver.get_timebase_extras()}
 
     @_register
     def get_trigger() -> dict:
@@ -556,16 +559,44 @@ def create_server(
     def configure_timebase(
         scale_s_per_div: float | None = None,
         position_s: float | None = None,
+        mode: str | None = None,
+        vernier: bool | None = None,
+        href_mode: str | None = None,
+        href_position: int | None = None,
+        auto_roll: bool | None = None,
+        delay_enabled: bool | None = None,
+        delay_scale_s: float | None = None,
+        delay_offset_s: float | None = None,
     ) -> dict:
         """Configure the horizontal axis (timebase). Omitted items are left unchanged.
 
         Specify at least one item to change. The device may snap values, so trust
         applied (the read-back value).
+        mode is "main" or "roll" (roll scrolls slow signals continuously; it is
+        sent first because switching to roll sets 50 ms/div, and the scale stays
+        there after returning to main). vernier enables fine scale steps.
+        href_mode ("center" / "left" / "right" / "trigger" / "user") and
+        href_position (-500 to 500, for "user") set the point the waveform
+        expands around. auto_roll enters roll automatically at >= 50 ms/div.
+        delay_enabled / delay_scale_s / delay_offset_s control the delayed sweep
+        (zoom window); capture_waveform still returns the whole main timebase,
+        not the zoomed part.
         """
+        extras = {
+            "vernier": vernier,
+            "href_mode": href_mode,
+            "href_position": href_position,
+            "auto_roll": auto_roll,
+            "delay_enabled": delay_enabled,
+            "delay_scale_s": delay_scale_s,
+            "delay_offset_s": delay_offset_s,
+        }
         return control.configure_timebase(
             manager.require_scope(),
             scale_s_per_div=scale_s_per_div,
             position_s=position_s,
+            mode=mode,
+            **{key: value for key, value in extras.items() if value is not None},
         )
 
     @_register

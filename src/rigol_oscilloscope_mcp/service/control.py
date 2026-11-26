@@ -249,6 +249,14 @@ class ControlService:
         }
 
     @staticmethod
+    def _timebase_snapshot(driver: ScopeDriver, requested: dict) -> dict:
+        """基本状態。拡張項目やモードを変える呼び出しでは拡張項目も含める。"""
+        state = get_timebase_dict(driver)
+        if any(key not in ("scale_s_per_div", "position_s") for key in requested):
+            state.update(driver.get_timebase_extras())
+        return state
+
+    @staticmethod
     def _channel_snapshot(driver: ScopeDriver, channel: str, extras: dict) -> dict:
         """基本状態。追加属性を変える呼び出しでは追加属性も含める(changed 判定用)。"""
         state = get_channel_dict(driver, channel)
@@ -262,28 +270,49 @@ class ControlService:
         *,
         scale_s_per_div: float | None = None,
         position_s: float | None = None,
+        mode: str | None = None,
+        **extras: object,
     ) -> dict:
-        """水平軸を設定する(SAFE_WRITE)。未指定の項目は変更しない。"""
+        """水平軸を設定する(SAFE_WRITE)。未指定の項目は変更しない。
+
+        `mode`(MAIN / ROLL)は**スケールより前**に送る(ROLL は時間軸を 50ms/div に
+        書き換えるので、後に送ると同じ呼び出しのスケールが上書きされる。実機実測)。
+        `extras` は遅延掃引・水平基準などの拡張項目(issue #68)。基本項目の後に送る。
+        """
         requested = _specified(
-            {"scale_s_per_div": scale_s_per_div, "position_s": position_s}
+            {
+                "mode": mode,
+                "scale_s_per_div": scale_s_per_div,
+                "position_s": position_s,
+                **extras,
+            }
         )
         if not requested:
             raise _invalid(
                 "No item to change was specified "
-                "(specify at least one of scale_s_per_div / position_s)",
+                "(specify at least one of scale_s_per_div / position_s / mode or an "
+                "extra timebase setting)",
                 {},
             )
 
         setters: dict[str, Callable[[object], object]] = {
+            "mode": lambda v: driver.set_timebase_mode(str(v)),
             "scale_s_per_div": lambda v: driver.set_timebase_scale(float(v)),
             "position_s": lambda v: driver.set_timebase_position(float(v)),
         }
+        extra_values = {key: value for key, value in requested.items() if key not in setters}
 
         with self._audited("configure_timebase", requested) as record:
-            before = get_timebase_dict(driver)
+            before = self._timebase_snapshot(driver, requested)
             record.before(before)
-            applied = {key: setters[key](value) for key, value in requested.items()}
-            after = get_timebase_dict(driver)
+            applied = {
+                key: setters[key](value)
+                for key, value in requested.items()
+                if key in setters
+            }
+            if extra_values:
+                applied.update(driver.configure_timebase_extras(**extra_values))
+            after = self._timebase_snapshot(driver, requested)
             record.after(after)
 
         return {"requested": requested, "applied": applied, "changed": before != after}

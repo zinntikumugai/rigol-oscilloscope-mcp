@@ -166,7 +166,20 @@ API境界はSI基本単位(V, s, Hz, Ω, Sa/s)。「500 mV」「20 us」等の�
 
 ### `configure_timebase` — SAFE_WRITE / Phase 2
 
-引数: `scale_s_per_div`(必須)、`position_s`(任意)
+引数(未指定項目は変更しない。1つ以上必須):
+
+| 名前 | 説明 |
+|---|---|
+| `scale_s_per_div` / `position_s` | 時間軸スケール / 水平位置 |
+| `mode` | `"main"` / `"roll"`(issue #68)。**スケールより前に送る** — ROLL へ切り替えると時間軸が 50ms/div に書き換わり、MAIN へ戻しても戻らない(実機実測)。XY は `:TIMebase:MODE XY` がエラーなしで無視されるため扱わない |
+| `vernier` | 水平スケールの微調整 |
+| `href_mode` / `href_position` | 拡大・縮小の基準点(`center` / `left` / `right` / `trigger` / `user`)と、`user` のときの位置(-500〜500) |
+| `auto_roll` | 50ms/div 以上で自動的に ROLL へ入るか(`:TIMebase:ROLL` は {0\|1}) |
+| `delay_enabled` / `delay_scale_s` / `delay_offset_s` | 遅延掃引(ズーム)。送信順は 有効化 → スケール → オフセット |
+
+- **V-6 決着(実機実測)**: 遅延掃引中でも `:WAVeform:DATA?` はズーム区間ではなく**メイン時間軸の全体**を返す(取り込み開始位置・点数・時間間隔がズーム前と同じ)。`capture_waveform` でズーム区間だけを読むことはできない
+- 拡張項目は `get_timebase` にだけ載る(`get_state` には載せない)
+- プロファイル方言 `timebase_modes`(ゲート)/ `timebase_href_modes`。未宣言なら拡張項目は送信ゼロで `UNSUPPORTED_FEATURE`
 
 ### `configure_trigger` — SAFE_WRITE / Phase 2(種別の拡張は Phase M5)
 
