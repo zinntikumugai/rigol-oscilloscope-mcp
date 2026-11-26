@@ -217,6 +217,23 @@ def _restorable_memory_depth(driver: ScopeDriver, depth: int) -> int | str:
     declared = driver.profile.dialect.get("acquire_memory_depths") or []
     return depth if depth in declared else "auto"
 
+def _restore_displays(
+    driver: ScopeDriver, displays: dict[str, bool]
+) -> tuple[list[str], dict[str, tuple[bool, bool]]]:
+    """chの表示状態を戻す。1chで失敗しても残りは戻し、(失敗, 戻らなかったch) を返す。"""
+    failures: list[str] = []
+    for channel, enabled in displays.items():
+        try:
+            driver.set_channel_enabled(channel, enabled)
+        except Exception as exc:  # 復元は最後まで試みる
+            failures.append(f"{channel}: {exc!r}")
+    drift = {}
+    for channel, enabled in displays.items():
+        now = get_channel_dict(driver, channel)["enabled"]
+        if now != enabled:
+            drift[channel] = (enabled, now)
+    return failures, drift
+
 
 def _diff(before: dict, after: dict) -> dict[str, tuple[object, object]]:
     """復元漏れの検出用。揮発キーは無視する。"""
@@ -768,11 +785,17 @@ def decode_before(
         f"CH{n}": get_channel_dict(driver, f"CH{n}")["enabled"]
         for n in range(1, driver.analog_channels + 1)
     }
-    # `bit_sources` まで含めて控える(この走査だけは `:BITX` の書き込みを伴う)
-    before = driver.get_decode_config(DECODE_BUS, include_bit_sources=True)
+    # `bit_sources` まで含めて控える(この走査だけは `:BITX` の書き込みを伴う)。
+    # 走査の失敗や skip で抜けるときも、表示状態だけは必ず戻す
+    try:
+        before = driver.get_decode_config(DECODE_BUS, include_bit_sources=True)
+    except BaseException:
+        _restore_displays(driver, displays)
+        raise
     tag = request.node.name
     _report(f"[before:{tag}] bus{DECODE_BUS}={before}")
     if before["protocol"] not in DECODE_PROTOCOLS:
+        _restore_displays(driver, displays)
         pytest.skip(f"BUS{DECODE_BUS} は未対応プロトコル({before['protocol']})")
     try:
         yield before
@@ -807,19 +830,8 @@ def decode_before(
 
         after = driver.get_decode_config(DECODE_BUS, include_bit_sources=True)
         drift = _diff(before, after)
-        # 表示状態は、ビットソースを読み直す走査の**後**で戻す(走査でまたONになる)。
-        # 1chで失敗しても残りのchは戻す(_restore_channel と同じ規律)
-        display_failures: list[str] = []
-        for channel, enabled in displays.items():
-            try:
-                driver.set_channel_enabled(channel, enabled)
-            except Exception as exc:  # 復元は最後まで試みる
-                display_failures.append(f"{channel}: {exc!r}")
-        display_drift = {
-            channel: (enabled, get_channel_dict(driver, channel)["enabled"])
-            for channel, enabled in displays.items()
-            if get_channel_dict(driver, channel)["enabled"] != enabled
-        }
+        # 表示状態は、ビットソースを読み直す走査の**後**で戻す(走査でまたONになる)
+        display_failures, display_drift = _restore_displays(driver, displays)
         _report(f"[restore:{tag}] bus{DECODE_BUS} 復元後={after}")
         if drift:
             _report(f"[restore:{tag}] **復元漏れ**: {drift}")
