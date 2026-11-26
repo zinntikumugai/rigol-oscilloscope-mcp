@@ -60,6 +60,7 @@
 | `system_clock` | true | 機器の時計(`:SYSTem:DATE?` / `:TIME?`)の可否。`get_capabilities` / `capture_screenshot` の `clock` が使う。**未宣言なら時計を読まず `clock: null`**。mho98のみ(DHO800/900 にはコマンド自体が無い) |
 | `hardware_info` | true | 機器自身の申告(`:SYSTem:RAMount?` / `:AUToset:ENAble?` / `:LOCK?`)の可否。`get_capabilities` の `hardware` と、autoset 実行前の可否確認が使う。**未宣言なら照会せず `hardware: null`**。mho98のみ。`:SYSTem:MODules?` は実態と合わないため使わない([verification/mho98-m6.md](verification/mho98-m6.md) §4) |
 | `mask_test` | true | Pass/Fail(マスク)試験(`:MASK`。`:OUTPut:*` を除く)の可否。`configure_mask` / `get_mask_result` が使う。**未宣言なら送信ゼロで `UNSUPPORTED_FEATURE`**。mho98のみ |
+| `logic_analyzer` | true | ロジックアナライザの設定(`:LA`。ガイド3.13)の可否。`configure_logic_analyzer` / `get_logic_analyzer` が使う。ch数は `digital_channels`(ポッドは8chごと)。mho98のみ |
 | `autoset_options` | true | オートセットの挙動設定(`:AUToset:PEAK` / `:OPENch` / `:OVERlap` / `:KEEPcoup`)の可否。`configure_autoset` と `get_capabilities` の `hardware.autoset_options` が使う。mho98のみ |
 | `measurement_histogram` | true | 測定ヒストグラム(`:MEASure:HISTogram`、3.17.31-32)の可否。`get_measurement_histogram` と `configure_measurement(histogram_enabled=...)` が使う。**`histogram`(3.11 の波形ヒストグラム)とは別サブシステムなので別に宣言する**。mho98のみ |
 | `system_setup` | true | 設定の一括保存・復元(`:SYSTem:SETup`)の可否。`save_setup` / `restore_setup` が使う。方言 `setup_header`(ヘッダ形式。mho98 は `crc32_length`)が揃わないと復元しない。mho98のみ |
@@ -84,6 +85,7 @@
 | `channel_units` | `:CHANnel<n>:UNITs` の値。**チャンネルの追加属性(反転・微調整・単位・ラベル・バイアス・遅延補正)のゲート**を兼ね、未宣言なら `configure_channel` の追加属性は送信ゼロで `UNSUPPORTED_FEATURE`、`get_channel` も読まない | mho98: `volt` / `ampere` / `watt` / `unknown`(ガイド3.6.12。応答は短形 `VOLT` / `AMP`) |
 | `timebase_modes` / `timebase_href_modes` | `:TIMebase:MODE` と `:HREFerence:MODE` の値。**`timebase_modes` が水平軸の拡張項目(遅延掃引・水平基準・微調整・自動ROLL)のゲート** | mho98: `main` / `roll`(XY は実機で無視されるため不在)と、`center` / `left` / `right` / `trigger` / `user`(ガイド3.26) |
 | `decode_can_fd` | true なら CAN デコードに CAN-FD のデータフェーズ設定(`fd_baud_bps` / `fd_sample_point_percent`)を足す。**CAN-FD オプションが導入済みのときだけ**読み書きする(未ライセンスだと読み取りでも `-222` を積むため) | mho98: true(ガイド3.4.14.4 / 3.4.14.6)。実機は 12.3Mbps もエラーなしで受理するので、値域 1〜10Mbps はホスト側で検証する |
+| `la_autosort` / `la_sizes` | ロジックアナライザの並び順(`:LA:AUTosort`)と表示サイズ(`:LA:SIZE`)。読み戻しは短形(`MED` 等) | mho98: `d0_d15` / `d15_d0`、`small` / `medium` / `large` |
 | `decode_option_protocols` / `trigger_option_types` | オプション必須のデコード・トリガ(名前 → `{token, option}`)。`option` は `option_types` のキーで、**導入済みのときだけ**使う。照会はその名前やトークンが関わるときだけ行う | mho98: `i2s`(IIS / audio_i2s)/ `flexray`(FLEXray / flexray)/ `m1553`(M1553 / mil_std_1553)。トリガの列挙は `trigger_flexray_*` / `trigger_i2s_*` / `trigger_m1553_*` / `trigger_compare_ops` |
 | `acquire_types` | `:ACQuire:TYPE` の値(`normal` / `peak` / `average` / `high_resolution`)。**未宣言 = `configure_acquisition` が送信ゼロで `UNSUPPORTED_FEATURE`、`get_acquisition_state` も設定クエリを送らない** | mho98: 4種(ガイド3.3.3。応答は短形 `NORM` / `PEAK` / `AVER` / `HRES`)。DHO系は実機未検証のため不在 |
 | `acquire_bits` | `:ACQuire:BITS` の選択肢(リスト)。未宣言なら `adc_bits` を扱わない | mho98: `[14, 16]`(3.3.5)。**high_resolution モード以外では書き込みが `-200`**(実機実測)。DHO800/900 には無い(`:ACQuire:HRESolution` が別綴り) |
@@ -268,7 +270,7 @@ quirk系(`invalid_query_behavior` / `error_queue_stale_on_connect` / `snaps_to_1
 - **AFG**(`afg_channels: 0`、`afg_prefix` ほか未宣言)。DHO914S/924S は1chのジェネレータを内蔵するが、DHO系は**番号なしの `:SOURce`** でMHO900の `:SOURce<n>` とは別方言
 - **MATH演算**(`math_channels` / `ref_channels` / `math_*` の方言6キーとも未宣言)。DHO系ガイドの `:MATH<n>` 章はまだ逐語解読していないため、演算子トークンの集合が同一である保証が無い
 - **カーソル・周波数カウンタ・電圧計・ヒストグラム**(`cursor` / `frequency_counter` / `dvm` / `histogram` と `cursor_modes` / `cursor_types` / `counter_modes` / `dvm_modes` / `histogram_types` の方言5キーとも未宣言)。M1と同じ理由でDHO系ガイドの該当章(3.7 / 3.8 / 3.10 / 3.11 相当)が未解読
-- **ロジックアナライザ**(`digital_channels` は情報として持つがLA操作Tool自体が未実装)
+- **ロジックアナライザ**(`logic_analyzer` と `la_*` 方言は未宣言。DHO系ガイドの `:LA` 章が未解読)
 - **オプション照会**(`:SYSTem:OPTion:*` はMHO900専用でDHOのガイドに存在しない)
 - **50Ω入力**(`impedance_control: false`。DHO800/900の入力は1MΩ固定)
 

@@ -476,6 +476,42 @@ class ControlService:
             record.after(after)
         return {"requested": requested, "applied": applied, "changed": before != after}
 
+    def configure_logic_analyzer(
+        self,
+        driver: ScopeDriver,
+        *,
+        enabled: bool | None = None,
+        pods: dict | None = None,
+        channels: dict | None = None,
+        active: str | None = None,
+        autosort: str | None = None,
+        size: str | None = None,
+    ) -> dict:
+        """ロジックアナライザを設定する(SAFE_WRITE。issue #86)。未指定の項目は変更しない。"""
+        requested = _specified(
+            {
+                "enabled": enabled,
+                "pods": pods or None,
+                "channels": channels or None,
+                "active": active,
+                "autosort": autosort,
+                "size": size,
+            }
+        )
+        if not requested:
+            raise _invalid(
+                "No item to change was specified (specify at least one of enabled / "
+                "pods / channels / active / autosort / size)",
+                {},
+            )
+        with self._audited("configure_logic_analyzer", requested) as record:
+            before = driver.get_logic_analyzer()
+            record.before(before)
+            applied = driver.configure_logic_analyzer(**requested)
+            after = driver.get_logic_analyzer()
+            record.after(after)
+        return {"requested": requested, "applied": applied, "changed": before != after}
+
     def configure_trigger(
         self,
         driver: ScopeDriver,

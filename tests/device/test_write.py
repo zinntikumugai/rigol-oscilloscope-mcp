@@ -2780,6 +2780,8 @@ def test_configure_autoset_options_round_trip(
         driver.configure_autoset_options(**before)
         assert driver.get_autoset_options() == before
 
+
+# --------------------------------------------------------------------------
 # 測定ヒストグラム(issue #71)
 # --------------------------------------------------------------------------
 
@@ -2949,3 +2951,48 @@ def test_host_analyses_on_the_calibration_square_wave(
     finally:
         driver.set_channel_scale("CH1", ch1_scale)
         driver.set_timebase_scale(timebase)
+
+
+# --------------------------------------------------------------------------
+# ロジックアナライザ(issue #86)
+# --------------------------------------------------------------------------
+
+
+def _restore_logic_analyzer(driver: ScopeDriver, before: dict) -> None:
+    """読んだ状態へ戻す。ポッドの表示は8chをまとめて切り替えるので、ポッド → ch の順"""
+    driver.configure_logic_analyzer(
+        enabled=True,
+        pods=before["pods"],
+        channels=before["channels"],
+        active=before["active"],
+        autosort=before["autosort"],
+        size=before["size"],
+    )
+    if not before["enabled"]:
+        driver.configure_logic_analyzer(enabled=False)
+
+
+def test_logic_analyzer_round_trip(control: ControlService, driver: ScopeDriver) -> None:
+    before = driver.get_logic_analyzer()
+    _report(f"[la] before={before}")
+    if not before["enabled"]:
+        # 無効のあいだはポッド・chが全て 0 と読め、元の状態を控えられない
+        pytest.skip("ロジックアナライザが無効(前面パネルで有効にしてから流す)")
+    try:
+        result = control.configure_logic_analyzer(
+            driver,
+            pods={"1": {"threshold_v": 1.65}, "2": {"threshold_v": 1.65}},
+            channels={"D1": {"label": "TX"}, "D15": {"enabled": False}},
+            active="D1",
+            autosort="d0_d15" if before["autosort"] == "d15_d0" else "d15_d0",
+        )
+        _report(f"[la] applied={result['applied']}")
+        state = driver.get_logic_analyzer()
+        assert state["pods"]["1"]["threshold_v"] == pytest.approx(1.65)
+        assert state["channels"]["D1"]["label"] == "TX"
+        assert state["channels"]["D15"]["enabled"] is False
+        assert state["active"] == "D1"
+        assert driver.session.drain_error_queue() == []
+    finally:
+        _restore_logic_analyzer(driver, before)
+        assert driver.get_logic_analyzer() == before

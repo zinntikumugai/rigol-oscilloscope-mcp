@@ -35,6 +35,9 @@ capabilities:
   # 3.2.2-5。issue #70)。設定の書き込み・読み戻しは実機で確認済み(autoset の
   # 実行そのものは実機で禁止のまま)
   autoset_options: true
+  # ロジックアナライザの設定(:LA。ガイド3.13。issue #86)。実機で読み書きを確認済み。
+  # デジタル波形のデータは :WAVeform で読めない(:WAVeform:SOURce D0 は -200)
+  logic_analyzer: true
   # 設定の一括保存・復元(:SYSTem:SETup。ガイド3.24.20。issue #72)。実機実測: 応答は
   # ガイドの言う ASCII ではなくバイナリ(約3KB)。先頭4バイトが9バイト目以降の
   # CRC32(LE)、次の4バイトが全体長−8(LE)。書き戻すと設定が戻る
@@ -147,6 +150,9 @@ dialect:
   trigger_flexray_channels: {a: A, b: B}
   trigger_flexray_when: {frame: FRAMe, symbol: SYMBol, error: ERRor, tss: TSS}
   trigger_flexray_positions: {tss: TSS, fss: FSS, fes: FES, dts: DTS}
+  # ロジックアナライザ(issue #86。ガイド3.13.3 / 3.13.8)。読み戻しは短形(MED 等)
+  la_autosort: {d0_d15: D0D15, d15_d0: D15D0}
+  la_sizes: {small: SMALl, medium: MEDium, large: LARGe}
   trigger_flexray_frames: {"null": "NULL", sync: SYNC, startup: STAR, any: ANY}  # 素の null は YAML で None になる
   trigger_flexray_symbols: {cas: CAS, wus: WUS}
   trigger_flexray_errors: {header: HEAD, trailer: TRAiler, decode: DECode, any: ANY}

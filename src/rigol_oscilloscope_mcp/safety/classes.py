@@ -57,6 +57,8 @@ TOOL_CLASSES: dict[str, OperationClass] = {
     "configure_mask": OperationClass.SAFE_WRITE,
     "get_mask_result": OperationClass.READ_ONLY,
     "configure_autoset": OperationClass.SAFE_WRITE,
+    "configure_logic_analyzer": OperationClass.SAFE_WRITE,
+    "get_logic_analyzer": OperationClass.READ_ONLY,
     "get_measurement_histogram": OperationClass.READ_ONLY,
 
     "save_setup": OperationClass.READ_ONLY,

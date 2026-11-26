@@ -122,3 +122,20 @@ def test_restore_setup_rejects_a_huge_file(server, config: Config) -> None:
     assert result["error"] is True
     assert result["code"] == ErrorCode.INVALID_PARAMETER
     assert "too large" in result["message"]
+
+
+def test_logic_analyzer_tools_round_trip(server, scope: FakeScope) -> None:
+    """ロジックアナライザの Tool(issue #86)。dict 引数が JSON のまま届くこと。"""
+    connected(server)
+
+    result = data(
+        server,
+        "configure_logic_analyzer",
+        {"enabled": True, "pods": {"1": {"enabled": True, "threshold_v": 1.65}}},
+    )
+    state = data(server, "get_logic_analyzer")
+
+    assert result["applied"]["pods"]["1"] == {"enabled": True, "threshold_v": 1.65}
+    assert state["enabled"] is True
+    assert state["channels"]["D0"]["enabled"] is True
+    assert state["channels"]["D8"]["enabled"] is False

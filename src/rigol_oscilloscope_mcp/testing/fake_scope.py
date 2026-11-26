@@ -1151,6 +1151,16 @@ class FakeScope:
         self.timebase_extras: dict = {k: d for k, _, _, d in _TIMEBASE_EXTRA_PROPS}
 
         self.autoset_options: dict = {k: d for k, _, _, d in _AUTOSET_OPTION_PROPS}
+        # ロジックアナライザ(:LA。issue #86)。ポッド・chの有効は「下地の状態」を
+        # 持ち、LA が無効のあいだは 0 と読める(実機実測)
+        self.la: dict = {
+            "enabled": False,
+            "active": "D0",
+            "autosort": "D15D0",
+            "size": "MED",
+            "pods": {1: {"display": False, "threshold": 0.0}, 2: {"display": False, "threshold": 0.0}},
+            "channels": {n: {"enabled": False, "label": f"D{n}"} for n in range(16)},
+        }
         self.trigger: dict[str, object] = {
             "mode": "EDGE",
             "sweep": "AUTO",
@@ -1300,6 +1310,7 @@ class FakeScope:
         entries += self._prop_entries(
             rf":?{_mn('AUToset')}", _AUTOSET_OPTION_PROPS, self.autoset_options
         )
+        entries += self._la_entries()
         timebase = rf":?{_mn('TIMebase')}:{_mn('MAIN')}"
         trigger = rf":?{_mn('TRIGger')}"
         edge = rf"{trigger}:{_mn('EDGE')}"
@@ -1670,6 +1681,61 @@ class FakeScope:
             )
         entries.append((rf"{math}:{_mn('FFT')}:{_mn('SEARch')}:RES\?", self._math_peaks))
         return entries
+
+    def _la_entries(self) -> list[tuple[str, Callable]]:
+        """ロジックアナライザ(ガイド3.13)。実機で確かめた連動をなぞる。"""
+        la = rf":?{_mn('LA')}"
+        digital = r"D(\d{1,2})"
+        state = self.la
+
+        def on(value: bool) -> bytes:
+            return b"1" if value else b"0"
+
+        def pod_write(n: int, token: str) -> None:
+            value = self._on_off(token)
+            state["pods"][n]["display"] = value
+            for ch in range(8 * (n - 1), 8 * n):  # ポッドの8chが揃って切り替わる
+                state["channels"][ch]["enabled"] = value
+
+        def channel(m: re.Match) -> dict:
+            n = int(m.group(1))
+            if n >= 16:
+                raise self._silent(OUT_OF_RANGE)
+            return state["channels"][n]
+
+        def size_write(token: str) -> None:
+            value = self._enum(token, ("SMALl", "MEDium", "LARGe"))
+            enabled = sum(1 for c in state["channels"].values() if c["enabled"])
+            if value == "LARG" and enabled > 8:
+                self.error_queue.append(OUT_OF_RANGE)  # 沈黙しない(実機実測)
+                return
+            state["size"] = value
+
+        def active_write(m: re.Match) -> None:
+            channel(m)  # D16 以上は値域外
+            state["active"] = f"D{int(m.group(1))}"
+
+        def label_write(m: re.Match) -> None:
+            channel(m)["label"] = m.group(2)
+
+        return [
+            (rf"{la}:{_mn('ENABle')}\?", lambda m: on(state["enabled"])),
+            (rf"{la}:{_mn('ENABle')}\s+{_VALUE}", lambda m: state.update(enabled=self._on_off(m.group(1)))),
+            (rf"{la}:{_mn('ACTive')}\?", lambda m: state["active"].encode("ascii")),
+            (rf"{la}:{_mn('ACTive')}\s+{digital}", active_write),
+            (rf"{la}:{_mn('AUTosort')}\?", lambda m: state["autosort"].encode("ascii")),
+            (rf"{la}:{_mn('AUTosort')}\s+(D0D15|D15D0)", lambda m: state.update(autosort=m.group(1).upper())),
+            (rf"{la}:{_mn('SIZE')}\?", lambda m: state["size"].encode("ascii")),
+            (rf"{la}:{_mn('SIZE')}\s+{_VALUE}", lambda m: size_write(m.group(1))),
+            (rf"{la}:POD([12]):{_mn('DISPlay')}\?", lambda m: on(state["enabled"] and state["pods"][int(m.group(1))]["display"])),
+            (rf"{la}:POD([12]):{_mn('DISPlay')}\s+{_VALUE}", lambda m: pod_write(int(m.group(1)), m.group(2))),
+            (rf"{la}:POD([12]):{_mn('THReshold')}\?", lambda m: f"{state['pods'][int(m.group(1))]['threshold']:.6f}E0".encode("ascii")),
+            (rf"{la}:POD([12]):{_mn('THReshold')}\s+{_VALUE}", lambda m: state["pods"][int(m.group(1))].update(threshold=self._float(m.group(2)))),
+            (rf"{la}:{_mn('DIGital')}:{_mn('ENABle')}\?\s+{digital}", lambda m: on(state["enabled"] and channel(m)["enabled"])),
+            (rf"{la}:{_mn('DIGital')}:{_mn('ENABle')}\s+{digital}\s*,\s*{_VALUE}", lambda m: channel(m).update(enabled=self._on_off(m.group(2)))),
+            (rf"{la}:{_mn('DIGital')}:{_mn('LABel')}\?\s+{digital}", lambda m: channel(m)["label"].encode("ascii")),
+            (rf"{la}:{_mn('DIGital')}:{_mn('LABel')}\s+{digital}\s*,\s*(\S+)", label_write),
+        ]
 
     def _prop_entries(
         self, head: str, props: tuple[tuple[str, str, object, object], ...], state: dict
