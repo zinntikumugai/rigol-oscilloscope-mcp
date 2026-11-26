@@ -293,4 +293,6 @@ CH1 0.1V/div・200µs/div(校正信号 1kHz、`:MEASure:ITEM? VPP` → `3.2499E-
 | 13 / 14 | `32.3uV` / `1.11mV` | Bin width / Sigma |
 | 0 / 1 / 2 / 4 / 15 | `92` / `1` / `0` / `0`〜`4` / `3.23mV` | **不明**(`unlabeled` に生で返す) |
 
-- write(`-k measurement_histogram`): **1 passed**。ヒット数が1以上、Pk_Pk ≈ Max − Min。前後比較の戻し忘れ0件
+- **対象の項目**: 測定結果ビューに既に Frequency などが並んでいると、Vpp を測った後でも対象は Frequency のままだった(他の測定テストと続けて流して判明)。`clear_measurements` で全消去してから目的の項目だけを測ると、その項目が対象になる
+- **ヒットが溜まる条件**: 対象の測定値が有効であること。CH1 50mV/div では校正信号(約0.3V)がはみ出して Vpp が測定不能になり、ヒットは0のままだった
+- write(`-k measurement`): **4 passed**(他の測定テストと続けて流して確認)。ヒット数が1以上、Pk_Pk ≈ Max − Min。前後比較の戻し忘れ0件

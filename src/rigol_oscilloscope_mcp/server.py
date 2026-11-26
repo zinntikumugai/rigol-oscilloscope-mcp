@@ -890,12 +890,14 @@ def create_server(
     @_register
     def get_measurement_histogram() -> dict:
         """Return the distribution of one measurement item over many acquisitions
-        (the measurement histogram): stats.item names the item (the device uses the
-        most recently added one), then sum / peaks (hit counts), max, min, pk_pk,
+        (the measurement histogram): stats.item names the item the device picked,
+        then sum / peaks (hit counts), max, min, pk_pk,
         mean, median, mode, bin_width, sigma with *_unit. Positions whose meaning
         is undocumented are returned as-is in unlabeled; raw is always included.
-        Enable it first with configure_measurement(histogram_enabled=true) and
-        measure the item you want; it accumulates while the scope runs.
+        To choose the item: clear_measurements, measure only the item you want,
+        then configure_measurement(histogram_enabled=true); otherwise the device
+        may keep following an item that was already in its result list. Check
+        stats.item. It accumulates while the scope runs.
         """
         return manager.require_scope().get_measurement_histogram()
 

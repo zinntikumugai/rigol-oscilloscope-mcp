@@ -1445,7 +1445,9 @@ class ScopeDriver:
         """測定ヒストグラムの統計(3.17.32。issue #71)。**生応答を必ず残す**。
 
         無効なら統計を読まない(:HISTogram と同じ扱い)。どの測定項目の分布かは
-        応答の `item` で分かる(機器は直前に追加した測定項目を対象にする)。
+        応答の `item` で分かる。**実機実測**: 対象は測定結果ビューで機器が選んだ
+        項目で、既に別の項目が並んでいるとそちらのままになる(先に全消去して
+        から測るのが確実)。
         """
         self._afg_enum("measure_areas", "the measurement range")
         if not parse_bool(self.session.query(f"{_MEASURE_PREFIX}:HISTogram:ENABle?")):

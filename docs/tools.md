@@ -1030,7 +1030,7 @@ MATH演算の現在設定を読む。**書き込みは一切行わず**、表示
 
 **測定ヒストグラム**(`:MEASure:HISTogram`、ガイド3.17.31-32)。1つの測定項目の値が、取り込みを重ねる間にどう分布したかを返す。**波形ヒストグラム(`:HISTogram`、12章)とは別サブシステム**。
 
-- 有効化は `configure_measurement(histogram_enabled=true)`。対象は**直前に追加した測定項目**(応答の `item` で分かる)
+- 有効化は `configure_measurement(histogram_enabled=true)`。対象は測定結果ビューで機器が選んだ項目(応答の `item` で分かる)。**実機実測**: 既に Frequency などが並んでいるとそちらが対象のままになるので、`clear_measurements` → 目的の項目だけを `measure` → 有効化、の順にする
 - 応答はラベルの無い16個の文字列(`[["92","1","0","Vpp","4","23hits","4hits","5.31mV",...]]`)。**各位置の意味はガイドに無い**。実機の応答を `:HISTogram` の13ラベルと照合し、並びと値が一致した位置(6〜15番目: `sum` / `peaks` / `max` / `min` / `pk_pk` / `mean` / `median` / `mode` / `bin_width` / `sigma`。Max − Min = Pk_Pk で整合)だけにラベルを付けて `stats` に入れる。SI接頭辞は基本単位へ換算し、`*_unit` を併記する
 - 意味の分からない位置(先頭の3値・5番目・最後の値)は `unlabeled` に生のまま返す。`raw` は常に返す
 - 無効のときは統計を読まない(`raw` は空、`warnings` に理由)

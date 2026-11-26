@@ -2794,6 +2794,13 @@ def test_measurement_histogram_accumulates(
     """
     from rigol_oscilloscope_mcp.service import measure
 
+    # **実機実測**: 対象は測定結果ビューの中で機器が選んだ項目で、既に Frequency
+    # などが並んでいるとそちらが対象になる。先に全項目を消してから測る
+    # 校正信号(約0.3V)が画面に収まるスケールにする(はみ出すと Vpp が測定不能
+    # になり、ヒットが溜まらない)
+    ch1_scale = get_channel_dict(driver, "CH1")["scale_v_per_div"]
+    driver.set_channel_scale("CH1", 0.1)
+    driver.clear_measurements()
     measure(driver, "CH1", ["vpp"])
     control.configure_measurement(driver, histogram_enabled=True)
     try:
@@ -2807,3 +2814,4 @@ def test_measurement_histogram_accumulates(
         assert driver.session.drain_error_queue() == []
     finally:
         driver.configure_measurement(histogram_enabled=False)
+        driver.set_channel_scale("CH1", ch1_scale)
