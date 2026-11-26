@@ -922,7 +922,8 @@ def create_server(
         The bus count is model-dependent (get_capabilities decode_buses; 4 on MHO98).
 
         protocol is uart / i2c / spi / can / lin / parallel (options such as
-        I2S, FlexRay, MIL-STD-1553 and CAN-FD are not supported).
+        I2S, FlexRay and MIL-STD-1553 are not supported; CAN-FD is set through the
+        can settings below).
         data_format is hex / ascii / dec / bin. Source values are "CH1"-"CH4",
         "D0"-"D15" or "off".
 

@@ -5022,13 +5022,35 @@ def test_configure_decode_can_fd_baud_is_range_checked(
     assert [c for c in scope.command_log if "?" not in c] == []
 
 
-def test_get_decode_config_reads_can_fd_when_licensed(driver: ScopeDriver) -> None:
+def test_get_decode_config_reads_can_fd_only_when_asked(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    """FD 項目はオプションの照会が要るので、明示したときだけ読む(Copilotレビュー)。"""
     driver.configure_decode(1, "can")
+    scope.command_log.clear()
 
-    settings = driver.get_decode_config(1)["settings"]
+    plain = driver.get_decode_config(1)["settings"]
+    assert "fd_baud_bps" not in plain
+    assert not [c for c in scope.command_log if "OPTion" in c]
 
+    settings = driver.get_decode_config(1, include_can_fd=True)["settings"]
     assert settings["fd_baud_bps"] == 1_000_000
     assert settings["fd_sample_point_percent"] == 80
+
+
+def test_can_fd_option_query_failures_are_not_treated_as_unlicensed(
+    driver: ScopeDriver, monkeypatch
+) -> None:
+    """通信エラー等は「使えない」と取り違えずにそのまま伝える(Copilotレビュー)。"""
+    def broken() -> dict:
+        raise ScopeError(ErrorCode.DEVICE_DISCONNECTED, "link lost", {})
+
+    monkeypatch.setattr(driver, "installed_options", broken)
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "can", settings={"fd_baud_bps": 2_000_000})
+
+    assert excinfo.value.code == ErrorCode.DEVICE_DISCONNECTED
 
 
 def test_can_fd_is_skipped_without_the_license() -> None:
@@ -5039,7 +5061,7 @@ def test_can_fd_is_skipped_without_the_license() -> None:
     driver.configure_decode(1, "can")
     scope.command_log.clear()
 
-    settings = driver.get_decode_config(1)["settings"]
+    settings = driver.get_decode_config(1, include_can_fd=True)["settings"]
     with pytest.raises(ScopeError) as excinfo:
         driver.configure_decode(1, "can", settings={"fd_baud_bps": 2_000_000})
 

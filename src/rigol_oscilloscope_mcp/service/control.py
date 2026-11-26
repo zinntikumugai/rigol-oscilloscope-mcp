@@ -517,9 +517,15 @@ class ControlService:
         )
         args = {"bus": bus, "protocol": protocol, **requested}
 
+        # CAN-FD の項目を変えるときだけ FD 項目も読み比べる(オプションの照会が要る)
+        include_can_fd = isinstance(settings, dict) and any(
+            key.startswith("fd_") for key in settings
+        )
         with self._audited("configure_decode", args) as record:
             # ビット別ソースまで見ないと `changed` が取りこぼす(走査は書き込みを伴う)
-            before = driver.get_decode_config(bus, include_bit_sources=True)
+            before = driver.get_decode_config(
+                bus, include_bit_sources=True, include_can_fd=include_can_fd
+            )
             record.before(before)
             applied = driver.configure_decode(
                 bus,
@@ -529,7 +535,9 @@ class ControlService:
                 data_format=data_format,
                 settings=settings,
             )
-            after = driver.get_decode_config(bus, include_bit_sources=True)
+            after = driver.get_decode_config(
+                bus, include_bit_sources=True, include_can_fd=include_can_fd
+            )
             record.after(after)
 
         return {

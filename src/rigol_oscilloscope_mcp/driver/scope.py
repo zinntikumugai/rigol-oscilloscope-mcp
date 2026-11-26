@@ -2357,10 +2357,14 @@ class ScopeDriver:
                 {"protocol": protocol, "sources": list(pair)},
             )
 
-    def _decode_items(self, protocol: str) -> dict:
-        """プロトコルの項目表。CAN は CAN-FD が使えるときだけ FD 項目を足す。"""
+    def _decode_items(self, protocol: str, include_can_fd: bool = False) -> dict:
+        """プロトコルの項目表。CAN の FD 項目は**明示されたときだけ**足す。
+
+        FD 項目を読むにはオプションの照会が要る。FD を使わない通常の CAN の読み
+        取りでは照会しない(余計な通信を増やさない)。
+        """
         items = DECODE_ITEMS.get(protocol, {})
-        if protocol == "can" and self._can_fd_available():
+        if protocol == "can" and include_can_fd and self._can_fd_available():
             items = {**items, **CAN_FD_ITEMS}
         return items
 
@@ -2374,10 +2378,16 @@ class ScopeDriver:
             return False
         try:
             return self.installed_options().get("can_fd") is True
-        except ScopeError:
-            return False
+        except ScopeError as exc:
+            # 「この機種はオプションを照会できない」だけを「使えない」とみなす。
+            # 通信エラーなどはそのまま伝える(使えないと取り違えない)
+            if exc.code == ErrorCode.UNSUPPORTED_FEATURE:
+                return False
+            raise
 
-    def get_decode_config(self, bus: int, *, include_bit_sources: bool = False) -> dict:
+    def get_decode_config(
+        self, bus: int, *, include_bit_sources: bool = False, include_can_fd: bool = False
+    ) -> dict:
         """デコードバスの現在設定を意味的なキーで返す。**既定では書き込みを行わない**。
 
         `include_bit_sources=True` のときだけ、パラレルのビット別ソースを
@@ -2406,7 +2416,7 @@ class ScopeDriver:
             "event_table": EVENT_ITEM.from_scpi(query(f"{prefix}{EVENT_ITEM.path}?")),
             "data_format": format_from(query(f"{prefix}:FORMat?")),
         }
-        items = self._decode_items(protocol)
+        items = self._decode_items(protocol, include_can_fd)
         mnemonic = protocols.get(protocol, "")
         settings: dict[str, object] = {}
         for key, item in items.items():

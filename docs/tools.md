@@ -357,7 +357,7 @@ FFTの実装:
 | `uart` | `tx_source`, `rx_source`, `baud_bps`(1〜20000000), `data_bits`(5/6/7/8/9), `parity`(none/odd/even), `stop_bits`(1/1.5/2), `endian`(msb/lsb), `polarity`(positive/negative), `tx_threshold_v`, `rx_threshold_v` |
 | `i2c` | `scl_source`, `sda_source`, `swap_sda_scl`, `address_bits`(7/8/10), `scl_threshold_v`, `sda_threshold_v` |
 | `spi` | `clk_source`, `clk_slope`(rising/falling), `mosi_source`, `miso_source`, `cs_source`, `cs_polarity`(high/low), `frame_mode`(cs/timeout), `timeout_s`(8e-9〜10), `data_bits`(4〜32), `endian`, `polarity`(high/low), `clk_threshold_v`, `mosi_threshold_v`, `miso_threshold_v`, `cs_threshold_v` |
-| `can` | `source`, `signal_type`(tx/rx/canh/canl/differential), `baud_bps`(10000〜5000000), `sample_point_percent`(10〜90), `threshold_v`。**CAN-FD オプションが導入済みなら** `fd_baud_bps`(1000000〜10000000、データフェーズ)/ `fd_sample_point_percent`(10〜90)も扱う(issue #69。未導入なら送信前に `UNSUPPORTED_FEATURE`) |
+| `can` | `source`, `signal_type`(tx/rx/canh/canl/differential), `baud_bps`(10000〜5000000), `sample_point_percent`(10〜90), `threshold_v`。**CAN-FD オプションが導入済みなら** `fd_baud_bps`(1000000〜10000000、データフェーズ)/ `fd_sample_point_percent`(10〜90)も扱う(issue #69。未導入なら送信前に `UNSUPPORTED_FEATURE`)。FD 項目はオプションの照会が要るので、**FD のキーを渡した呼び出しのときだけ**読み書きする |
 | `lin` | `source`, `baud_bps`(2400〜20000000), `parity_enabled`, `standard`(v1x/v2x/mixed), `threshold_v` |
 | `parallel` | `clk_source`, `clk_slope`, `bus`(`d7_d0` / `d15_d8` / `d15_d0` / `d0_d7` / `d8_d15` / `d0_d15` / `ch1`〜`ch4` / `user`), `bus_width`(1〜16), `bit_sources`(添字=ビット番号のリスト), `endian`, `polarity` |
 

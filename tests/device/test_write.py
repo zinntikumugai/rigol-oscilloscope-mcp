@@ -2742,7 +2742,7 @@ def test_configure_decode_can_fd_round_trip(
     if not driver.installed_options().get("can_fd"):
         pytest.skip("CAN-FD オプションが導入されていない")
     control.configure_decode(driver, DECODE_BUS, "can")
-    can_before = driver.get_decode_config(DECODE_BUS)["settings"]
+    can_before = driver.get_decode_config(DECODE_BUS, include_can_fd=True)["settings"]
     _report(f"[decode] can before={can_before}")
     try:
         result = control.configure_decode(
@@ -2758,5 +2758,5 @@ def test_configure_decode_can_fd_round_trip(
         assert driver.session.drain_error_queue() == []
     finally:
         control.configure_decode(driver, DECODE_BUS, "can", settings=can_before)
-        restored = driver.get_decode_config(DECODE_BUS)["settings"]
+        restored = driver.get_decode_config(DECODE_BUS, include_can_fd=True)["settings"]
         assert restored == can_before
