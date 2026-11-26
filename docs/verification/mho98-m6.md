@@ -250,3 +250,19 @@ CH1 0.1V/div・メイン 200µs/div で停止し、遅延掃引を 20µs/div・�
 
 - read-only: `test_timebase_extras_answer`
 - write(`-k "timebase_extras or roll_mode"`): **2 passed**。微調整・水平基準・遅延掃引の往復と、ROLL + スケール指定(モードを先に送るのでスケールが最終値になる)。前後比較の戻し忘れ0件
+
+## 12. CAN-FD デコード(issue #69、2026-11-26)
+
+`:SYSTem:OPTion:STATus? CAN-FD` → `1`(導入済み)。
+
+| コマンド | エラーキュー | 読み戻し | 所見 |
+|---|---|---|---|
+| `:BUS1:CAN:FDBaud?` / `:FDSPoint?` | No error | `1000000` / `80` | 初期値 |
+| `:BUS1:CAN:FDBaud 2000000` | No error | `2000000` | |
+| `:BUS1:CAN:FDSPoint 70` | No error | `70` | |
+| **`:BUS1:CAN:FDBaud 12345678`** | **No error** | **`12345678`** | ガイドの上限 10Mbps を超えても**受理される**。ホスト側で 1〜10Mbps を検証する |
+
+プローブで変えた値は元に戻した。
+
+- 未ライセンスの実機は FD 項目の読み取りに値を返しつつ `-222` を積む([mho98-unlicensed.md](mho98-unlicensed.md))。そのため FD 項目は、プロファイルの `decode_can_fd` 宣言と CAN-FD オプションが揃ったときだけ読み書きする
+- write(`-k can_fd`): **1 passed**。2Mbps / 70% を往復し、CAN 配下の値を元に戻した。前後比較の戻し忘れ0件

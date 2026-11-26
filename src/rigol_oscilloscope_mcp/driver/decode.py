@@ -325,7 +325,6 @@ DECODE_ITEMS: dict[str, dict[str, DecodeItem]] = {
                 )
             ),
         ),
-        # CAN-FD(:FDBaud / :FDSPoint)はオプション必須のため扱わない
         "baud_bps": _item(":BAUD", _int_range(10_000, 5_000_000)),
         "sample_point_percent": _item(":SPOint", _int_range(10, 90)),
         "threshold_v": _threshold("CAN"),
@@ -375,6 +374,15 @@ EVENT_ITEM = _item(":EVENt", _bool())
 
 #: プロファイルの対応表(`decode_protocols` / `decode_formats`)から
 #: 共通項目の変換器を組み立てるための公開口
+#: CAN-FD のデータフェーズ(ガイド3.4.14.4 / 3.4.14.6。issue #69)。**CAN-FD
+#: オプション必須**で、導入済みのときだけ CAN の項目に加える(scope.py の
+#: `_decode_items`)。**実機実測**: 機器は 12.3Mbps(ガイドの上限 10Mbps 超)も
+#: エラーなしで受理するので、値域はガイドどおりホスト側で検証する
+CAN_FD_ITEMS: dict[str, DecodeItem] = {
+    "fd_baud_bps": _item(":FDBaud", _int_range(1_000_000, 10_000_000)),
+    "fd_sample_point_percent": _item(":FDSPoint", _int_range(10, 90)),
+}
+
 profile_enum = _enum
 
 

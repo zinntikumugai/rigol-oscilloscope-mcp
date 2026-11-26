@@ -673,7 +673,6 @@ def test_bus5_is_silent(scope: FakeScope) -> None:
         ":BUS1:IIS:SCLK:SOURce?",
         ":BUS1:FLEXray:BAUD?",
         ":BUS1:M1553:SOURce?",
-        ":BUS1:CAN:FDBaud?",
     ],
 )
 def test_option_gated_decode_subtrees_are_not_modeled(

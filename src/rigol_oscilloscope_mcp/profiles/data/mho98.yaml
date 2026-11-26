@@ -292,6 +292,10 @@ dialect:
     right: RB
     trigger: TRIG
     user: USER
+
+  # CAN-FD デコード(:BUS<n>:CAN:FDBaud / :FDSPoint。issue #69)。CAN-FD オプションが
+  # 導入済みのときだけ扱う(未ライセンスだと読み取りでも -222 を積むため)
+  decode_can_fd: true
   acquire_bits: [14, 16]
   # メモリ深さの選択肢(ガイド3.3.2。issue #66)。"auto" は別に受け付ける。実機実測:
   # ch数で決まる上限(4ch時125M)を超えるとエラーなしで上限へ丸められる / AUTO の

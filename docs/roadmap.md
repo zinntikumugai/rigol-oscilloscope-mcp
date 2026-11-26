@@ -172,7 +172,7 @@
 | **`:MEASure` 系統の周波数カウンタ・ヒストグラム** | `:MEASure:COUNter:VALue?`(3.17.27)/ `:MEASure:HISTogram:STATistics:RESult?`(3.17.32) | **実装済みの `:COUNter`(3.7)/ `:HISTogram`(3.11)とは別サブシステム。** 数値が取れるためAI価値は高いが既存Toolと機能が重なる。**取り違えると未定義ヘッダを送る事故になる**ので、着手時は節番号で区別すること |
 | ~~メモリ深さの設定~~ | `:ACQuire:MDEPth` | **完了**(issue #66。`configure_acquisition` の `memory_depth`)。上限超過は無言で丸められ、AUTO の読み戻しは数値 |
 | 残りの標準トリガ種別(スロープ / ウィンドウ / Nthエッジ) | `:TRIGger:SLOPe` / `:WINDows` / `:NEDGe` | 用途が M5 の8種より狭い |
-| オプション必須のデコードとトリガ(I2S / FlexRay / MIL-STD-1553 / CAN-FD) | `:BUS<n>:IIS` ほか / `:TRIGger:FLEXray` / `:TRIGger:IIS` | 検証機はMHO900-BND適用済みで実機検証の障害は無いが、ライセンス前提のため1段下げ。**デコード側とトリガ側は対で着手するのが自然** |
+| オプション必須のデコードとトリガ(I2S / FlexRay / MIL-STD-1553。CAN-FD のデコードは issue #69 で完了) | `:BUS<n>:IIS` ほか / `:TRIGger:FLEXray` / `:TRIGger:IIS` | 検証機はMHO900-BND適用済みで実機検証の障害は無いが、ライセンス前提のため1段下げ。**デコード側とトリガ側は対で着手するのが自然** |
 | ホスト側解析の拡充 | (SCPIなし。`analyze_waveform` の `analyses` 値を増やす) | THD、Jitter、Overshoot / Undershoot、Ringing、Noise、Signal Integrity。**Tool追加ではなく引数追加で済む**。実測で必要性が出た時点で |
 | オートセットの挙動制御 | `:AUToset:OPENch` / `:KEEPcoup` / `:PEAK` | 意図しないch無効化・カップリング巻き戻りを防げる。ただし **autoset 自体が実機実行禁止**のため書き込みの検証ができない |
 | 設定の一括保存・復元 | `:SYSTem:SETup` | 「変更前の状態を保存して後で戻す」= 実機writeテストの安全弁になり得る。中身は不透明でスキーマ不明なので**個別項目の読み取りには使えない** |
@@ -299,7 +299,7 @@
 - **イベントテーブルの列構成は観測しながら固めていく**: `:BUS<n>:DATA?` の列はプロトコル依存でガイドに記載が無く、実装はヘッダ行をそのまま採用する(スキーマを持たない)。実機で観測できた列構成は [verification/mho98-phase4.md](verification/mho98-phase4.md) に追記していく(RS232の `Time,Tx/Rx,Data,Error,` は実測済み)
 - **バス無効時の `:DATA?` 挙動は未確認**: 現状は送信前に早期returnしているため実害はないが、観測できたら記録する
 - ~~**パラレルの `:BUS<n>:PARallel:WIDTh` が実機で拒否される問題**~~ → **解消(2026-08-28)**: 原因は「データソースが User のときのみ有効」というガイド3.4.10.4 の Remark([verification/mho98-phase4.md](verification/mho98-phase4.md) 5章)。`settings.parallel` に `bus`(ガイド3.4.10.1 逐語の11トークン)を追加し、**送信順を「表の並び」に固定**して `bus` が `bus_width` より先に届くようにした。あわせて `:PARallel:BITX` + `:PARallel:SOURce` の対を `bit_sources`(添字=ビット番号のリスト)として公開している([tools.md](tools.md) 6章)。`bus="user"` との結合はホスト側では検証せず機器の自己申告に任せる(既定方針)。実機writeテストの復元fixtureは `bus_width` / `bit_sources` を「Userへ入れて書き戻す → 本来の `bus` へ戻す」の2段で扱い、**復元が完全になった**([verification/mho98-m2.md](verification/mho98-m2.md) 7.1 の残件も解消)
-- **オプション必須プロトコルは延期**: I2S、FlexRay、MIL-STD-1553、CAN-FD。検証機はMHO900-BND適用済み(2026-08-26、[verification/mho98-phase4.md](verification/mho98-phase4.md) 3章)のため実機検証の障害はなくなった。実ニーズが出たら着手する
+- **オプション必須プロトコルは延期**: I2S、FlexRay、MIL-STD-1553(CAN-FD のデコードは issue #69 で完了)。検証機はMHO900-BND適用済み(2026-08-26、[verification/mho98-phase4.md](verification/mho98-phase4.md) 3章)のため実機検証の障害はなくなった。実ニーズが出たら着手する
 - **将来ゲートは送信前に不要**: オプション必須ニモニックは沈黙せず値を返すと実測済み(ライセンス適用前後とも)のため、既存の「set → エラーキュー確認 → read-back」で機器自身のエラーを検出できる(実測根拠: [verification/mho98-unlicensed.md](verification/mho98-unlicensed.md) 4章)。ただし未ライセンス時のエラーキュー挙動には揺らぎがある(`-222` が積まれる場合と積まれない場合を観測)ため、未ライセンス判定は `:SYSTem:OPTion:STATus?` で行うこと
 - `:BUS` コアはDHO/MHO共通と見られる(ガイド比較)。DHO実機を検証できたらファミリプロファイルへ引き上げる([device-profiles.md](device-profiles.md) 2.2)。**ただし I2C のアドレス指定(`:IIC:ADDBits` ↔ `:IIC:ADDRess`、意味も違う)と LIN の `:BAUD`(DHOには無い)は方言差がある** — 本文 5.1「ガイド解読で判明している方言差」
 

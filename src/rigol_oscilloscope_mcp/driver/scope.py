@@ -32,6 +32,7 @@ from .decode import (
     EXCLUSIVE_SOURCES,
     DecodeItem,
     parse_event_table,
+    CAN_FD_ITEMS,
     profile_enum,
 )
 from .parsers import (
@@ -2126,6 +2127,20 @@ class ScopeDriver:
             )
         number = self._decode_bus(bus)
         items = DECODE_ITEMS[name]
+        # CAN-FD の項目は渡されたときだけ扱う(オプションの照会もそのときだけ。
+        # FD を使わない呼び出しは従来どおり検証まで1コマンドも送らない)
+        if (
+            name == "can"
+            and isinstance(settings, dict)
+            and any(key in CAN_FD_ITEMS for key in settings)
+        ):
+            if not self._can_fd_available():
+                raise _unsupported(
+                    "CAN-FD decoding needs the CAN-FD option, which this model's "
+                    "profile or license does not provide",
+                    {"option": "can_fd", "profile": self.profile.name},
+                )
+            items = {**items, **CAN_FD_ITEMS}
 
         if settings is None:
             settings = {}
@@ -2342,7 +2357,37 @@ class ScopeDriver:
                 {"protocol": protocol, "sources": list(pair)},
             )
 
-    def get_decode_config(self, bus: int, *, include_bit_sources: bool = False) -> dict:
+    def _decode_items(self, protocol: str, include_can_fd: bool = False) -> dict:
+        """プロトコルの項目表。CAN の FD 項目は**明示されたときだけ**足す。
+
+        FD 項目を読むにはオプションの照会が要る。FD を使わない通常の CAN の読み
+        取りでは照会しない(余計な通信を増やさない)。
+        """
+        items = DECODE_ITEMS.get(protocol, {})
+        if protocol == "can" and include_can_fd and self._can_fd_available():
+            items = {**items, **CAN_FD_ITEMS}
+        return items
+
+    def _can_fd_available(self) -> bool:
+        """プロファイルが `decode_can_fd` を宣言し、CAN-FD オプションが導入済みか。
+
+        未ライセンスの実機は FD 項目の読み取りに値を返しつつ `-222` を積む
+        (mho98-unlicensed.md)。エラーキューを汚さないよう読み書きとも行わない。
+        """
+        if not self.profile.dialect.get("decode_can_fd"):
+            return False
+        try:
+            return self.installed_options().get("can_fd") is True
+        except ScopeError as exc:
+            # 「この機種はオプションを照会できない」だけを「使えない」とみなす。
+            # 通信エラーなどはそのまま伝える(使えないと取り違えない)
+            if exc.code == ErrorCode.UNSUPPORTED_FEATURE:
+                return False
+            raise
+
+    def get_decode_config(
+        self, bus: int, *, include_bit_sources: bool = False, include_can_fd: bool = False
+    ) -> dict:
         """デコードバスの現在設定を意味的なキーで返す。**既定では書き込みを行わない**。
 
         `include_bit_sources=True` のときだけ、パラレルのビット別ソースを
@@ -2371,7 +2416,7 @@ class ScopeDriver:
             "event_table": EVENT_ITEM.from_scpi(query(f"{prefix}{EVENT_ITEM.path}?")),
             "data_format": format_from(query(f"{prefix}:FORMat?")),
         }
-        items = DECODE_ITEMS.get(protocol, {})
+        items = self._decode_items(protocol, include_can_fd)
         mnemonic = protocols.get(protocol, "")
         settings: dict[str, object] = {}
         for key, item in items.items():
