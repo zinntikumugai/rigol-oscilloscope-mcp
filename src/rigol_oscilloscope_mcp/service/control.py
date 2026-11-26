@@ -172,8 +172,12 @@ class ControlService:
         bandwidth_limit: bool | None = None,
         impedance: str | None = None,
         confirm_token: str | None = None,
+        **extras: object,
     ) -> dict:
         """垂直軸を設定する。未指定(None)の項目は変更しない。
+
+        `extras` はチャンネルの追加属性(反転・単位・ラベル等。issue #67)。基本項目の
+        後に `configure_channel_extras` でまとめて送る。
 
         `impedance="50"` のみ RESTRICTED_WRITE へ昇格し、confirmトークンを要求する。
         """
@@ -186,13 +190,15 @@ class ControlService:
                 "probe_ratio": probe_ratio,
                 "bandwidth_limit": bandwidth_limit,
                 "impedance": impedance,
+                **extras,
             }
         )
         if not requested:
             raise _invalid(
                 "No item to change was specified "
                 "(specify at least one of enabled / scale_v_per_div / offset_v / "
-                "coupling / probe_ratio / bandwidth_limit / impedance)",
+                "coupling / probe_ratio / bandwidth_limit / impedance or an extra "
+                "attribute)",
                 {"channel": channel},
             )
 
@@ -218,11 +224,21 @@ class ControlService:
             "impedance": lambda v: driver.set_channel_impedance(channel, str(v)),
         }
 
+        extra_values = {key: value for key, value in requested.items() if key not in setters}
+        if extra_values:
+            # 追加項目は基本項目を書く**前に**検証する(不正なら1コマンドも書かない)
+            driver.plan_channel_extras(channel, **extra_values)
         with self._audited("configure_channel", args) as record:
-            before = get_channel_dict(driver, channel)
+            before = self._channel_snapshot(driver, channel, extra_values)
             record.before(before)
-            applied = {key: setters[key](value) for key, value in requested.items()}
-            after = get_channel_dict(driver, channel)
+            applied = {
+                key: setters[key](value)
+                for key, value in requested.items()
+                if key in setters
+            }
+            if extra_values:
+                applied.update(driver.configure_channel_extras(channel, **extra_values))
+            after = self._channel_snapshot(driver, channel, extra_values)
             record.after(after)
 
         return {
@@ -231,6 +247,14 @@ class ControlService:
             "applied": applied,
             "changed": before != after,
         }
+
+    @staticmethod
+    def _channel_snapshot(driver: ScopeDriver, channel: str, extras: dict) -> dict:
+        """基本状態。追加属性を変える呼び出しでは追加属性も含める(changed 判定用)。"""
+        state = get_channel_dict(driver, channel)
+        if extras:
+            state.update(driver.get_channel_extras(channel))
+        return state
 
     def configure_timebase(
         self,

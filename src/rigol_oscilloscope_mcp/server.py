@@ -347,8 +347,14 @@ def create_server(
 
     @_register
     def get_channel(channel: str) -> dict:
-        """Return the state of one channel ("CH1" to "CH4")."""
-        return service.get_channel_dict(manager.require_scope(), channel)
+        """Return the state of one channel ("CH1" to "CH4"), including invert,
+        vernier, units, label, label_display, bias_v and delay_calibration_s when
+        the model supports them (get_state omits those to stay fast)."""
+        driver = manager.require_scope()
+        return {
+            **service.get_channel_dict(driver, channel),
+            **driver.get_channel_extras(channel),
+        }
 
     @_register
     def get_timebase() -> dict:
@@ -495,6 +501,13 @@ def create_server(
         probe_ratio: float | None = None,
         bandwidth_limit: bool | None = None,
         impedance: str | None = None,
+        invert: bool | None = None,
+        vernier: bool | None = None,
+        units: str | None = None,
+        label: str | None = None,
+        label_display: bool | None = None,
+        bias_v: float | None = None,
+        delay_calibration_s: float | None = None,
         confirm_token: str | None = None,
     ) -> dict:
         """Configure the vertical axis (a channel). Omitted items are left unchanged.
@@ -507,7 +520,23 @@ def create_server(
         the first call does not execute and returns a confirm_token, so ask the
         human user whether to proceed and then call again with the same
         arguments plus that confirm_token.
+
+        Extra attributes: invert (flip the waveform), vernier (fine scale steps),
+        units ("volt" / "ampere" / "watt" / "unknown": set "ampere" for a current
+        probe; measure then reports values in that unit and says so, although
+        its keys keep the _v suffix), label (letters, digits, _ . + -) and
+        label_display, bias_v (bias voltage, :POSition), delay_calibration_s
+        (channel deskew, -100 ns to 100 ns).
         """
+        extras = {
+            "invert": invert,
+            "vernier": vernier,
+            "units": units,
+            "label": label,
+            "label_display": label_display,
+            "bias_v": bias_v,
+            "delay_calibration_s": delay_calibration_s,
+        }
         return control.configure_channel(
             manager.require_scope(),
             manager.generation,
@@ -520,6 +549,7 @@ def create_server(
             bandwidth_limit=bandwidth_limit,
             impedance=impedance,
             confirm_token=confirm_token,
+            **{key: value for key, value in extras.items() if value is not None},
         )
 
     @_register

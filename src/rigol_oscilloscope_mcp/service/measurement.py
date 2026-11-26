@@ -73,6 +73,15 @@ def measure(
             "and reports the rest as invalid at random. Split the request into "
             "smaller batches and clear_measurements between them.",
         )
+    # 表示単位が volt 以外(電流プローブで ampere 等。issue #67)なら、値はその単位
+    # だがキー名は `*_v` のまま。誤読を防ぐため単位と警告を添える
+    units = driver.channel_units(channel)
+    if units not in (None, "volt"):
+        payload["units"] = units
+        payload["warnings"].append(
+            f"{payload['channel']} is set to display in {units}: amplitude values "
+            f"keyed *_v are in {units}, not volts"
+        )
     if channel_b is not None:
         payload["channel_b"] = normalize_channel(channel_b)
     return payload
@@ -108,6 +117,14 @@ def get_measurement_statistics(
             if all(value is None for value in values.values())
         ],
     }
+    # 表示単位が volt 以外なら、振幅系の統計値はその単位。単位と警告を添える
+    units = driver.channel_units(channel)
+    if units not in (None, "volt"):
+        payload["units"] = units
+        payload["warnings"].append(
+            f"{payload['channel']} is set to display in {units}: the amplitude "
+            f"statistics (vpp, vmax, rms, ...) are in {units}, not volts"
+        )
     if channel_b is not None:
         payload["channel_b"] = normalize_channel(channel_b)
     return payload

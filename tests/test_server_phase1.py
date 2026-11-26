@@ -195,6 +195,18 @@ def test_get_capabilities_reports_hardware_info(server) -> None:
     assert hardware == {"analog_channels": 4, "autoset_available": True}
 
 
+def test_get_channel_includes_extra_attributes(server) -> None:
+    """1ch取得には反転・単位・ラベルなども載る(#67)。get_state には載せない。"""
+    connected(server)
+
+    channel = payload(call(server, "get_channel", {"channel": "CH1"}))
+    state = payload(call(server, "get_state", {"sections": ["channels"]}))
+
+    assert channel["units"] == "volt"
+    assert channel["label"] == "CH1"
+    assert "units" not in state["channels"]["CH1"]
+
+
 def test_get_capabilities_reports_installed_options(server) -> None:
     connected(server)
 
