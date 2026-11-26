@@ -2657,9 +2657,12 @@ def timebase_extras_before(
             lambda: driver.set_timebase_mode(before["mode"]),
             lambda: driver.set_timebase_scale(before["scale_s_per_div"]),
             lambda: driver.set_timebase_position(before["position_s"]),
-            lambda: driver.configure_timebase_extras(delay_enabled=True, **delay_values)
-            if delay_restorable
-            else None,
+            # 括弧で lambda の本体が条件式全体であることを明示する(要素は常に callable)
+            lambda: (
+                driver.configure_timebase_extras(delay_enabled=True, **delay_values)
+                if delay_restorable
+                else None
+            ),
             lambda: driver.configure_timebase_extras(**extras),
             lambda: driver.configure_acquisition(
                 memory_depth=_restorable_memory_depth(driver, before["memory_depth_setting"])
