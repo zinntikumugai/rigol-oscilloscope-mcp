@@ -218,6 +218,38 @@ def _restorable_memory_depth(driver: ScopeDriver, depth: int) -> int | str:
     return depth if depth in declared else "auto"
 
 
+def _present_channels(driver: ScopeDriver) -> int:
+    """実在するアナログch数。機器が申告できればそれを使う(2chモデルで存在しない
+    chを照会しないため。#24)。申告できない機種はプロファイルの値。"""
+    try:
+        info = driver.get_hardware_info()
+    except Exception:  # noqa: BLE001 - 申告できなければプロファイルの値で続ける
+        info = None
+    return info["analog_channels"] if info else driver.analog_channels
+
+
+def _restore_displays(
+    driver: ScopeDriver, displays: dict[str, bool]
+) -> tuple[list[str], dict[str, tuple[bool, bool]]]:
+    """chの表示状態を戻す。1chで失敗しても残りは戻し、(失敗, 戻らなかったch) を返す。"""
+    failures: list[str] = []
+    for channel, enabled in displays.items():
+        try:
+            driver.set_channel_enabled(channel, enabled)
+        except Exception as exc:  # 復元は最後まで試みる
+            failures.append(f"{channel}: {exc!r}")
+    drift = {}
+    for channel, enabled in displays.items():
+        try:
+            now = get_channel_dict(driver, channel)["enabled"]
+        except Exception as exc:  # 読み戻しの失敗も記録して残りのchを確かめる
+            failures.append(f"{channel} read-back: {exc!r}")
+            continue
+        if now != enabled:
+            drift[channel] = (enabled, now)
+    return failures, drift
+
+
 def _diff(before: dict, after: dict) -> dict[str, tuple[object, object]]:
     """復元漏れの検出用。揮発キーは無視する。"""
     return {
@@ -762,11 +794,34 @@ def decode_before(
     利用者の設定であることに変わりはないので他のwrite検証と同じ規律で扱う。
     プロトコルがオプション必須(未対応)の場合はテスト自体をskipする。
     """
-    # `bit_sources` まで含めて控える(この走査だけは `:BITX` の書き込みを伴う)
-    before = driver.get_decode_config(DECODE_BUS, include_bit_sources=True)
+    # パラレルのビットソースにchを指定すると、機器はそのchの表示を自動でONにする
+    # (issue #76)。走査より前に全アナログchの表示状態を控え、最後に戻す
+    displays = {
+        f"CH{n}": get_channel_dict(driver, f"CH{n}")["enabled"]
+        for n in range(1, _present_channels(driver) + 1)
+    }
+    # `bit_sources` まで含めて控える(この走査だけは `:BITX` の書き込みを伴う)。
+    # 走査の失敗や skip で抜けるときも、表示状態だけは必ず戻す
+    try:
+        before = driver.get_decode_config(DECODE_BUS, include_bit_sources=True)
+    except BaseException as exc:
+        # 元の例外は潰さずに再送出する。表示を戻せなかったことはその例外に添える
+        display_failures, display_drift = _restore_displays(driver, displays)
+        if display_failures or display_drift:
+            note = (
+                f"chの表示も復元できなかった: 失敗={display_failures} "
+                f"戻らなかったch={display_drift}"
+            )
+            _report(f"[before:{request.node.name}] **{note}**")
+            exc.add_note(note)
+        raise
     tag = request.node.name
     _report(f"[before:{tag}] bus{DECODE_BUS}={before}")
     if before["protocol"] not in DECODE_PROTOCOLS:
+        # skip の前でも、表示を戻せなかったなら失敗として報告する
+        display_failures, display_drift = _restore_displays(driver, displays)
+        assert not display_failures, f"chの表示の復元に失敗: {display_failures}"
+        assert not display_drift, f"chの表示が復元されていません: {display_drift}"
         pytest.skip(f"BUS{DECODE_BUS} は未対応プロトコル({before['protocol']})")
     try:
         yield before
@@ -799,7 +854,12 @@ def decode_before(
         except Exception as exc:  # 復元は最後まで試みる
             failure = exc
 
-        after = driver.get_decode_config(DECODE_BUS, include_bit_sources=True)
+        # 表示状態は、ビットソースを読み直す走査の**後**で戻す(走査でまたONになる)。
+        # 読み直しが例外で落ちても表示は必ず戻す
+        try:
+            after = driver.get_decode_config(DECODE_BUS, include_bit_sources=True)
+        finally:
+            display_failures, display_drift = _restore_displays(driver, displays)
         drift = _diff(before, after)
         _report(f"[restore:{tag}] bus{DECODE_BUS} 復元後={after}")
         if drift:
@@ -808,6 +868,8 @@ def decode_before(
             _report(f"[restore:{tag}] **復元コマンド失敗**: {failure!r}")
         assert failure is None, f"BUS{DECODE_BUS} の復元に失敗: {failure!r}"
         assert not drift, f"BUS{DECODE_BUS} が復元されていません: {drift}"
+        assert not display_failures, f"chの表示の復元に失敗: {display_failures}"
+        assert not display_drift, f"chの表示が復元されていません: {display_drift}"
 
 
 def test_configure_decode_uart_set_and_readback(
