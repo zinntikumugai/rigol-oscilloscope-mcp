@@ -344,3 +344,6 @@ BUS2 を IIS モードにして **`:BUS2:THReshold? I2SClk`**(ガイド3.4.9 に
 ### 17.4 スイート実行
 
 - write(`-k "option_decode or option_trigger"`): **6 passed**(3プロトコル × デコード/トリガ)。各配下を控えて元へ戻し、前後比較の戻し忘れ0件
+
+- セルフレビュー後の再確認(2026-11-26): FlexRay トリガの `frame_type="null"`(YAML の素の `null` キーが None になっていた不具合を修正)を書き込み → 読み戻し `null` → 元へ戻した(No error)。`-k "decode or option or i2s or flexray or m1553"` **12 passed**、戻し忘れ0件
+- 機器の不具合の記録: この確認の前に、BUS1 だけ「データソース USER → `:BITX` 書き込み → `:SOURce?`」で `-232` を積んで沈黙する状態になった(BUS2 は同じ手順で正常、BUS2 でオプション3種の設定往復をしても再現せず、`:SYSTem:SETup` の復元でも直らなかった)。**機器の再起動で解消**し、その後は同じテストを続けて流しても再発しない。原因は不明

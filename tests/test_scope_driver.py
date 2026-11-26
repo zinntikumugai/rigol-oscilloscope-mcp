@@ -5051,7 +5051,7 @@ def test_can_fd_option_query_failures_are_not_treated_as_unlicensed(
     driver: ScopeDriver, monkeypatch
 ) -> None:
     """通信エラー等は「使えない」と取り違えずにそのまま伝える(Copilotレビュー)。"""
-    def broken() -> dict:
+    def broken(**_: object) -> dict:
         raise ScopeError(ErrorCode.DEVICE_DISCONNECTED, "link lost", {})
 
     monkeypatch.setattr(driver, "installed_options", broken)
@@ -5485,3 +5485,65 @@ def test_option_scan_timeout_discards_earlier_results(driver: ScopeDriver, monke
     with pytest.raises(ScopeError) as excinfo:
         driver.configure_decode(1, "i2s")
     assert excinfo.value.code == ErrorCode.TIMEOUT
+
+
+def test_flexray_trigger_frame_type_null(driver: ScopeDriver, scope: FakeScope) -> None:
+    """YAML の素の `null` キーは None になる。`frame_type="null"` が使えること。"""
+    applied = driver.configure_trigger(type="flexray", settings={"frame_type": "null"})
+
+    assert applied["frame_type"] == "null"
+    assert ":TRIGger:FLEXray:FRAMe NULL" in scope.command_log or any(
+        c.endswith(" NULL") for c in scope.command_log
+    )
+    assert driver.get_trigger().settings["frame_type"] == "null"
+
+
+def test_get_decode_events_without_protocol_decode_sends_nothing() -> None:
+    """`protocol_decode` を宣言しない機種では :BUS<n>:MODE? も送らない。"""
+    from dataclasses import replace
+
+    scope = FakeScope()
+    transport = FakeTransport(scope)
+    transport.open()
+    profile = load_profile("mho98")
+    profile = replace(profile, capabilities={**profile.capabilities, "protocol_decode": False})
+    driver = ScopeDriver(ScpiSession(transport), profile)
+    scope.command_log.clear()
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_decode_events(1)
+
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
+    assert scope.command_log == []
+
+
+def test_option_with_an_unexpected_reply_is_not_reported_as_a_timeout(
+    driver: ScopeDriver, monkeypatch
+) -> None:
+    original = driver.session.query
+
+    def query(command: str, *args, **kwargs):
+        if "OPTion" in command:
+            return "YES"
+        return original(command, *args, **kwargs)
+
+    monkeypatch.setattr(driver.session, "query", query)
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "i2s")
+
+    assert excinfo.value.code != ErrorCode.TIMEOUT
+    assert "no response" not in excinfo.value.message
+
+
+def test_i2s_trigger_data_bits_below_the_current_user_bits_is_rejected(
+    driver: ScopeDriver, scope: FakeScope
+) -> None:
+    driver.configure_trigger(type="i2s", settings={"data_bits": 16, "user_bits": 16})
+    scope.command_log.clear()
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_trigger(settings={"data_bits": 8})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert [c for c in scope.command_log if "?" not in c] == []

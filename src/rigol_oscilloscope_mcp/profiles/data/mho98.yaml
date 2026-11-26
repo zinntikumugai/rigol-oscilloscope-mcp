@@ -147,7 +147,7 @@ dialect:
   trigger_flexray_channels: {a: A, b: B}
   trigger_flexray_when: {frame: FRAMe, symbol: SYMBol, error: ERRor, tss: TSS}
   trigger_flexray_positions: {tss: TSS, fss: FSS, fes: FES, dts: DTS}
-  trigger_flexray_frames: {null: "NULL", sync: SYNC, startup: STAR, any: ANY}
+  trigger_flexray_frames: {"null": "NULL", sync: SYNC, startup: STAR, any: ANY}  # 素の null は YAML で None になる
   trigger_flexray_symbols: {cas: CAS, wus: WUS}
   trigger_flexray_errors: {header: HEAD, trailer: TRAiler, decode: DECode, any: ANY}
   trigger_i2s_alignments: {i2s: IIS, left: LJ, right: RJ}

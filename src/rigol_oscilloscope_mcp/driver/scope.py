@@ -417,8 +417,8 @@ _TRIGGER_LIN_ITEMS: tuple[tuple[str, str, object], ...] = (
 )
 # -- オプション必須(issue #74。ガイド3.27.25-27)。実機で全項目の読み取りを確認
 # した項目だけを載せる。値域や意味がガイドで決まらない項目(FlexRay の ID 比較、
-# I2S の UWIDth / DMIN / DMAX、1553 の DMIN / DMAX / DRTA / DBIT / WINDow、各種
-# CODE)は扱わない
+# I2S の DMIN / DMAX、1553 の DMIN / DMAX / DRTA / DBIT / WINDow、各種 CODE)は
+# 扱わない
 _TRIGGER_FLEXRAY_ITEMS: tuple[tuple[str, str, object], ...] = (
     ("source", ":SOURce", "tsource"),
     ("level_v", ":LEVel", "number"),
@@ -1170,7 +1170,7 @@ class ScopeDriver:
         locked = parse_bool(self.session.query(":AUToset:LOCK?"))
         return enabled and not locked
 
-    def installed_options(self) -> dict[str, bool | None]:
+    def installed_options(self, *, strict: bool = False) -> dict[str, bool | None]:
         """導入済みオプションを意味的な名前で返す(不明な項目は None)。
 
         プロファイルが `option_query` / `option_types` を宣言していない機種では
@@ -1207,7 +1207,7 @@ class ScopeDriver:
                 # 応答timeoutだけ None に降格する。切断等は全体の失敗なので伝播させる。
                 # timeout 後は実トランスポートが接続を閉じるので、残りは照会せず、
                 # 途中までの結果も捨てて全て None で返す(キャッシュもしない)
-                if exc.code != ErrorCode.TIMEOUT:
+                if exc.code != ErrorCode.TIMEOUT or strict:
                     raise
                 return dict.fromkeys(types)
             options[name] = {"1": True, "0": False}.get(response)
@@ -2216,15 +2216,21 @@ class ScopeDriver:
             f":TRIGger:MODE {to_scpi_type(type, 'type')}" if type is not None else None
         )
         plan = self._command_plan(prefix, 0, items, merged)
-        if subtree_name == "i2s" and merged.get("user_bits") is not None:
-            # user_bits は 4〜data_bits(3.27.26.5)。data_bits 省略時は現在の幅と比べる
+        if subtree_name == "i2s" and (
+            merged.get("user_bits") is not None or merged.get("data_bits") is not None
+        ):
+            # user_bits は 4〜data_bits(3.27.26.5)。片方だけなら他方は現在値と比べる
             width = merged.get("data_bits")
             if width is None:
                 width = parse_nr3(self.session.query(f"{prefix}:WIDTh?"))
-            if int(merged["user_bits"]) > int(width):
+            user = merged.get("user_bits")
+            if user is None:
+                user = parse_nr3(self.session.query(f"{prefix}:UWIDth?"))
+            if int(user) > int(width):
                 raise _invalid(
-                    f"user_bits ({merged['user_bits']}) must not exceed data_bits ({int(width)})",
-                    {"user_bits": merged["user_bits"], "data_bits": int(width)},
+                    f"user_bits ({int(user)}) must not exceed data_bits ({int(width)}); "
+                    "pass both to change them together",
+                    {"user_bits": int(user), "data_bits": int(width)},
                 )
         common = self._command_plan(
             ":TRIGger",
@@ -2277,17 +2283,18 @@ class ScopeDriver:
         """オプションが導入済みか。照会できない機種(UNSUPPORTED_FEATURE)は False、
         通信エラーなどはそのまま伝える(使えないと取り違えない)。"""
         try:
-            installed = self.installed_options().get(option, False)
+            # 機能のゲートでは timeout をそのまま伝える(未導入と取り違えない)
+            installed = self.installed_options(strict=True).get(option, False)
         except ScopeError as exc:
             if exc.code == ErrorCode.UNSUPPORTED_FEATURE:
                 return False
             raise
         if installed is None:
-            # 照会に応答が無かった。未導入と取り違えない(キャッシュも捨てて次回読み直す)
-            self._options = None
+            # 応答が 0 / 1 以外だった。未導入と取り違えない
             raise ScopeError(
-                ErrorCode.TIMEOUT,
-                f"could not tell whether the {option} option is installed (no response)",
+                ErrorCode.SCPI_ERROR,
+                f"could not tell whether the {option} option is installed "
+                "(unexpected reply to the option query)",
                 {"option": option},
             )
         return installed
@@ -2693,6 +2700,7 @@ class ScopeDriver:
         プロトコル依存でガイドに記載が無いため、**列名は解釈せずそのまま返す**
         (時刻列だけは `time_s` として秒へ変換する)。
         """
+        self._decode_protocols()  # protocol_decode の宣言を送信前に確かめる
         number = self._decode_bus(bus)
         prefix = f":BUS{number}"
         query = self.session.query

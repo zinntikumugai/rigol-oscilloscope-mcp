@@ -84,7 +84,6 @@
 | `channel_units` | `:CHANnel<n>:UNITs` の値。**チャンネルの追加属性(反転・微調整・単位・ラベル・バイアス・遅延補正)のゲート**を兼ね、未宣言なら `configure_channel` の追加属性は送信ゼロで `UNSUPPORTED_FEATURE`、`get_channel` も読まない | mho98: `volt` / `ampere` / `watt` / `unknown`(ガイド3.6.12。応答は短形 `VOLT` / `AMP`) |
 | `timebase_modes` / `timebase_href_modes` | `:TIMebase:MODE` と `:HREFerence:MODE` の値。**`timebase_modes` が水平軸の拡張項目(遅延掃引・水平基準・微調整・自動ROLL)のゲート** | mho98: `main` / `roll`(XY は実機で無視されるため不在)と、`center` / `left` / `right` / `trigger` / `user`(ガイド3.26) |
 | `decode_can_fd` | true なら CAN デコードに CAN-FD のデータフェーズ設定(`fd_baud_bps` / `fd_sample_point_percent`)を足す。**CAN-FD オプションが導入済みのときだけ**読み書きする(未ライセンスだと読み取りでも `-222` を積むため) | mho98: true(ガイド3.4.14.4 / 3.4.14.6)。実機は 12.3Mbps もエラーなしで受理するので、値域 1〜10Mbps はホスト側で検証する |
-
 | `decode_option_protocols` / `trigger_option_types` | オプション必須のデコード・トリガ(名前 → `{token, option}`)。`option` は `option_types` のキーで、**導入済みのときだけ**使う。照会はその名前やトークンが関わるときだけ行う | mho98: `i2s`(IIS / audio_i2s)/ `flexray`(FLEXray / flexray)/ `m1553`(M1553 / mil_std_1553)。トリガの列挙は `trigger_flexray_*` / `trigger_i2s_*` / `trigger_m1553_*` / `trigger_compare_ops` |
 | `acquire_types` | `:ACQuire:TYPE` の値(`normal` / `peak` / `average` / `high_resolution`)。**未宣言 = `configure_acquisition` が送信ゼロで `UNSUPPORTED_FEATURE`、`get_acquisition_state` も設定クエリを送らない** | mho98: 4種(ガイド3.3.3。応答は短形 `NORM` / `PEAK` / `AVER` / `HRES`)。DHO系は実機未検証のため不在 |
 | `acquire_bits` | `:ACQuire:BITS` の選択肢(リスト)。未宣言なら `adc_bits` を扱わない | mho98: `[14, 16]`(3.3.5)。**high_resolution モード以外では書き込みが `-200`**(実機実測)。DHO800/900 には無い(`:ACQuire:HRESolution` が別綴り) |
