@@ -942,7 +942,9 @@ def create_server(
           {"clk_source": "CH1", "mosi_source": "CH2", "data_bits": 8}
         - can: source, signal_type (tx/rx/canh/canl/differential), baud_bps,
           sample_point_percent, threshold_v. Example: {"source": "CH1",
-          "signal_type": "canh", "baud_bps": 500000}
+          "signal_type": "canh", "baud_bps": 500000}. For CAN-FD (needs the
+          CAN-FD option) also fd_baud_bps (1000000-10000000, data phase) and
+          fd_sample_point_percent (10-90)
         - lin: source, baud_bps, parity_enabled, standard (v1x/v2x/mixed),
           threshold_v. Example: {"source": "CH1", "baud_bps": 19200,
           "standard": "v2x"}

@@ -172,7 +172,7 @@
 | **`:MEASure` 系統の周波数カウンタ・ヒストグラム** | `:MEASure:COUNter:VALue?`(3.17.27)/ `:MEASure:HISTogram:STATistics:RESult?`(3.17.32) | **実装済みの `:COUNter`(3.7)/ `:HISTogram`(3.11)とは別サブシステム。** 数値が取れるためAI価値は高いが既存Toolと機能が重なる。**取り違えると未定義ヘッダを送る事故になる**ので、着手時は節番号で区別すること |
 | ~~メモリ深さの設定~~ | `:ACQuire:MDEPth` | **完了**(issue #66。`configure_acquisition` の `memory_depth`)。上限超過は無言で丸められ、AUTO の読み戻しは数値 |
 | 残りの標準トリガ種別(スロープ / ウィンドウ / Nthエッジ) | `:TRIGger:SLOPe` / `:WINDows` / `:NEDGe` | 用途が M5 の8種より狭い |
-| オプション必須のデコードとトリガ(I2S / FlexRay / MIL-STD-1553 / CAN-FD) | `:BUS<n>:IIS` ほか / `:TRIGger:FLEXray` / `:TRIGger:IIS` | 検証機はMHO900-BND適用済みで実機検証の障害は無いが、ライセンス前提のため1段下げ。**デコード側とトリガ側は対で着手するのが自然** |
+| オプション必須のデコードとトリガ(I2S / FlexRay / MIL-STD-1553。CAN-FD のデコードは issue #69 で完了) | `:BUS<n>:IIS` ほか / `:TRIGger:FLEXray` / `:TRIGger:IIS` | 検証機はMHO900-BND適用済みで実機検証の障害は無いが、ライセンス前提のため1段下げ。**デコード側とトリガ側は対で着手するのが自然** |
 | ホスト側解析の拡充 | (SCPIなし。`analyze_waveform` の `analyses` 値を増やす) | THD、Jitter、Overshoot / Undershoot、Ringing、Noise、Signal Integrity。**Tool追加ではなく引数追加で済む**。実測で必要性が出た時点で |
 | オートセットの挙動制御 | `:AUToset:OPENch` / `:KEEPcoup` / `:PEAK` | 意図しないch無効化・カップリング巻き戻りを防げる。ただし **autoset 自体が実機実行禁止**のため書き込みの検証ができない |
 | 設定の一括保存・復元 | `:SYSTem:SETup` | 「変更前の状態を保存して後で戻す」= 実機writeテストの安全弁になり得る。中身は不透明でスキーマ不明なので**個別項目の読み取りには使えない** |

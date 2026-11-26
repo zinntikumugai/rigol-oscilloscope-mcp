@@ -559,6 +559,9 @@ _BUS_PROTOCOL_PROPS: dict[str, tuple[tuple[str, str, object, object], ...]] = {
         ("stype", "STYPe", ("TX", "RX", "CANH", "CANL", "DIFFerential"), "TX"),
         ("baud", "BAUD", "int", 1000000),
         ("spoint", "SPOint", "int", 50),
+        # CAN-FD(3.4.14.4 / 3.4.14.6)。既定値は実機の初期応答
+        ("fd_baud", "FDBaud", "int", 1000000),
+        ("fd_spoint", "FDSPoint", "int", 80),
     ),
     "LIN": (
         ("source", "SOURce", "src", "CHAN1"),
@@ -1346,7 +1349,7 @@ class FakeScope:
     def _bus_entries(self) -> list[tuple[str, Callable]]:
         """デコードバスのディスパッチ表。
 
-        `:BUS5` や未実装のプロトコル配下(IIS / FLEXray / M1553 / CAN:FDBaud)は
+        `:BUS5` や未実装のプロトコル配下(IIS / FLEXray / M1553)は
         どのパターンにも一致せず、実機同様に沈黙する。
         """
         bus = rf":?{_mn('BUS')}([1-{BUS_COUNT}])"

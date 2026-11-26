@@ -4992,3 +4992,57 @@ def test_timebase_extras_unsupported_on_generic(
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert generic_driver.get_timebase_extras() == {}
     assert scope.command_log == []
+
+# CAN-FD デコード(issue #69)
+# --------------------------------------------------------------------------
+
+
+def test_configure_decode_can_fd_round_trip(driver: ScopeDriver, scope: FakeScope) -> None:
+    applied = driver.configure_decode(
+        1, "can", settings={"fd_baud_bps": 2_000_000, "fd_sample_point_percent": 70}
+    )
+
+    assert ":BUS1:CAN:FDBaud 2000000" in scope.command_log
+    assert ":BUS1:CAN:FDSPoint 70" in scope.command_log
+    assert applied["settings"]["fd_baud_bps"] == 2_000_000
+    assert applied["settings"]["fd_sample_point_percent"] == 70
+
+
+@pytest.mark.parametrize("baud", [999_999, 12_345_678])
+def test_configure_decode_can_fd_baud_is_range_checked(
+    driver: ScopeDriver, scope: FakeScope, baud: int
+) -> None:
+    """**実機実測**: 機器は 12.3Mbps(ガイドの上限 10Mbps 超)もエラーなしで受理
+    する。ホスト側でガイドの値域(1〜10Mbps)を送信前に検証する。"""
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "can", settings={"fd_baud_bps": baud})
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    # 読むのはオプションの照会だけで、書き込みは1件も送らない
+    assert [c for c in scope.command_log if "?" not in c] == []
+
+
+def test_get_decode_config_reads_can_fd_when_licensed(driver: ScopeDriver) -> None:
+    driver.configure_decode(1, "can")
+
+    settings = driver.get_decode_config(1)["settings"]
+
+    assert settings["fd_baud_bps"] == 1_000_000
+    assert settings["fd_sample_point_percent"] == 80
+
+
+def test_can_fd_is_skipped_without_the_license() -> None:
+    """未ライセンスの機種では FD 項目を読まない(-222 でエラーキューを汚すため)。
+    書こうとすれば送信前に UNSUPPORTED_FEATURE。"""
+    scope = FakeScope(options={"CAN": True})
+    driver = make_driver(scope)
+    driver.configure_decode(1, "can")
+    scope.command_log.clear()
+
+    settings = driver.get_decode_config(1)["settings"]
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_decode(1, "can", settings={"fd_baud_bps": 2_000_000})
+
+    assert "fd_baud_bps" not in settings
+    assert not [c for c in scope.command_log if c.upper().startswith(":BUS1:CAN:FD")]
+    assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE

@@ -2725,3 +2725,38 @@ def test_configure_timebase_roll_mode_rewrites_the_scale(
 
     assert result["applied"]["mode"] == "roll"
     assert result["applied"]["scale_s_per_div"] == pytest.approx(0.1)
+
+# --------------------------------------------------------------------------
+# CAN-FD デコード(issue #69)
+# --------------------------------------------------------------------------
+
+
+def test_configure_decode_can_fd_round_trip(
+    control: ControlService, driver: ScopeDriver, decode_before: dict
+) -> None:
+    """CAN-FD のデータフェーズ設定の往復。CAN 配下の値は自前で控えて戻す。
+
+    decode_before が戻すのは元のプロトコル(パラレル等)の設定だけなので、CAN
+    サブツリーの値はこのテストで控えて書き戻す。
+    """
+    if not driver.installed_options().get("can_fd"):
+        pytest.skip("CAN-FD オプションが導入されていない")
+    control.configure_decode(driver, DECODE_BUS, "can")
+    can_before = driver.get_decode_config(DECODE_BUS)["settings"]
+    _report(f"[decode] can before={can_before}")
+    try:
+        result = control.configure_decode(
+            driver,
+            DECODE_BUS,
+            "can",
+            settings={"fd_baud_bps": 2_000_000, "fd_sample_point_percent": 70},
+        )
+        applied = result["applied"]["settings"]
+        _report(f"[decode] can-fd applied={applied}")
+        assert applied["fd_baud_bps"] == 2_000_000
+        assert applied["fd_sample_point_percent"] == 70
+        assert driver.session.drain_error_queue() == []
+    finally:
+        control.configure_decode(driver, DECODE_BUS, "can", settings=can_before)
+        restored = driver.get_decode_config(DECODE_BUS)["settings"]
+        assert restored == can_before
