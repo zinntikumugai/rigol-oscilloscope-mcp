@@ -2121,6 +2121,11 @@ def acquisition_before(
 
         after = driver.get_acquisition_config()
         drift = _diff(before, after)
+        # memory_depth は _diff では揮発キー扱い(水平軸の変更で変わる)なので、
+        # 数値で書き戻した場合だけ明示的に照合する(AUTO なら実際の深さは変わりうる)
+        if _restorable_memory_depth(driver, before["memory_depth"]) != "auto":
+            if after["memory_depth"] != before["memory_depth"]:
+                drift["memory_depth"] = (before["memory_depth"], after["memory_depth"])
         _report(f"[restore:{tag}] acquisition 復元後={after}")
         assert not failures, f"取得モードの復元に失敗: {failures!r}"
         assert not drift, f"取得モードが復元されていません: {drift}"
