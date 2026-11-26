@@ -752,6 +752,12 @@ _DVM_PROPS: tuple[tuple[str, str, object, object], ...] = (
 #: `:DVM:CURRent?` の値(DC 1V + 0.5Vpp正弦を当てた想定の代表値。要実機検証)
 _DVM_VALUES = {"ACRM": 0.35, "DC": 1.0, "DCRM": 1.06}
 
+#: メモリ深さの選択肢(ガイド3.3.2)と、4ch構成時の上限(実機実測)
+_MEMORY_DEPTHS = (
+    1_000, 10_000, 100_000, 1_000_000, 10_000_000, 25_000_000, 50_000_000,
+    100_000_000, 125_000_000, 200_000_000, 250_000_000, 500_000_000,
+)
+_MEMORY_DEPTH_LIMIT = 125_000_000
 #: 取得モード(ガイド3.3)。既定値はガイドの Default 欄と実機の初期応答に従う
 _ACQUIRE_PROPS: tuple[tuple[str, str, object, object], ...] = (
     ("mode", "TYPE", ("NORMal", "PEAK", "AVERages", "HRESolution"), "NORM"),
@@ -993,6 +999,7 @@ class FakeScope:
         self.counter["total"] = _COUNTER_TOTAL
         self.dvm: dict = {key: default for key, _, _, default in _DVM_PROPS}
         self.acquire: dict = {key: default for key, _, _, default in _ACQUIRE_PROPS}
+        self.memory_depth = int(float(MDEPTH))
         self.search: dict = {key: default for key, _, _, default in _SEARCH_PROPS}
         self.search_edge: dict = {k: d for k, _, _, d in _SEARCH_EDGE_PROPS}
         self.search_pulse: dict = {k: d for k, _, _, d in _SEARCH_PULSE_PROPS}
@@ -1153,7 +1160,11 @@ class FakeScope:
             (rf":?{_mn('ACQuire')}:{_mn('SRATe')}\?", lambda m: SRATE.encode("ascii")),
             (
                 rf":?{_mn('ACQuire')}:{_mn('MDEPth')}\?",
-                lambda m: MDEPTH.encode("ascii"),
+                lambda m: f"{self.memory_depth:.4E}".encode("ascii"),
+            ),
+            (
+                rf":?{_mn('ACQuire')}:{_mn('MDEPth')}\s+{_VALUE}",
+                lambda m: self._memory_depth_write(m.group(1)),
             ),
             # トリガ(共通)。種別ごとのサブツリーは _trigger_entries() が持つ
             (
@@ -1872,6 +1883,23 @@ class FakeScope:
 
     def _now(self) -> datetime:
         return self.clock if self.clock is not None else datetime.now()
+
+    def _memory_depth_write(self, token: str) -> None:
+        """**実機実測**: AUTO は実際の深さ(ここでは 20k)になる。4ch構成の上限
+        125M を超える値はエラーなしで丸める。一覧外は -222(沈黙しない)。"""
+        text = token.strip().upper()
+        if text == "AUTO":
+            self.memory_depth = 20_000
+            return None
+        try:
+            value = int(float(text))
+        except ValueError:
+            value = -1
+        if value not in _MEMORY_DEPTHS:
+            self.error_queue.append(OUT_OF_RANGE)
+            return None
+        self.memory_depth = min(value, _MEMORY_DEPTH_LIMIT)
+        return None
 
     def _force_trigger(self) -> None:
         if self.acquisition == "SINGLE":

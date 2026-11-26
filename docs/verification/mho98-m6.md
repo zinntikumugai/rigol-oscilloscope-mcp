@@ -179,3 +179,16 @@ CH1 = 校正信号(1kHz、約0.3Vpp)、CH1 0.1V/div、200µs/div、しきい値0
   - `test_configure_trigger_every_type_round_trips[spi]`: 単独では通る。ヒストグラムの後片付けが崩れた影響とみられる
 - 対応(issue #64): 検証位置を今の画面範囲(中心±2〜3div)から決め、範囲の復元判定は 1/10div の誤差を許容した
 - 2回目: **76 passed / 5 skipped / 失敗0**
+
+## 8. メモリ深さ(issue #66、2026-11-26)
+
+| コマンド | エラーキュー | 読み戻し | 所見 |
+|---|---|---|---|
+| `:ACQuire:MDEPth 1000` | No error | `1.0000E+03` | |
+| `:ACQuire:MDEPth 1M` | No error | `1.0000E+06` | 短縮表記も受理 |
+| `:ACQuire:MDEPth 250000000` | No error | **`1.2500E+08`** | ch数で決まる上限へ**無言で丸め** |
+| `:ACQuire:MDEPth 500000000` | No error | **`1.2500E+08`** | 同上 |
+| `:ACQuire:MDEPth AUTO` | No error | **`2.0000E+04`** | **AUTO の読み戻しは実際の深さ**。AUTO かどうかは区別できない |
+| `:ACQuire:MDEPth 12345` | **`-222`** | (変化なし) | 一覧外。沈黙はしない |
+
+- write(`-k acquisition`): **8 passed**(1M の往復、500M → 125M の丸めを含む)。復元漏れゼロ(AUTO だったかは読めないため数値で戻す)

@@ -543,6 +543,7 @@ def create_server(
         mode: str | None = None,
         averages: int | None = None,
         adc_bits: int | None = None,
+        memory_depth: int | str | None = None,
     ) -> dict:
         """Configure the acquisition mode. Omitted items are left unchanged.
 
@@ -553,10 +554,19 @@ def create_server(
         65536 (2, 4, 8, ... 65536); other values are rejected.
         adc_bits (14 / 16) can only be set in high_resolution mode: pass
         mode="high_resolution" in the same call unless it is already active.
+        memory_depth is "auto" or a point count (1000, 10000, 100000, 1000000,
+        10000000, 25000000, 50000000, 100000000, 125000000, 200000000, 250000000,
+        500000000). The limit depends on how many channels are on (125M with 3-4
+        channels); a larger value is clamped without an error, so trust applied.
+        After "auto" the read-back is the actual depth, not "auto".
         Read the current values with get_acquisition_state.
         """
         return control.configure_acquisition(
-            manager.require_scope(), mode=mode, averages=averages, adc_bits=adc_bits
+            manager.require_scope(),
+            mode=mode,
+            averages=averages,
+            adc_bits=adc_bits,
+            memory_depth=memory_depth,
         )
 
     @_register

@@ -142,6 +142,7 @@ def test_get_acquisition_state_includes_the_mode(server) -> None:
     assert result["mode"] == "peak"
     assert result["averages"] == 2
     assert result["adc_bits"] == 14
+    assert result["memory_depth"] == 10_000
     assert "running" in result
 
 

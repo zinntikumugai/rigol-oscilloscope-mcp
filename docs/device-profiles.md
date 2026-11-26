@@ -76,6 +76,7 @@
 | `trigger_pulse_when` / `trigger_duration_when` / `trigger_runt_when` / `trigger_delay_types` | 条件(WHEN)の値。**種別ごとに値域が違うので表を分ける**(共有すると値域外を送る) | mho98: 3〜4値(ガイド3.27.9.3 / 3.27.13.3 / 3.27.15.3 / 3.27.17.5) |
 | `trigger_slope_windows` / `trigger_pattern_levels` / `trigger_duration_types` / `trigger_window_positions` / `trigger_shold_types` / `trigger_shold_patterns` | 各種別固有の列挙 | mho98のみ宣言 |
 | `force_trigger_command` | 強制トリガのコマンド。未宣言なら `force_trigger` は送信ゼロで `UNSUPPORTED_FEATURE` | mho98: `":TFORce"`(ガイド3.1.5。WAIT のシングルを約0.25秒で STOP へ遷移させることを実機で確認) |
+| `acquire_memory_depths` | `:ACQuire:MDEPth` の選択肢(点数のリスト。`"auto"` は別に受け付ける)。未宣言なら `memory_depth` を扱わない | mho98: 1k〜500M の12値(ガイド3.3.2)。上限超過は無言で丸め、AUTO の読み戻しは数値(実機実測) |
 | `search_modes` / `search_edge_slopes` / `search_pulse_polarities` / `search_pulse_when` | イベント検索(`:SEARch`)の種別と条件の値。**`search_modes` が未宣言なら `configure_search` / `get_search_results` は送信ゼロで `UNSUPPORTED_FEATURE`** | mho98: `edge` / `pulse`(ガイド3.22)。**範囲外の `:SEARch:VALue?` は実機を沈黙させる**ため、読み出しは停止中・`1..COUNt?` に限る |
 | `acquire_types` | `:ACQuire:TYPE` の値(`normal` / `peak` / `average` / `high_resolution`)。**未宣言 = `configure_acquisition` が送信ゼロで `UNSUPPORTED_FEATURE`、`get_acquisition_state` も設定クエリを送らない** | mho98: 4種(ガイド3.3.3。応答は短形 `NORM` / `PEAK` / `AVER` / `HRES`)。DHO系は実機未検証のため不在 |
 | `acquire_bits` | `:ACQuire:BITS` の選択肢(リスト)。未宣言なら `adc_bits` を扱わない | mho98: `[14, 16]`(3.3.5)。**high_resolution モード以外では書き込みが `-200`**(実機実測)。DHO800/900 には無い(`:ACQuire:HRESolution` が別綴り) |

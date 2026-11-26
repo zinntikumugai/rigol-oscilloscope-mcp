@@ -2104,6 +2104,8 @@ def acquisition_before(
         for step in (
             {"mode": "high_resolution", "adc_bits": before["adc_bits"]},
             {"mode": before["mode"], "averages": before["averages"]},
+            # AUTO だったかは読み取りで区別できない(実機実測)。数値として戻す
+            {"memory_depth": before["memory_depth"]},
         ):
             try:
                 driver.configure_acquisition(**step)
@@ -2448,3 +2450,18 @@ def test_mask_create_while_disabled_is_rejected_by_the_device(
 
     assert excinfo.value.code == ErrorCode.SCPI_ERROR
     assert "-200" in excinfo.value.detail["scpi_error"]
+
+
+def test_configure_acquisition_memory_depth_round_trip(
+    control: ControlService, driver: ScopeDriver, acquisition_before: dict
+) -> None:
+    """メモリ深さの往復と、上限を超えた値の丸め(issue #66)。"""
+    result = control.configure_acquisition(driver, memory_depth=1_000_000)
+    _report(f"[acquisition] memory_depth=1M applied={result['applied']}")
+    assert result["applied"] == {"memory_depth": 1_000_000}
+
+    clamped = control.configure_acquisition(driver, memory_depth=500_000_000)
+    _report(f"[acquisition] memory_depth=500M applied={clamped['applied']}")
+    # 上限は有効なch数で決まる(4ch構成で125M)。超えた分はエラーなしで丸められる
+    assert clamped["applied"]["memory_depth"] <= 500_000_000
+    assert driver.session.drain_error_queue() == []

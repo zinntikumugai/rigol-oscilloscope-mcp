@@ -4336,6 +4336,7 @@ def test_get_acquisition_config_reads_all_items(driver: ScopeDriver) -> None:
         "mode": "normal",
         "averages": 2,
         "adc_bits": 14,
+        "memory_depth": 10_000,
     }
 
 
@@ -4762,3 +4763,45 @@ def test_get_mask_result_unsupported_on_generic(
 
     assert excinfo.value.code == ErrorCode.UNSUPPORTED_FEATURE
     assert scope.command_log == []
+
+
+# --------------------------------------------------------------------------
+# メモリ深さ(issue #66)
+# --------------------------------------------------------------------------
+
+
+def test_configure_acquisition_sets_memory_depth(driver: ScopeDriver, scope: FakeScope) -> None:
+    applied = driver.configure_acquisition(memory_depth=1_000_000)
+
+    assert ":ACQuire:MDEPth 1000000" in scope.command_log
+    assert applied == {"memory_depth": 1_000_000}
+
+
+def test_configure_acquisition_memory_depth_auto(driver: ScopeDriver, scope: FakeScope) -> None:
+    """**実機実測**: AUTO の読み戻しは実際の深さ(数値)。AUTO かどうかは読めない。"""
+    applied = driver.configure_acquisition(memory_depth="auto")
+
+    assert ":ACQuire:MDEPth AUTO" in scope.command_log
+    assert isinstance(applied["memory_depth"], int)
+
+
+def test_configure_acquisition_reports_clamped_memory_depth(driver: ScopeDriver) -> None:
+    """**実機実測**: ch数で決まる上限を超えるとエラーなしで上限へ丸められる。"""
+    applied = driver.configure_acquisition(memory_depth=500_000_000)
+
+    assert applied["memory_depth"] == 125_000_000
+
+
+@pytest.mark.parametrize("depth", [12345, 0, "big", True, 1.5])
+def test_configure_acquisition_rejects_undeclared_memory_depth(
+    driver: ScopeDriver, scope: FakeScope, depth: object
+) -> None:
+    with pytest.raises(ScopeError) as excinfo:
+        driver.configure_acquisition(memory_depth=depth)
+
+    assert excinfo.value.code == ErrorCode.INVALID_PARAMETER
+    assert scope.command_log == []
+
+
+def test_get_acquisition_config_includes_memory_depth(driver: ScopeDriver) -> None:
+    assert driver.get_acquisition_config()["memory_depth"] == 10_000

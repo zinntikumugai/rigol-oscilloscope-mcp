@@ -715,6 +715,18 @@ def _choice_token(value: object, key: str, allowed: tuple) -> str:
     return str(int(number)) if number.is_integer() else str(number)
 
 
+def _memory_depth_token(value: object, key: str, allowed: tuple) -> str:
+    """`"auto"` → `AUTO`、宣言された点数 → 整数のまま。それ以外は送信前に拒否。"""
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        return "AUTO"
+    if isinstance(value, bool) or not isinstance(value, int) or value not in allowed:
+        raise _invalid(
+            f'{key} must be "auto" or one of {list(allowed)}: {value!r}',
+            {"key": key, "value": value, "allowed": ["auto", *allowed]},
+        )
+    return str(value)
+
+
 def _pow2_token(value: object, key: str, low: int, high: int) -> str:
     """`low`〜`high` の2のべき乗だけを受理する(`:ACQuire:AVERages`)。"""
     token = _math_int(value, key, low, high)
@@ -1572,6 +1584,9 @@ class ScopeDriver:
         bits = self.profile.dialect.get("acquire_bits")
         if isinstance(bits, list) and bits:
             items.append(("adc_bits", ":BITS", ("choice", tuple(bits))))
+        depths = self.profile.dialect.get("acquire_memory_depths")
+        if isinstance(depths, list) and depths:
+            items.append(("memory_depth", ":MDEPth", ("mdepth", tuple(depths))))
         return tuple(items)
 
     def configure_acquisition(
@@ -1580,8 +1595,9 @@ class ScopeDriver:
         mode: str | None = None,
         averages: int | None = None,
         adc_bits: int | None = None,
+        memory_depth: int | str | None = None,
     ) -> dict:
-        """取得モード・平均回数・ADC分解能を設定する。None の項目は変更しない。
+        """取得モード・平均回数・ADC分解能・メモリ深さを設定する。None の項目は変更しない。
 
         検証は全て送信前に済ませる。1つでも不正なら1コマンドも送らない。
         """
@@ -1591,7 +1607,17 @@ class ScopeDriver:
                 "this model's profile does not declare the ADC resolution setting",
                 {"dialect": "acquire_bits", "profile": self.profile.name},
             )
-        values = {"mode": mode, "averages": averages, "adc_bits": adc_bits}
+        if memory_depth is not None and all(key != "memory_depth" for key, _, _ in items):
+            raise _unsupported(
+                "this model's profile does not declare the memory depth setting",
+                {"dialect": "acquire_memory_depths", "profile": self.profile.name},
+            )
+        values = {
+            "mode": mode,
+            "averages": averages,
+            "adc_bits": adc_bits,
+            "memory_depth": memory_depth,
+        }
         plan = self._command_plan(_ACQUIRE_PREFIX, 0, items, values)
         if adc_bits is not None:
             # モードを同時指定しなければ現在値を1回だけ読む(BITSより先に送る
@@ -2901,6 +2927,14 @@ class ScopeDriver:
             return (
                 (lambda value, key: _choice_token(value, key, allowed)),
                 parse_nr3,
+            )
+        if isinstance(kind, tuple) and kind[0] == "mdepth":
+            # メモリ深さ: "auto" か、プロファイルが宣言した点数。読み戻しは常に
+            # 実際の深さ(AUTO でも数値。実機実測)
+            allowed = kind[1]
+            return (
+                (lambda value, key: _memory_depth_token(value, key, allowed)),
+                (lambda text: int(parse_nr3(text))),
             )
         if isinstance(kind, tuple) and kind[0] == "pow2":
             _, low, high = kind
