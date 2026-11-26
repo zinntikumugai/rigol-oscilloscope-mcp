@@ -606,3 +606,20 @@ def test_pulse_levels_of_a_narrow_pulse() -> None:
 
     assert result["top_v"] == pytest.approx(1.0, abs=0.05)
     assert result["base_v"] == pytest.approx(0.0, abs=0.05)
+
+
+def test_pulse_plateau_wins_over_rarer_large_spikes() -> None:
+    """幅1%のパルス(0→1V)に 0.5% の 3V スパイク: トップは 1V(Copilotレビュー)。"""
+    from rigol_oscilloscope_mcp.service.analysis import waveform_jitter, waveform_pulse
+
+    samples = [1.0 if i % 400 < 4 else 0.0 for i in range(8000)]
+    for i in range(200, 8000, 400):
+        samples[i] = 3.0
+        samples[i + 1] = 3.0 if i % 800 == 200 else samples[i + 1]
+
+    result = waveform_pulse(samples)
+
+    assert result["top_v"] == pytest.approx(1.0, abs=0.05)
+    assert result["base_v"] == pytest.approx(0.0, abs=0.05)
+    assert result["overshoot_percent"] == pytest.approx(200.0, abs=10)
+    assert waveform_jitter(samples, 1e-6)["threshold_v"] == pytest.approx(0.5, abs=0.1)

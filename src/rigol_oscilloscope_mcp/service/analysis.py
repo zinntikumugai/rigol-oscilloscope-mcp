@@ -163,34 +163,30 @@ def _histogram(samples: list[float]) -> tuple[list[int], float, float]:
     return counts, lowest, width
 
 
-def _otsu_split(counts: list[int]) -> int:
-    """2群に分けたときの群間分散が最大になる境界のビン番号(大津の方法)。
+#: 2つめのレベルを探すとき、1つめのレベルの周りで除外する幅(全振れ幅に対する比)
+_LEVEL_GUARD = 0.05
 
-    パーセンタイルの中点と違い、デューティの小さいパルスでも上下を分けられ、
-    まばらなスパイクは群の重みが小さいので境界を動かさない。
+
+def _two_levels(counts: list[int]) -> tuple[int, int]:
+    """ヒストグラムの2つの平坦部(ベースとトップ)のビン番号を (下, 上) で返す。
+
+    最も多いビンを1つめのレベルとし、そこから全振れ幅の5%以上離れたビンの中で
+    最も多いものを2つめのレベルとする。平坦部は値が1か所に集まるので、まれな
+    スパイク(値が大きくても数が少ない)や狭いパルスの両方に強い。
     """
-    total = sum(counts)
-    weighted = math.fsum(k * c for k, c in enumerate(counts))
-    best, best_k = -1.0, 1
-    below = 0
-    below_weighted = 0.0
-    for k in range(1, len(counts)):
-        below += counts[k - 1]
-        below_weighted += (k - 1) * counts[k - 1]
-        above = total - below
-        if below == 0 or above == 0:
-            continue
-        diff = below_weighted / below - (weighted - below_weighted) / above
-        score = below * above * diff * diff
-        if score > best:
-            best, best_k = score, k
-    return best_k
+    first = max(range(len(counts)), key=lambda k: counts[k])
+    guard = max(1, int(len(counts) * _LEVEL_GUARD))
+    others = [k for k in range(len(counts)) if abs(k - first) > guard]
+    if not others:
+        return first, first
+    second = max(others, key=lambda k: counts[k])
+    return min(first, second), max(first, second)
 
 
 def waveform_pulse(samples: list[float]) -> dict:
     """矩形波・パルスのオーバーシュート/アンダーシュート(%)。
 
-    トップとベースはヒストグラムの最頻値(大津の方法で分けた上/下で別々に)。
+    トップとベースはヒストグラムの2つの平坦部(`_two_levels`)。
     オーバーシュート = (最大 − トップ) / 振幅、アンダーシュート = (ベース − 最小) /
     振幅(記録のどこで起きたかは問わない)。振幅がほぼ無い(平坦な)信号では計算しない。
     """
@@ -202,9 +198,7 @@ def waveform_pulse(samples: list[float]) -> dict:
     if span <= 1e-12:
         return {**empty, "warning": "the signal is flat; no pulse to analyze"}
     counts, lowest, width = _histogram(samples)
-    middle = _otsu_split(counts)
-    upper = max(range(middle, _PULSE_BINS), key=lambda k: counts[k])
-    lower = max(range(middle), key=lambda k: counts[k])
+    lower, upper = _two_levels(counts)
     top = lowest + (upper + 0.5) * width
     base = lowest + (lower + 0.5) * width
     amplitude = top - base
@@ -349,7 +343,7 @@ def waveform_thd(samples: list[float], sample_interval_s: float) -> dict:
 def waveform_jitter(samples: list[float], sample_interval_s: float) -> dict:
     """周期ジッタ(立ち上がりの間隔のばらつき)。
 
-    しきい値は大津の方法で分けた上下の平均の中点(スパイクに動かされない)。
+    しきい値はヒストグラムの2つの平坦部(`_two_levels`)の中点(スパイクに動かされない)。
     振幅の10%のヒステリシスで立ち上がりを1回ずつ数え、交差時刻を線形補間で求め、
     周期の平均・標準偏差(周期ジッタ)・最大−最小と、隣り合う周期の差の実効値
     (サイクル間ジッタ)を返す。立ち上がりが3つ未満なら計算しない。
@@ -358,12 +352,10 @@ def waveform_jitter(samples: list[float], sample_interval_s: float) -> dict:
     _check_interval(sample_interval_s)
     if max(samples) > min(samples):
         counts, lowest, width = _histogram(samples)
-        boundary = lowest + _otsu_split(counts) * width
+        lower, upper = _two_levels(counts)
+        low_level, high_level = lowest + (lower + 0.5) * width, lowest + (upper + 0.5) * width
     else:
-        boundary = samples[0]
-    below = [v for v in samples if v < boundary] or samples
-    above = [v for v in samples if v >= boundary] or samples
-    low_level, high_level = statistics.fmean(below), statistics.fmean(above)
+        low_level = high_level = samples[0]
     threshold = (low_level + high_level) / 2.0
     # しきい値付近の雑音で余計に数えないよう、振幅の10%のヒステリシスを持たせる:
     # しきい値−h を下回ってから、最初にしきい値を上へ横切った時刻を1つだけ数える
