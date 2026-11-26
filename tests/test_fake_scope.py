@@ -668,13 +668,6 @@ def test_bus5_is_silent(scope: FakeScope) -> None:
 
 
 @pytest.mark.parametrize(
-    "command",
-    [
-        ":BUS1:IIS:SCLK:SOURce?",
-        ":BUS1:FLEXray:BAUD?",
-        ":BUS1:M1553:SOURce?",
-    ],
-
     "command", [":BUS1:IIS:SCLK:SOURce?", ":BUS1:FLEXray:BOGus?", ":BUS1:M1553:BAUD?"]
 )
 def test_undefined_paths_under_option_protocols_are_silent(
