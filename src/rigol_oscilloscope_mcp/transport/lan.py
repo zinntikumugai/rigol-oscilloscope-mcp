@@ -135,7 +135,7 @@ class LanTransport:
         def reader(n: int) -> bytes:
             return self._read_exact(n, command, deadline)
 
-        payload = parse_block(reader)
+        payload = self._parse_block_or_close(reader)
         tail = self._read_exact(1, command, deadline)
         if tail != b"\n":
             raise ScopeError(
@@ -162,12 +162,21 @@ class LanTransport:
         def reader(n: int) -> bytes:
             return self._read_exact(n, command, deadline)
 
-        payload = parse_block(reader)
+        payload = self._parse_block_or_close(reader)
         tail = self._read_exact(1, command, deadline)
         reply = self._read_line(command, deadline).rstrip(b"\r\n")
         if tail != b"\n" or reply != b"1":
             raise self._desync(command, tail + reply)
         return payload
+
+    def _parse_block_or_close(self, reader) -> bytes:
+        """ブロックを読む。枠が壊れていたら接続を閉じてから伝える(読み残しを残さない)。"""
+        try:
+            return parse_block(reader)
+        except ScopeError as exc:
+            if exc.code == ErrorCode.WAVEFORM_TRANSFER_FAILED:
+                self.close()
+            raise
 
     def _desync(self, command: str, reply: bytes) -> ScopeError:
         """想定外の応答。読み残しで以降の応答がずれないよう接続を閉じる(timeout と同じ)。"""

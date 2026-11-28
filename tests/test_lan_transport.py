@@ -725,3 +725,21 @@ def test_query_binary_or_none_garbled_reply_after_the_block_is_a_scope_error() -
 
     assert excinfo.value.code == ErrorCode.WAVEFORM_TRANSFER_FAILED
     assert transport.is_open is False
+
+
+@pytest.mark.parametrize("method", ["query_binary", "query_binary_or_none"])
+def test_malformed_block_closes_the_link(method: str) -> None:
+    """ブロックの枠が壊れていたら接続を閉じる(読み残しを次の照会が拾わない)。"""
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        if method == "query_binary_or_none":
+            recv_command(conn)
+        conn.sendall(b"#X1234\n1\n")
+        wait_close(conn)
+
+    with stub(handler) as transport:
+        with pytest.raises(ScopeError) as excinfo:
+            getattr(transport, method)(":BUS1:DATA?")
+        assert transport.is_open is False
+
+    assert excinfo.value.code == ErrorCode.WAVEFORM_TRANSFER_FAILED
