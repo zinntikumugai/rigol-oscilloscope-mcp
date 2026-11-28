@@ -621,3 +621,16 @@ def test_query_binary_or_none_returns_none_when_only_the_opc_reply_comes(visa: F
 
     assert link.query_binary_or_none(":BUS1:DATA?") is None
     assert link.is_open is True
+
+
+@pytest.mark.parametrize("raw", [b"#3005ABCDE\n1\n", b"#3005ABCDE;1\n"])
+def test_query_binary_or_none_accepts_the_opc_reply_in_the_same_message(
+    visa: FakeVisa, raw: bytes
+) -> None:
+    """バックエンドによってはブロックと `*OPC?` の `1` が1メッセージで届く。
+    残りを別メッセージとして待たない(待つとタイムアウトする)。"""
+    link = opened(visa)
+    visa.instrument.raw_responses.append(raw)
+
+    assert link.query_binary_or_none(":BUS1:DATA?") == b"ABCDE"
+    assert link.is_open is True
