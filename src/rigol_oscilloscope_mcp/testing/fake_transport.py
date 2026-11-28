@@ -73,6 +73,25 @@ class FakeTransport:
             del buffer[:1]
         return payload
 
+    def query_binary_or_none(
+        self, command: str, timeout_s: float | None = None
+    ) -> bytes | None:
+        self._require_open(command)
+        try:
+            response = self.scope.handle(command)
+        except SilentTimeout as exc:
+            raise self._timeout(command, timeout_s, str(exc)) from exc
+        if response is None:
+            return None  # 実機は後ろの `*OPC?` の `1` だけを返す
+        buffer = bytearray(response)
+
+        def read(n: int) -> bytes:
+            chunk = bytes(buffer[:n])
+            del buffer[:n]
+            return chunk
+
+        return parse_block(read)
+
     # -- 内部 -------------------------------------------------------------
 
     def _require_open(self, command: str) -> None:

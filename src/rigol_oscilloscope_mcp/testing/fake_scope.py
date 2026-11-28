@@ -1151,6 +1151,8 @@ class FakeScope:
         self.timebase_extras: dict = {k: d for k, _, _, d in _TIMEBASE_EXTRA_PROPS}
 
         self.autoset_options: dict = {k: d for k, _, _, d in _AUTOSET_OPTION_PROPS}
+        #: True のあいだ `:BUS<n>:DATA?` に応答せず -200 を積む(issue #92)
+        self.bus_data_refused = False
         # ロジックアナライザ(:LA。issue #86)。ポッド・chの有効は「下地の状態」を
         # 持ち、LA が無効のあいだは 0 と読める(実機実測)
         self.la: dict = {
@@ -2190,12 +2192,16 @@ class FakeScope:
             raise self._silent(OUT_OF_RANGE)
         return value
 
-    def _bus_data(self, match: re.Match[str]) -> bytes:
+    def _bus_data(self, match: re.Match[str]) -> bytes | None:
         """イベントテーブルをTMCブロックで返す。
 
         表示・イベントテーブルが無効なときの実機挙動は未確認(要実機検証)。
         ここでは空ペイロードを返す(ドライバは送信前に早期returnする)。
         """
+        if self.bus_data_refused:
+            # 実機実測(issue #92): RS232 で機器が何も返さず -200 を積むことがある
+            self.error_queue.append(EXECUTE_ERROR)
+            return None
         bus = self._bus(match)
         if not (bus["display"] and bus["event"]):
             return _block(b"")

@@ -5560,3 +5560,21 @@ def test_get_decode_events_maps_the_i2c_table_token() -> None:
 
     assert result["protocol"] == "i2c"
     assert not any("unknown decoding type" in w for w in result["warnings"])
+
+
+def test_get_decode_events_reports_a_refused_table_without_dropping_the_link() -> None:
+    """**実機実測**(issue #92): RS232 の `:BUS<n>:DATA?` に機器が何も返さず `-200` を
+    積むことがある。待って接続を切らず、エラーキューの内容つきで SCPI_ERROR にする。"""
+    scope = FakeScope()
+    driver = make_driver(scope)
+    enable_event_table(driver, scope, "uart")
+    scope.bus_data_refused = True
+
+    with pytest.raises(ScopeError) as excinfo:
+        driver.get_decode_events(1)
+
+    assert excinfo.value.code == ErrorCode.SCPI_ERROR
+    assert "-200" in str(excinfo.value.detail)
+    assert driver.session.drain_error_queue() == []
+    scope.bus_data_refused = False
+    assert driver.get_decode_events(1)["protocol"] == "uart"

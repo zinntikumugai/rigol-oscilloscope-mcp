@@ -15,7 +15,7 @@ import socket
 import time
 
 from ..errors import ErrorCode, ScopeError
-from .blocks import build_block, parse_block
+from .blocks import OPC_QUERY, build_block, parse_block, unexpected_opc_reply
 
 DEFAULT_PORT = 5555
 _RECV_CHUNK = 65536
@@ -143,6 +143,29 @@ class LanTransport:
                 f"the byte after the binary block is not a newline: {tail!r}",
                 {"command": command, "trailing": tail.decode("latin-1")},
             )
+        return payload
+
+    def query_binary_or_none(
+        self, command: str, timeout_s: float | None = None
+    ) -> bytes | None:
+        deadline = self._deadline(timeout_s)
+        self._send(f"{command}\n{OPC_QUERY}", deadline)
+        head = self._read_exact(1, command, deadline)
+        if head != b"#":
+            reply = (head + self._read_line(command, deadline)).strip()
+            if reply != b"1":
+                raise unexpected_opc_reply(command, reply)
+            return None
+        self._buf[0:0] = head  # ブロックの先頭として読み直す
+
+        def reader(n: int) -> bytes:
+            return self._read_exact(n, command, deadline)
+
+        payload = parse_block(reader)
+        tail = self._read_exact(1, command, deadline)
+        reply = self._next_line(command, deadline).strip()
+        if tail != b"\n" or reply != "1":
+            raise unexpected_opc_reply(command, tail + reply.encode("ascii"))
         return payload
 
     # --- 内部 -------------------------------------------------------------

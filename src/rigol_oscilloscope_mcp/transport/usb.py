@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from ..errors import ErrorCode, ScopeError
-from .blocks import build_block, parse_block
+from .blocks import OPC_QUERY, build_block, parse_block, unexpected_opc_reply
 
 # pyvisa-py(純Python)バックエンド。NI-VISA等の外部ドライバを要求しない。
 BACKEND = "@py"
@@ -171,6 +171,26 @@ class UsbTransport:
                 raw = self._read_raw(instrument)
             except self._visa_error as exc:
                 raise self._failure(command, exc) from exc
+        return _parse_block_message(raw, command)
+
+    def query_binary_or_none(
+        self, command: str, timeout_s: float | None = None
+    ) -> bytes | None:
+        instrument = self._require_open(command)
+        with self._timeout_override(instrument, timeout_s):
+            try:
+                instrument.write(command)
+                instrument.write(OPC_QUERY)
+                raw = self._read_raw(instrument)
+                if not raw.startswith(b"#"):
+                    if raw.strip() != b"1":
+                        raise unexpected_opc_reply(command, raw.strip())
+                    return None
+                reply = instrument.read().strip()
+            except self._visa_error as exc:
+                raise self._failure(command, exc) from exc
+        if reply != "1":
+            raise unexpected_opc_reply(command, reply.encode("ascii", "replace"))
         return _parse_block_message(raw, command)
 
     # --- 内部 -------------------------------------------------------------

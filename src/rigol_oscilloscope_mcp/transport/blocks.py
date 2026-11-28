@@ -69,3 +69,17 @@ def build_block(payload: bytes) -> bytes:
             {"size": len(payload)},
         )
     return b"#" + str(len(length)).encode("ascii") + length + payload
+
+
+#: 応答の有無を判別するために後ろへ付ける問い合わせ(`query_binary_or_none`)
+OPC_QUERY = "*OPC?"
+
+
+def unexpected_opc_reply(command: str, reply: bytes) -> ScopeError:
+    return ScopeError(
+        ErrorCode.WAVEFORM_TRANSFER_FAILED,
+        f"unexpected reply after {command}: {reply!r} (expected a block or '1')",
+        {"command": command, "reply": reply.decode("latin-1")},
+    )
+
+

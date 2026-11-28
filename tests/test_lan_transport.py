@@ -645,3 +645,53 @@ def test_write_block_sends_definite_length_block() -> None:
         transport.write_block(":SYSTem:SETup", payload)
 
     assert bytes(received).lstrip(b"\n") == expected
+
+
+# --- query_binary_or_none(issue #92)----------------------------------------
+
+
+def test_query_binary_or_none_returns_the_block_and_consumes_the_opc_reply() -> None:
+    """`<command>` の後ろに `*OPC?` を送り、ブロックの後の `1` も読み捨てる。"""
+    def handler(conn: socket.socket) -> None:
+        assert recv_command(conn) == ":BUS1:DATA?"
+        assert recv_command(conn) == "*OPC?"
+        conn.sendall(block(b"RS232\nTime,\n") + b"\n1\n")
+        assert recv_command(conn) == "*IDN?"
+        conn.sendall(IDN.encode() + b"\n")
+        wait_close(conn)
+
+    with stub(handler) as transport:
+        assert transport.query_binary_or_none(":BUS1:DATA?") == b"RS232\nTime,\n"
+        assert transport.query("*IDN?") == IDN
+
+
+def test_query_binary_or_none_returns_none_when_the_device_skips_the_reply() -> None:
+    """**実機実測**: 機器が `:BUS1:DATA?` を拒否すると `*OPC?` の `1` だけが返る。
+    待たずに None を返し、接続は保つ。"""
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        recv_command(conn)
+        conn.sendall(b"1\n")
+        assert recv_command(conn) == "*IDN?"
+        conn.sendall(IDN.encode() + b"\n")
+        wait_close(conn)
+
+    with stub(handler) as transport:
+        started = time.monotonic()
+        assert transport.query_binary_or_none(":BUS1:DATA?") is None
+        assert time.monotonic() - started < 0.5
+        assert transport.is_open is True
+        assert transport.query("*IDN?") == IDN
+
+
+def test_query_binary_or_none_rejects_an_unexpected_reply() -> None:
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        recv_command(conn)
+        conn.sendall(b"NO\n")
+        wait_close(conn)
+
+    with stub(handler) as transport, pytest.raises(ScopeError) as excinfo:
+        transport.query_binary_or_none(":BUS1:DATA?")
+
+    assert excinfo.value.code == ErrorCode.WAVEFORM_TRANSFER_FAILED

@@ -597,3 +597,26 @@ def test_write_block_sends_raw_bytes_with_terminator(visa: FakeVisa) -> None:
     link.write_block(":SYSTem:SETup", b"\xb9S\n\x00")
 
     assert visa.instrument.written_raw == [b":SYSTem:SETup #14\xb9S\n\x00\n"]
+
+
+# --------------------------------------------------------------------------
+# query_binary_or_none(issue #92)
+# --------------------------------------------------------------------------
+
+
+def test_query_binary_or_none_returns_the_block(visa: FakeVisa) -> None:
+    link = opened(visa)
+    visa.instrument.raw_responses.append(b"#3005ABCDE\n")
+    visa.instrument.responses.append("1\n")
+
+    assert link.query_binary_or_none(":BUS1:DATA?") == b"ABCDE"
+    assert visa.instrument.written == [":BUS1:DATA?", "*OPC?"]
+    assert visa.instrument.responses == []
+
+
+def test_query_binary_or_none_returns_none_when_only_the_opc_reply_comes(visa: FakeVisa) -> None:
+    link = opened(visa)
+    visa.instrument.raw_responses.append(b"1\n")
+
+    assert link.query_binary_or_none(":BUS1:DATA?") is None
+    assert link.is_open is True

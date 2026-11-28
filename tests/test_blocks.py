@@ -186,6 +186,11 @@ class _FakeTransport:
     def query_binary(self, command: str, timeout_s: float | None = None) -> bytes:
         return b"OK"
 
+    def query_binary_or_none(
+        self, command: str, timeout_s: float | None = None
+    ) -> bytes | None:
+        return None
+
     def write_block(self, command: str, payload: bytes) -> None:
         pass
 
