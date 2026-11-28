@@ -3138,7 +3138,9 @@ def test_decode_on_digital_channels_matches_the_board(
         # 実機実測(issue #92): 200µs/div 以上では RS232 のイベントテーブルがほとんど
         # 返らない。100µs/div なら毎回返る(窓に入るのは先頭5バイト)
         control.configure_timebase(driver, scale_s_per_div=1e-4)
-    wanted = next(s["args"] for s in hint["setup"] if s["tool"] == "configure_trigger")
+    wanted = next((s["args"] for s in hint["setup"] if s["tool"] == "configure_trigger"), None)
+    if wanted is None:
+        pytest.fail(f"{mode} の scope_hint.setup にトリガの手順が無い(自走のまま読むと検証にならない)")
     trigger = get_trigger_dict(driver)
     _report(f"[la-board] {mode} trigger={trigger}")
     # D チャンネルのエッジトリガが効いていること(自走のまま読めても通ってしまわない)
@@ -3199,7 +3201,10 @@ def test_decode_on_digital_channels_matches_the_board(
             assert len(decoded) >= 4 and decoded == wanted[: len(decoded)], (wanted, decoded)
         else:
             # 実機実測: 1フレーム1行。`id` は保護ID(PID。ボードの `pid`)、`crc` はチェックサム
-            frame = events[0]
+            # 窓の端で切れたフレームは crc が空になるので、揃ったフレームを使う
+            frames = [e for e in events if e.get("crc") and e.get("id")]
+            assert frames, events
+            frame = frames[0]
             assert frame["id"] == expected["pid"].removeprefix("0x").upper()
             assert _hex_bytes(frame["data"]) == expected["data_hex"]
             assert frame["crc"] == expected["checksum"].removeprefix("0x").upper()

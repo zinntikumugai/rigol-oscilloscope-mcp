@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..errors import ErrorCode, ScopeError
-from ..transport.blocks import parse_block
+from ..transport.blocks import OPC_QUERY, parse_block
 from .fake_scope import FakeScope, SilentTimeout
 
 __all__ = ["FakeTransport"]
@@ -81,6 +81,8 @@ class FakeTransport:
             response = self.scope.handle(command)
         except SilentTimeout as exc:
             raise self._timeout(command, timeout_s, str(exc)) from exc
+        # 実機へ送るのと同じく `*OPC?` も届ける(command_log に残る)
+        self.scope.handle(OPC_QUERY)
         if response is None:
             return None  # 実機は後ろの `*OPC?` の `1` だけを返す
         buffer = bytearray(response)

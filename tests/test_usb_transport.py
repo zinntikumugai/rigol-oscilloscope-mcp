@@ -610,7 +610,8 @@ def test_query_binary_or_none_returns_the_block(visa: FakeVisa) -> None:
     visa.instrument.responses.append("1\n")
 
     assert link.query_binary_or_none(":BUS1:DATA?") == b"ABCDE"
-    assert visa.instrument.written == [":BUS1:DATA?", "*OPC?"]
+    # 2本目の書き込みで応答が捨てられない(IEEE 488.2 の -410)よう1メッセージで送る
+    assert visa.instrument.written == [":BUS1:DATA?\n*OPC?"]
     assert visa.instrument.responses == []
 
 

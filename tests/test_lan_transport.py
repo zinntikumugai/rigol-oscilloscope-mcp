@@ -695,3 +695,33 @@ def test_query_binary_or_none_rejects_an_unexpected_reply() -> None:
         transport.query_binary_or_none(":BUS1:DATA?")
 
     assert excinfo.value.code == ErrorCode.WAVEFORM_TRANSFER_FAILED
+    assert transport.is_open is False
+
+
+def test_query_binary_or_none_treats_an_empty_line_as_unexpected() -> None:
+    """空行の後の `1` を「応答なし」に丸めない(空の応答と拒否を取り違えない)。"""
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        recv_command(conn)
+        conn.sendall(b"\n1\n")
+        wait_close(conn)
+
+    with stub(handler) as transport, pytest.raises(ScopeError) as excinfo:
+        transport.query_binary_or_none(":BUS1:DATA?")
+
+    assert excinfo.value.code == ErrorCode.WAVEFORM_TRANSFER_FAILED
+    assert transport.is_open is False  # 読み残しで以降の応答がずれないよう閉じる
+
+
+def test_query_binary_or_none_garbled_reply_after_the_block_is_a_scope_error() -> None:
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        recv_command(conn)
+        conn.sendall(block(b"ab") + b"X\xff\n")
+        wait_close(conn)
+
+    with stub(handler) as transport, pytest.raises(ScopeError) as excinfo:
+        transport.query_binary_or_none(":BUS1:DATA?")
+
+    assert excinfo.value.code == ErrorCode.WAVEFORM_TRANSFER_FAILED
+    assert transport.is_open is False

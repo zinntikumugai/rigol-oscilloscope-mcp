@@ -1263,6 +1263,7 @@ class FakeScope:
     def _build_table(self) -> tuple[tuple[re.Pattern[str], Callable], ...]:
         entries: list[tuple[str, Callable]] = [
             (r"\*IDN\?", lambda m: IDN.encode("ascii")),
+            (r"\*OPC\?", lambda m: b"1"),
             (rf":?{_mn('SYSTem')}:{_mn('ERRor')}\?", self._system_error),
             # 実アナログch数とAUTO機能の可否(3.24.8 / 3.2.6-7。実機は 4 / 1 / 0)
             (rf":?{_mn('SYSTem')}:{_mn('RAMount')}\?", lambda m: b"4"),

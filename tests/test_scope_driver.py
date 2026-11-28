@@ -5578,3 +5578,15 @@ def test_get_decode_events_reports_a_refused_table_without_dropping_the_link() -
     assert driver.session.drain_error_queue() == []
     scope.bus_data_refused = False
     assert driver.get_decode_events(1)["protocol"] == "uart"
+
+
+def test_get_decode_events_sends_the_opc_query_after_the_table_query() -> None:
+    """`*OPC?` も FakeScope まで届く(実機へ送る文字列そのものを検証する)。"""
+    scope = FakeScope()
+    driver = make_driver(scope)
+    enable_event_table(driver, scope, "uart")
+
+    driver.get_decode_events(1)
+
+    index = scope.command_log.index(":BUS1:DATA?")
+    assert scope.command_log[index + 1] == "*OPC?"

@@ -179,19 +179,26 @@ class UsbTransport:
         instrument = self._require_open(command)
         with self._timeout_override(instrument, timeout_s):
             try:
-                instrument.write(command)
-                instrument.write(OPC_QUERY)
+                # 1メッセージで送る。応答を読む前に2本目を書くと、IEEE 488.2 では
+                # 先の応答が捨てられうる(-410 Query INTERRUPTED)。LAN と同じ形
+                # shortcut: USB 実機では未確認(LAN でのみ実測)。USB で使うときに確かめる
+                instrument.write(f"{command}\n{OPC_QUERY}")
                 raw = self._read_raw(instrument)
                 if not raw.startswith(b"#"):
-                    if raw.strip() != b"1":
-                        raise unexpected_opc_reply(command, raw.strip())
+                    if raw.rstrip(b"\r\n") != b"1":
+                        raise self._desync(command, raw)
                     return None
-                reply = instrument.read().strip()
+                reply = instrument.read().rstrip("\r\n")
             except self._visa_error as exc:
                 raise self._failure(command, exc) from exc
         if reply != "1":
-            raise unexpected_opc_reply(command, reply.encode("ascii", "replace"))
+            raise self._desync(command, reply.encode("ascii", "replace"))
         return _parse_block_message(raw, command)
+
+    def _desync(self, command: str, reply: bytes) -> ScopeError:
+        """想定外の応答。読み残しで以降の応答がずれないよう接続を閉じる。"""
+        self.close()
+        return unexpected_opc_reply(command, reply)
 
     # --- 内部 -------------------------------------------------------------
 

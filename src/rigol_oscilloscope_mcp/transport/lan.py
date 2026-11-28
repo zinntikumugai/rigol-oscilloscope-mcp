@@ -152,9 +152,10 @@ class LanTransport:
         self._send(f"{command}\n{OPC_QUERY}", deadline)
         head = self._read_exact(1, command, deadline)
         if head != b"#":
-            reply = (head + self._read_line(command, deadline)).strip()
+            # 空行などを丸めず、ちょうど `1` の1行だけを「応答なし」とみなす
+            reply = (head + self._read_line(command, deadline)).rstrip(b"\r\n")
             if reply != b"1":
-                raise unexpected_opc_reply(command, reply)
+                raise self._desync(command, reply)
             return None
         self._buf[0:0] = head  # ブロックの先頭として読み直す
 
@@ -163,10 +164,15 @@ class LanTransport:
 
         payload = parse_block(reader)
         tail = self._read_exact(1, command, deadline)
-        reply = self._next_line(command, deadline).strip()
-        if tail != b"\n" or reply != "1":
-            raise unexpected_opc_reply(command, tail + reply.encode("ascii"))
+        reply = self._read_line(command, deadline).rstrip(b"\r\n")
+        if tail != b"\n" or reply != b"1":
+            raise self._desync(command, tail + reply)
         return payload
+
+    def _desync(self, command: str, reply: bytes) -> ScopeError:
+        """想定外の応答。読み残しで以降の応答がずれないよう接続を閉じる(timeout と同じ)。"""
+        self.close()
+        return unexpected_opc_reply(command, reply)
 
     # --- 内部 -------------------------------------------------------------
 

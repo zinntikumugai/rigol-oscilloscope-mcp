@@ -81,5 +81,3 @@ def unexpected_opc_reply(command: str, reply: bytes) -> ScopeError:
         f"unexpected reply after {command}: {reply!r} (expected a block or '1')",
         {"command": command, "reply": reply.decode("latin-1")},
     )
-
-
