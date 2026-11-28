@@ -3196,7 +3196,7 @@ def test_decode_on_digital_channels_matches_the_board(
         if mode == "uart":
             # 実機実測: 1バイト1行(`tx_rx` / `data` / `error`)
             decoded = " ".join(_hex_bytes(e["data"]) for e in events).split()
-            wanted = expected["bytes_hex"].split()
+            wanted = _hex_bytes(expected["bytes_hex"]).split()
             # 窓に入った分(先頭から4バイト以上)が期待値の先頭と一致すること
             assert len(decoded) >= 4 and decoded == wanted[: len(decoded)], (wanted, decoded)
         else:
@@ -3206,7 +3206,7 @@ def test_decode_on_digital_channels_matches_the_board(
             assert frames, events
             frame = frames[0]
             assert frame["id"] == expected["pid"].removeprefix("0x").upper()
-            assert _hex_bytes(frame["data"]) == expected["data_hex"]
+            assert _hex_bytes(frame["data"]) == _hex_bytes(expected["data_hex"])
             assert frame["crc"] == expected["checksum"].removeprefix("0x").upper()
     assert driver.session.drain_error_queue() == []
 
