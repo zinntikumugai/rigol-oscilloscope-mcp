@@ -2949,7 +2949,18 @@ class ScopeDriver:
             )
 
         command = f"{prefix}:DATA?"
-        payload = self.session.query_binary(command)
+        # 実機実測(issue #92): RS232 で機器が何も返さず -200 を積むことがある。待って
+        # 接続を切らないよう、応答が無いことを `*OPC?` で判別する
+        payload = self.session.query_binary_or_none(command)
+        if payload is None:
+            errors = self.session.drain_error_queue()
+            raise ScopeError(
+                ErrorCode.SCPI_ERROR,
+                f"the instrument did not return the event table ({', '.join(errors) or 'no error reported'}). "
+                "Observed with UART decode at 200 us/div and slower; a faster timebase "
+                "(e.g. 50 us/div) or reading again may help",
+                {"command": command, "errors": errors},
+            )
         # 値が返ってもエラーが積まれることがある(mho98-unlicensed.md 4章)
         self.session.check_error(command)
 

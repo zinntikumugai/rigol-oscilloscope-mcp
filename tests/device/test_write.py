@@ -3089,28 +3089,32 @@ def _decoded(driver: ScopeDriver, column: str, attempts: int = 5) -> list[dict]:
     for _ in range(attempts):
         time.sleep(1.0)
         # 窓の端で切れた行は列が空になるので除く
-        events = [e for e in get_decode_result(driver, 1)["events"] if e.get(column)]
+        try:
+            result = get_decode_result(driver, 1)
+        except ScopeError as exc:
+            # 実機実測(issue #92): RS232 は機器がイベントテーブルを返さないことがある。
+            # 接続は保たれる(SCPI_ERROR)ので読み直す
+            # 読み直すのは「返さなかった」場合だけ(detail に errors がある形)。
+            # 返ったうえで別のエラーが積まれた等は隠さずに失敗させる
+            if exc.code != ErrorCode.SCPI_ERROR or "errors" not in exc.detail:
+                raise
+            _report(f"[la-board] event table refused: {exc.message}")
+            continue
+        events = [e for e in result["events"] if e.get(column)]
         if events:
             return events
     assert events, f"デコード結果に {column} のある行が {attempts} 秒待っても出ない"
     return events
 
 
-#: (モード, 時間軸 s/div, トリガのソース, エッジ, `scope_hint` の上書き)。
-#: 時間軸は1フレームが画面に収まる長さ(I2C は 50µs/div だと後半のバイトが切れた)。
-#: パラレルは `scope_hint` の `bus=d15_d8` + `endian=msb` だとビット反転した値になる
-#: (実機実測。`msb` なら後に書かれたchがMSB)ので `lsb` で上書きする
-LA_BOARD_CASES = {
-    "spi": (1e-5, "D6", "falling", {}),
-    "i2c": (2e-4, "D3", "falling", {}),
-    "can": (5e-5, "D7", "falling", {}),
-    "parallel": (1e-3, "D0", "rising", {"endian": "lsb"}),
-    "uart": (1e-4, "D1", "falling", {}),
-    "lin": (5e-4, "D1", "falling", {}),
-}
+#: ボードが出すモード。時間軸・トリガ・LA の設定はボードの `scope_hint.setup`
+#: (ファームウェア 0.1.2 以降)に従う。実機で確かめた目安は verification §19 / §21
+LA_BOARD_MODES = ("can", "i2c", "lin", "parallel", "spi", "uart")
+#: `setup` の各手順を実行する ControlService のメソッド(それ以外は送らない)
+_LA_BOARD_SETUP_TOOLS = ("configure_logic_analyzer", "configure_timebase", "configure_trigger")
 
 
-@pytest.mark.parametrize("mode", sorted(LA_BOARD_CASES))
+@pytest.mark.parametrize("mode", LA_BOARD_MODES)
 def test_decode_on_digital_channels_matches_the_board(
     control: ControlService,
     driver: ScopeDriver,
@@ -3120,19 +3124,30 @@ def test_decode_on_digital_channels_matches_the_board(
     timebase_before: dict,
     mode: str,
 ) -> None:
-    scale, source, slope, override = LA_BOARD_CASES[mode]
     status = la_board(mode)
-    args = status["scope_hint"]["args"]
-    settings = {**args["settings"], **override}
-    _report(f"[la-board] {mode}: expected={status['expected']} settings={settings}")
+    hint = status["scope_hint"]
+    if "setup" not in hint:
+        pytest.skip("検証ボードのファームウェアが古い(scope_hint.setup が無い。0.1.2 以降が必要)")
+    args = hint["args"]
+    settings = args["settings"]
+    _report(f"[la-board] {mode}: expected={status['expected']} setup={hint['setup']}")
 
-    control.configure_timebase(driver, scale_s_per_div=scale)
-    control.configure_trigger(driver, type="edge", source=source, slope=slope, sweep_mode="normal")
+    # LA・時間軸・トリガはフィクスチャ(la_board / timebase_before / trigger_before)が戻す
+    for step in hint["setup"]:
+        assert step["tool"] in _LA_BOARD_SETUP_TOOLS, step
+        getattr(control, step["tool"])(driver, **step["args"])
+    if mode == "uart":
+        # 実機実測(issue #92): 200µs/div 以上では RS232 のイベントテーブルがほとんど
+        # 返らない。100µs/div なら毎回返る(窓に入るのは先頭5バイト)
+        control.configure_timebase(driver, scale_s_per_div=1e-4)
+    wanted = next((s["args"] for s in hint["setup"] if s["tool"] == "configure_trigger"), None)
+    if wanted is None:
+        pytest.fail(f"{mode} の scope_hint.setup にトリガの手順が無い(自走のまま読むと検証にならない)")
     trigger = get_trigger_dict(driver)
     _report(f"[la-board] {mode} trigger={trigger}")
     # D チャンネルのエッジトリガが効いていること(自走のまま読めても通ってしまわない)
     assert (trigger["type"], trigger["source"], trigger["slope"], trigger["sweep_mode"]) == (
-        "edge", source, slope, "normal"
+        wanted["type"], wanted["source"], wanted["slope"], wanted["sweep_mode"]
     )
     control.configure_decode(
         driver,
@@ -3159,23 +3174,42 @@ def test_decode_on_digital_channels_matches_the_board(
         assert events[0]["id"] == expected["id"].removeprefix("0x").upper()
         assert events[0]["data"] == expected["data_hex"]
     elif mode == "parallel":
-        events = _decoded(driver, "data")
-        _report(f"[la-board] parallel events={events}")
         # ボードの期待値は「00→FF を繰り返す8bitカウンタ」で、ある時点の絶対値は
         # 決まらない。ビット順を誤ると連番にならない(d15_d8 + msb では CF 2F AF …
         # になった)ので、連続する値が +1 ずつ増えることで期待と突き合わせる
         assert "00 01 02" in expected["sequence"], expected
-        values = [int(e["data"], 16) for e in events if re.fullmatch(r"[0-9A-Fa-f]+", e["data"])]
+        # 実機実測: まれに1ビットが化けた並びが読める(12回連続で正しく読めた後の
+        # 再実行で1回だけ `66 67 60 61 …`)。ボードの出力タイミングの揺れとみて、
+        # 3回まで読み直し、1回でも連番なら合格とする(化けた並びは記録する)
+        values: list[int] = []
+        for _ in range(3):
+            events = _decoded(driver, "data")
+            values = [
+                int(e["data"], 16) for e in events if re.fullmatch(r"[0-9A-Fa-f]+", e["data"])
+            ]
+            if len(values) >= 4 and all((b - a) % 256 == 1 for a, b in zip(values, values[1:])):
+                break
+            _report(f"[la-board] parallel **連番でない並び**: {[f'{v:02X}' for v in values]}")
         assert len(values) >= 4
         assert all((b - a) % 256 == 1 for a, b in zip(values, values[1:])), values
     else:
-        # UART / LIN はボードが出力できず実機で確かめられていない(ESP_FAIL で skip)。
-        # 行の形は未確認なので、各行の data を16進バイト列として連結して比べる
         events = _decoded(driver, "data")
         _report(f"[la-board] {mode} events={events}")
-        decoded = " ".join(_hex_bytes(e["data"]) for e in events)
-        wanted = expected["bytes_hex"] if mode == "uart" else expected["frame_hex"]
-        assert _hex_bytes(wanted) in decoded, (wanted, decoded)
+        if mode == "uart":
+            # 実機実測: 1バイト1行(`tx_rx` / `data` / `error`)
+            decoded = " ".join(_hex_bytes(e["data"]) for e in events).split()
+            wanted = _hex_bytes(expected["bytes_hex"]).split()
+            # 窓に入った分(先頭から4バイト以上)が期待値の先頭と一致すること
+            assert len(decoded) >= 4 and decoded == wanted[: len(decoded)], (wanted, decoded)
+        else:
+            # 実機実測: 1フレーム1行。`id` は保護ID(PID。ボードの `pid`)、`crc` はチェックサム
+            # 窓の端で切れたフレームは crc が空になるので、揃ったフレームを使う
+            frames = [e for e in events if e.get("crc") and e.get("id")]
+            assert frames, events
+            frame = frames[0]
+            assert frame["id"] == expected["pid"].removeprefix("0x").upper()
+            assert _hex_bytes(frame["data"]) == _hex_bytes(expected["data_hex"])
+            assert frame["crc"] == expected["checksum"].removeprefix("0x").upper()
     assert driver.session.drain_error_queue() == []
 
 

@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from ..errors import ErrorCode, ScopeError
-from .blocks import build_block, parse_block
+from .blocks import OPC_QUERY, build_block, parse_block, unexpected_opc_reply
 
 # pyvisa-py(純Python)バックエンド。NI-VISA等の外部ドライバを要求しない。
 BACKEND = "@py"
@@ -173,6 +173,42 @@ class UsbTransport:
                 raise self._failure(command, exc) from exc
         return _parse_block_message(raw, command)
 
+    def query_binary_or_none(
+        self, command: str, timeout_s: float | None = None
+    ) -> bytes | None:
+        instrument = self._require_open(command)
+        with self._timeout_override(instrument, timeout_s):
+            try:
+                # 1メッセージで送る。応答を読む前に2本目を書くと、IEEE 488.2 では
+                # 先の応答が捨てられうる(-410 Query INTERRUPTED)。LAN と同じ形
+                # shortcut: USB 実機では未確認(LAN でのみ実測)。USB で使うときに確かめる
+                instrument.write(f"{command}\n{OPC_QUERY}")
+                raw = self._read_raw(instrument)
+                if not raw.startswith(b"#"):
+                    if raw.rstrip(b"\r\n") != b"1":
+                        raise self._desync(command, raw)
+                    return None
+                try:
+                    payload, rest = _split_block(raw, command)
+                except ScopeError:
+                    self.close()  # 枠が壊れていたら読み残しを残さない(LAN と同じ)
+                    raise
+                # `*OPC?` の `1` は同じメッセージに続く(`\n1\n` / `;1\n`)か、次の
+                # メッセージで届く(バックエンド次第)。同じメッセージに無いときだけ読む
+                reply = rest.lstrip(b"\n;").rstrip(b"\r\n")
+                if not reply:
+                    reply = instrument.read().rstrip("\r\n").encode("ascii", "replace")
+            except self._visa_error as exc:
+                raise self._failure(command, exc) from exc
+        if reply != b"1":
+            raise self._desync(command, reply)
+        return payload
+
+    def _desync(self, command: str, reply: bytes) -> ScopeError:
+        """想定外の応答。読み残しで以降の応答がずれないよう接続を閉じる。"""
+        self.close()
+        return unexpected_opc_reply(command, reply)
+
     # --- 内部 -------------------------------------------------------------
 
     @staticmethod
@@ -258,6 +294,19 @@ def _close_quietly(closable: Any) -> None:
         closable.close()
     except Exception:  # noqa: BLE001 - 切断済み/二重closeを許容する
         pass
+
+
+def _split_block(raw: bytes, command: str) -> tuple[bytes, bytes]:
+    """メッセージ先頭のブロックの payload と、その後ろの残りを返す。"""
+    position = 0
+
+    def reader(n: int) -> bytes:
+        nonlocal position
+        chunk = raw[position : position + n]
+        position += len(chunk)
+        return chunk
+
+    return parse_block(reader), raw[position:]
 
 
 def _parse_block_message(raw: bytes, command: str) -> bytes:

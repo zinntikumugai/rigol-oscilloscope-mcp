@@ -597,3 +597,40 @@ def test_write_block_sends_raw_bytes_with_terminator(visa: FakeVisa) -> None:
     link.write_block(":SYSTem:SETup", b"\xb9S\n\x00")
 
     assert visa.instrument.written_raw == [b":SYSTem:SETup #14\xb9S\n\x00\n"]
+
+
+# --------------------------------------------------------------------------
+# query_binary_or_none(issue #92)
+# --------------------------------------------------------------------------
+
+
+def test_query_binary_or_none_returns_the_block(visa: FakeVisa) -> None:
+    link = opened(visa)
+    visa.instrument.raw_responses.append(b"#3005ABCDE\n")
+    visa.instrument.responses.append("1\n")
+
+    assert link.query_binary_or_none(":BUS1:DATA?") == b"ABCDE"
+    # 2本目の書き込みで応答が捨てられない(IEEE 488.2 の -410)よう1メッセージで送る
+    assert visa.instrument.written == [":BUS1:DATA?\n*OPC?"]
+    assert visa.instrument.responses == []
+
+
+def test_query_binary_or_none_returns_none_when_only_the_opc_reply_comes(visa: FakeVisa) -> None:
+    link = opened(visa)
+    visa.instrument.raw_responses.append(b"1\n")
+
+    assert link.query_binary_or_none(":BUS1:DATA?") is None
+    assert link.is_open is True
+
+
+@pytest.mark.parametrize("raw", [b"#3005ABCDE\n1\n", b"#3005ABCDE;1\n"])
+def test_query_binary_or_none_accepts_the_opc_reply_in_the_same_message(
+    visa: FakeVisa, raw: bytes
+) -> None:
+    """バックエンドによってはブロックと `*OPC?` の `1` が1メッセージで届く。
+    残りを別メッセージとして待たない(待つとタイムアウトする)。"""
+    link = opened(visa)
+    visa.instrument.raw_responses.append(raw)
+
+    assert link.query_binary_or_none(":BUS1:DATA?") == b"ABCDE"
+    assert link.is_open is True

@@ -645,3 +645,101 @@ def test_write_block_sends_definite_length_block() -> None:
         transport.write_block(":SYSTem:SETup", payload)
 
     assert bytes(received).lstrip(b"\n") == expected
+
+
+# --- query_binary_or_none(issue #92)----------------------------------------
+
+
+def test_query_binary_or_none_returns_the_block_and_consumes_the_opc_reply() -> None:
+    """`<command>` の後ろに `*OPC?` を送り、ブロックの後の `1` も読み捨てる。"""
+    def handler(conn: socket.socket) -> None:
+        assert recv_command(conn) == ":BUS1:DATA?"
+        assert recv_command(conn) == "*OPC?"
+        conn.sendall(block(b"RS232\nTime,\n") + b"\n1\n")
+        assert recv_command(conn) == "*IDN?"
+        conn.sendall(IDN.encode() + b"\n")
+        wait_close(conn)
+
+    with stub(handler) as transport:
+        assert transport.query_binary_or_none(":BUS1:DATA?") == b"RS232\nTime,\n"
+        assert transport.query("*IDN?") == IDN
+
+
+def test_query_binary_or_none_returns_none_when_the_device_skips_the_reply() -> None:
+    """**実機実測**: 機器が `:BUS1:DATA?` を拒否すると `*OPC?` の `1` だけが返る。
+    待たずに None を返し、接続は保つ。"""
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        recv_command(conn)
+        conn.sendall(b"1\n")
+        assert recv_command(conn) == "*IDN?"
+        conn.sendall(IDN.encode() + b"\n")
+        wait_close(conn)
+
+    with stub(handler) as transport:
+        started = time.monotonic()
+        assert transport.query_binary_or_none(":BUS1:DATA?") is None
+        assert time.monotonic() - started < 0.5
+        assert transport.is_open is True
+        assert transport.query("*IDN?") == IDN
+
+
+def test_query_binary_or_none_rejects_an_unexpected_reply() -> None:
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        recv_command(conn)
+        conn.sendall(b"NO\n")
+        wait_close(conn)
+
+    with stub(handler) as transport, pytest.raises(ScopeError) as excinfo:
+        transport.query_binary_or_none(":BUS1:DATA?")
+
+    assert excinfo.value.code == ErrorCode.WAVEFORM_TRANSFER_FAILED
+    assert transport.is_open is False
+
+
+def test_query_binary_or_none_treats_an_empty_line_as_unexpected() -> None:
+    """空行の後の `1` を「応答なし」に丸めない(空の応答と拒否を取り違えない)。"""
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        recv_command(conn)
+        conn.sendall(b"\n1\n")
+        wait_close(conn)
+
+    with stub(handler) as transport, pytest.raises(ScopeError) as excinfo:
+        transport.query_binary_or_none(":BUS1:DATA?")
+
+    assert excinfo.value.code == ErrorCode.WAVEFORM_TRANSFER_FAILED
+    assert transport.is_open is False  # 読み残しで以降の応答がずれないよう閉じる
+
+
+def test_query_binary_or_none_garbled_reply_after_the_block_is_a_scope_error() -> None:
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        recv_command(conn)
+        conn.sendall(block(b"ab") + b"X\xff\n")
+        wait_close(conn)
+
+    with stub(handler) as transport, pytest.raises(ScopeError) as excinfo:
+        transport.query_binary_or_none(":BUS1:DATA?")
+
+    assert excinfo.value.code == ErrorCode.WAVEFORM_TRANSFER_FAILED
+    assert transport.is_open is False
+
+
+@pytest.mark.parametrize("method", ["query_binary", "query_binary_or_none"])
+def test_malformed_block_closes_the_link(method: str) -> None:
+    """ブロックの枠が壊れていたら接続を閉じる(読み残しを次の照会が拾わない)。"""
+    def handler(conn: socket.socket) -> None:
+        recv_command(conn)
+        if method == "query_binary_or_none":
+            recv_command(conn)
+        conn.sendall(b"#X1234\n1\n")
+        wait_close(conn)
+
+    with stub(handler) as transport:
+        with pytest.raises(ScopeError) as excinfo:
+            getattr(transport, method)(":BUS1:DATA?")
+        assert transport.is_open is False
+
+    assert excinfo.value.code == ErrorCode.WAVEFORM_TRANSFER_FAILED

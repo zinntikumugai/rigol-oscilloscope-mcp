@@ -63,6 +63,17 @@ class ScpiSession:
         logger.debug("<- <%d lines>", len(lines))
         return lines
 
+    def query_binary_or_none(
+        self, command: str, timeout_s: float | None = None
+    ) -> bytes | None:
+        """ブロック応答。機器が応答を返さなかったら None(トランスポートの同名メソッド)。"""
+        logger.debug("-> %s (or nothing)", command)
+        payload = self.transport.query_binary_or_none(
+            command, self.timeout_s if timeout_s is None else timeout_s
+        )
+        logger.debug("<- %s", "nothing" if payload is None else f"<binary {len(payload)} bytes>")
+        return payload
+
     def query_binary(self, command: str, timeout_s: float | None = None) -> bytes:
         """バイナリブロック応答を返す。スクリーンショット等は長めの猶予を渡す。"""
         logger.debug("-> %s", command)
