@@ -3094,7 +3094,9 @@ def _decoded(driver: ScopeDriver, column: str, attempts: int = 5) -> list[dict]:
         except ScopeError as exc:
             # 実機実測(issue #92): RS232 は機器がイベントテーブルを返さないことがある。
             # 接続は保たれる(SCPI_ERROR)ので読み直す
-            if exc.code != ErrorCode.SCPI_ERROR:
+            # 読み直すのは「返さなかった」場合だけ(detail に errors がある形)。
+            # 返ったうえで別のエラーが積まれた等は隠さずに失敗させる
+            if exc.code != ErrorCode.SCPI_ERROR or "errors" not in exc.detail:
                 raise
             _report(f"[la-board] event table refused: {exc.message}")
             continue
